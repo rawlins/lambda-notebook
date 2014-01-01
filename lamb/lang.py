@@ -279,7 +279,7 @@ class SingletonComposable(Composable):
             return self.system.assign_controller
 
     def composite_name(self, other=None):
-        if other:
+        if other is not None:
             return "[%s %s]" % (self.name, other.name)
         else:
             return "[%s]" % self.name
