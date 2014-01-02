@@ -1,5 +1,5 @@
 #!/usr/local/bin/python3
-import collections
+import collections, itertools
 
 from lamb import utils, types, meta
 from lamb.utils import *
@@ -1389,11 +1389,14 @@ class CompositionSystem(object):
             for i1 in iter1:
                 r.extend(self.compose_raw(i1, assignment=assignment))
         else:
+            # this seems like not the best way to do this...but can't use iter2 directly because there's no
+            # way to reset it.  I considered itertools.tee, but the docs suggested that lists are more efficient
+            # for this case.
+            list_i2 = list(iter2)
             for i1 in iter1:
-                for i2 in iter2:
+                for i2 in list_i2:
                     r.extend(self.compose_raw(i1, i2, assignment=assignment))
         return r
-
 
     def compose_container(self, c, assignment=None):
         r = self.compose_iterators(c.locally_flat_iter(), assignment=assignment)
