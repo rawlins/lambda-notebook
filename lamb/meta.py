@@ -925,7 +925,7 @@ class TypedExpr(object):
 
     def find_safe_variable(self, starting="x"):
         """Find an a safe alpha variant of the starting point (by default: 'x'), that is not used in the expression."""
-        blockset = self.free_variables() # could just use everything, instead?
+        blockset = self.free_variables() | self.bound_variables()
         varname = alpha_variant(starting, blockset)
         return varname
 
@@ -1920,7 +1920,9 @@ class LFun(BindingOp):
             # first check for potential variable name collisions when substituting, and the substitute
             #TODO: do I want to actually return the result of alpha converting?  May be needed later?
             new_self = alpha_convert_new(self, unsafe_variables(self, arg))
-            return beta_reduce_ts(new_self.body, new_self.varname, arg)
+            # TODO: the copy here is a hack.  Right now identity functions result in no copying at all, leading to very
+            # wrong results.  This needs to be tracked down to its root and fixed.
+            return (beta_reduce_ts(new_self.body, new_self.varname, arg)).copy()
             #return beta_reduce_ts(self.body, self.varname, alpha_convert(arg, unsafe_variables(self, arg)))
         else:
             raise TypeMismatch(self,arg, "Application")
@@ -2390,6 +2392,8 @@ def derivation_factory(result, desc=None, latex_desc=None, origin=None, steps=No
 def derived(result, origin, desc=None, latex_desc=None):
     """Convenience function to return a derived TypedExpr while adding a derivational step.
     Always return result, adds or updates its derivational history as a side effect."""
+    if result == origin: # may be inefficient?
+        return result
     if result.derivation is None:
         d = origin.derivation
     else:

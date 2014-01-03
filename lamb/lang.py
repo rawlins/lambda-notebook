@@ -1164,6 +1164,10 @@ class TreeCompositionOp(object):
         if not test:
             #return None
             raise TypeMismatch(tree, None, mode="Failed preconditions for %s" % self.name)
+        if (not self.allow_none):
+            for d in tree:
+                if d.content is None:
+                    raise TypeMismatch(tree, None, mode="None not allowed for %s" % self.name) 
         #result = self.operation(self.build_local(tree), assignment=assignment)
         result = self.operation(tree, assignment=assignment)
         result.mode = self
@@ -1175,7 +1179,11 @@ class LexiconOp(TreeCompositionOp):
         TreeCompositionOp.__init__(self, "Lexicon", self.lookup, preconditions=tree_leaf, system=system)
 
     def lookup(self, t, assignment=None):
-        name = t.node
+        # TODO: revisit
+        if isinstance(t, TreeComposite) and t.node is None and t.source is not None:
+            name = t.source.node
+        else:
+            name = t.node
         #assert(name is not None)
         den = self.system.lookup_item(name)
         if den is None:
@@ -1420,6 +1428,7 @@ class TreeCompositionSystem(CompositionSystem):
     def copy(self):
         new_sys = TreeCompositionSystem(rules=self.rules, basictypes=self.basictypes, name=self.name, a_controller=self.assign_controller)
         new_sys.lexicon = self.lexicon
+        return new_sys
 
     # Notes on how composition expansion should work in tree structures
     #
@@ -1524,12 +1533,26 @@ class TreeCompositionSystem(CompositionSystem):
 
     def expand_next(self, tree):
         (subtree, parent, path_from_parent, full_path) = self.qsfu(tree)
+        if subtree is None:
+            return None
         #expansion = subtree.content.expand()
         #expansion = subtree.compose()
 
         #parent[path_from_parent]
         #return self.compose(tree, override=True) # redo everything?
-        self.compose_path(tree, full_path)
+        return self.compose_path(tree, full_path)
+
+    def expand_all(self, tree):
+        # TODO: less of a hack
+        last = None
+        while True:
+            (subtree, parent, path_from_parent, full_path) = self.qsfu(tree)
+            if subtree is None:
+                return tree
+            if subtree is last:
+                return tree
+            self.compose_path(tree, full_path)
+
 
     def search_td_bf(self, node, expanded_fun, len_fun):
         if len_fun(node) == 0:
@@ -1546,6 +1569,8 @@ class TreeCompositionSystem(CompositionSystem):
                         return (0,) + self.search_td_bf(self, node[0], expanded_fun, len_fun)
             else:
                 return (None, )
+
+
 
   
 
@@ -1694,7 +1719,7 @@ def fa_fun(fun, arg, assignment=None):
     return BinaryComposite(fun, arg, 
                 (fun.content.under_assignment(assignment)(arg.content.under_assignment(assignment))).reduce())
 
-def pm_fun(fun1, fun2, assignment=None):
+def pm_fun_wrong(fun1, fun2, assignment=None):
     """H&K predicate modification -- restricted to type <et>."""
     ts = meta.get_type_system()
     if not (ts.eq_check(fun1.type, type_property) and 
@@ -1716,6 +1741,20 @@ def pm_fun(fun1, fun2, assignment=None):
         body2 = c2.body
     conjoined_c = meta.LFun(c1.argtype, c1.body & body2, c1.varname)
     return BinaryComposite(fun1, fun2, conjoined_c)
+
+def pm_fun(fun1, fun2, assignment=None):
+    """H&K predicate modification -- restricted to type <et>."""
+    ts = meta.get_type_system()
+    if not (ts.eq_check(fun1.type, type_property) and 
+            ts.eq_check(fun2.type, type_property)):
+        raise TypeMismatch(fun1, fun2, "Predicate Modification")
+    #if fun1.type != fun2.type or fun1.type != type_property:
+    #    raise TypeMismatch(fun1, fun2, "Predicate Modification")
+    varname = fun1.content.varname
+    c1 = fun1.content.under_assignment(assignment)
+    c2 = fun2.content.under_assignment(assignment)
+    result = ((pm_op(c1))(c2)).reduce_all()
+    return BinaryComposite(fun1, fun2, result)
 
 
 def setup_type_driven():
