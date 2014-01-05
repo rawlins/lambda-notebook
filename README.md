@@ -10,14 +10,19 @@ Prerequisites: python 3.3.x, and IPython set up to run with python 3.
   * Unfortunately this is not yet easy to install.  
   * For python 3, see [http://www.python.org/](http://www.python.org/).  We do not using OS installed versions, for example, on OS X.
   * The complications lie in getting IPython to work with python 3.
-  * For general installation instructions for IPython, see [http://ipython.org/install.html](http://ipython.org/install.html).  A slightly outdated, but more useful document, is at [http://ipython.org/ipython-doc/rel-1.1.0/install/index.html](http://ipython.org/ipython-doc/rel-1.1.0/install/index.html).
-  * To run ipython with python 3, you can either install IPythin by using 'python3 setup.py', or run 'python3 ipython.py'
+  * For general installation instructions for IPython, see [http://ipython.org/install.html](http://ipython.org/install.html).  A slightly outdated, but more useful document, is at [http://ipython.org/ipython-doc/rel-1.1.0/install/index.html](http://ipython.org/ipython-doc/rel-1.1.0/install/index.html).  
+  For IPython notebook, you will need to make sure you have installed the packages pyzmq, Jinja2, nose, Tornado, readline.  To install several of these on a mac, you will need an XCode installation first, this can be downloaded for free from the app store.  Then you should install them using easy_install (part of setup_tools) or pip.  Currently, there may be difficulties with python on Maverick.  (_These notes need to be expanded, and adapated for windows..._)
+
+
+  * To run ipython with python 3, you can either install IPython by using 'python3 setup.py' or easy_install-3.3 or whatever, or run 'python3 ipython.py'.  
   * Suggestions for improving these instructions are welcome!  The long term goal is to provide the lambda notebook as a standalone app.
 
 ## Getting started
 
 Run 'ipython3 notebook' in the main directory of the repository.  Then look through the various notebooks to see examples of what can be done.  I recommend starting (for now) with:
   * LSA Poster examples
+  * Relative clauses
+  * definite articles tutorial
   * Lamb demo (old, but thorough for what was available at the time)
   * Composition operations
 

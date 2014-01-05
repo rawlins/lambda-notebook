@@ -444,8 +444,13 @@ class TypedExpr(object):
         """
         # TODO: some kind of error messages / exceptions?
 
-        # normalize (bit of a hack)
-        ops = {"lambda " : "L", "L " : "L", "λ" : "L", "Forall " : "A", "Exists " : "E", "Set " : "S"}
+        # normalize various ways of writing certain operators (bit of a hack)
+        ops = {"lambda " : "L", "L " : "L", "λ" : "L", "Iota ": "I", "Forall " : "A", "Exists " : "E", "Set " : "S"}
+        # map operators to classes (for standardized BindingOp constructors)
+        op_classes = {"L" : LFun, "I" : IotaUnary, "A" : ForallUnary, "E": ExistsUnary, "S" : ConditionSet}
+        # To add a new unary variable-binding operator to the parser, decide on a normalized operator string and add
+        # it to ops, and then add the right mapping to op_classes.  If your operator has a non-standard constructor,
+        # instead of adding it to op_classes, add a new condition to the if section at the end of this function.
         next = None
         op = None
         for k in ops.keys():
@@ -481,21 +486,25 @@ class TypedExpr(object):
                 body = cls.factory(l[1], assignment=assignment)
             except Exception as e:
                 print(e)
-                raise ValueError("Lambda string has unparsable body ('%s')" % (s))
+                raise ValueError("Operator expression has unparsable body ('%s')" % (s))
 
         if body is None:
             raise ValueError("Can't create body-less operator expression from '%s'" % s)
-        if op == "L":
-            return LFun(var=v, vtype=t, body=body)
-        elif op == "E":
-            return ExistsUnary(var=v, vtype=t, body=body)
-        elif op == "A":
-            return ForallUnary(var=v, vtype=t, body=body)
-        elif op == "S":
-            return ConditionSet(var=v, vtype=t, body=body)
+        if op in op_classes:
+            return op_classes[op](var=v, vtype=t, body=body)
         else:
             raise ValueError("Unknown op " + op)
-
+        # if op == "L":
+        #     return LFun(var=v, vtype=t, body=body)
+        # elif op == "E":
+        #     return ExistsUnary(var=v, vtype=t, body=body)
+        # elif op == "A":
+        #     return ForallUnary(var=v, vtype=t, body=body)
+        # elif op == "I":
+        #     return IotaUnary(var=v, vtype=t, body=body)
+        # elif op == "S":
+        #     return ConditionSet(var=v, vtype=t, body=body)
+        # 
 
 
     @classmethod
@@ -1829,6 +1838,17 @@ class ExistsUnary(BindingOp):
 
     def copy(self):
         return ExistsUnary(self.vartype, self.body, self.varname)
+
+class IotaUnary(BindingOp):
+    def __init__(self, vtype, body, var="x"):
+        body = self.ensure_typed_expr(body)
+        #if body.type != types.type_t:
+        #    raise TypeMismatch
+        super().__init__(vartype=vtype, typ=vtype, op=("i%s. " % var), var=var, body=body, op_name_uni="i", op_name_latex="\\iota{}", body_type=types.type_t)
+        self.latex_op_str = self.latex_op_str_short
+
+    def copy(self):
+        return IotaUnary(self.vartype, self.body, self.varname)
 
 
 class LFun(BindingOp):
