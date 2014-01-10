@@ -4,6 +4,8 @@ This project is a framework for linguists and especially semanticists developing
 
 The project is in an alpha state.  While code is publicly up on github, expect bugs and rapid changes.  Contributions, requests, and suggestions are welcome.  I hope to have a more stable beta by the beginning of summer 2014.
 
+If you are interested in discussing this project, you can join the following mailing list, which currently very low traffic: [http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com](http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com).
+
 ## Installation
 
 Prerequisites: python 3.3.x, and IPython set up to run with python 3.
