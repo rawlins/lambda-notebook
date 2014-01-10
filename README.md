@@ -8,12 +8,12 @@ If you are interested in discussing this project, you can join the following mai
 
 ## Installation
 
-Prerequisites: python 3.3.x, and IPython set up to run with python 3.
+Prerequisites: python 3.3.x, and IPython set up to run with python 3.  If you are using macports, skip to the directions below.
   * Unfortunately this is not yet easy to install.  
-  * For python 3, see [http://www.python.org/](http://www.python.org/).  We do not using OS installed versions, for example, on OS X.
+  * For python 3, see [http://www.python.org/](http://www.python.org/).  We do not recommend using OS installed versions, for example, on OS X; installing an up-to-date version of python 3 is however very easy.
   * The complications lie in getting IPython to work with python 3.
   * For general installation instructions for IPython, see [http://ipython.org/install.html](http://ipython.org/install.html).  A slightly outdated, but more useful document, is at [http://ipython.org/ipython-doc/rel-1.1.0/install/index.html](http://ipython.org/ipython-doc/rel-1.1.0/install/index.html).  
-  For IPython notebook, you will need to make sure you have installed the packages pyzmq, Jinja2, nose, Tornado, readline.  To install several of these on a mac, you will need an XCode installation first, this can be downloaded for free from the app store.  Then you should install them using easy_install (part of setup_tools) or pip.  Currently, there may be difficulties with python on Maverick.  (_These notes need to be expanded, and adapated for windows..._)
+  For IPython notebook, you will need to make sure you have installed the packages pyzmq, Jinja2, nose, Tornado, readline.  To install several of these on a mac, you will need an XCode installation first, this can be downloaded for free from the app store.  Then you should install them using easy_install (part of setup_tools) or pip.  Currently, there may be difficulties with python on Maverick.  (_These notes need to be expanded, and adapted for windows..._)
 
 
   * To run ipython with python 3, you can either install IPython by using 'python3 setup.py' or easy_install-3.3 or whatever, or run 'python3 ipython.py'.  
