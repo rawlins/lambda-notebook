@@ -17,6 +17,14 @@ Prerequisites: python 3.3.x, and IPython set up to run with python 3.
   * To run ipython with python 3, you can either install IPython by using 'python3 setup.py' or easy_install-3.3 or whatever, or run 'python3 ipython.py'.  
   * Suggestions for improving these instructions are welcome!  The long term goal is to provide the lambda notebook as a standalone app.
 
+If you are using Macports, the following installation instructions (thanks to Robert Adesam for these) should get it running from scratch:
+
+  1. port install python33 py33-ipython py33-zmq py33-jinja2 py33-tornado
+  2. curl -O https://codeload.github.com/rawlins/lambda-notebook/zip/master
+  3. unzip master
+  4. cd lambda-notebook-master
+  5. ipython3-3.3 notebook
+
 ## Getting started
 
 Run 'ipython3 notebook' in the main directory of the repository.  Then look through the various notebooks to see examples of what can be done.  I recommend starting (for now) with:
