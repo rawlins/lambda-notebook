@@ -392,6 +392,7 @@ class CompositionTree(Tree, Composable):
                     self[i] = ch
                 elif isinstance(ch, Composable):
                     ch = CompositionTree.tree_factory(ch, system=self.system)
+                    self[i] = ch
                 elif isinstance(ch, Tree):
                     #ch = CompositionTree(ch.node, children=ch.children, system=self.system)
                     ch = self.from_tree(ch, system=self.system)
@@ -1155,7 +1156,8 @@ class TreeCompositionOp(object):
 
     def build_local(self, tree):
         if not isinstance(tree, CompositionTree):
-            tree = CompositionTree.from_tree(tree)
+            #tree = CompositionTree.from_tree(tree)
+            tree = CompositionTree.tree_factory(tree)
         tree.build_local_tree(override=False)
         return tree
 
