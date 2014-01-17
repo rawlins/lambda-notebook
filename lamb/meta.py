@@ -1,11 +1,26 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
-import sys, re
+import sys, re, logging
 from numbers import Number
 from lamb import types, utils, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n, type_property, type_transitive, OntoType, FunType
 from lamb.utils import *
 #import logic, utils
+
+global logger
+def setup_logger():
+    global logger
+    logger = logging.getLogger("lambda")
+    logger.handlers = list() # otherwise, will get double output on reload (since this just keeps adding handlers)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    # note that basicConfig does _not_ work for interactive ipython sessions, including notebook.
+    ch = logging.StreamHandler()
+    #ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter('%(levelname)s (%(module)s): %(message)s'))
+    logger.addHandler(ch)
+
+setup_logger()
 
 global _constants_use_custom, _type_system
 _constants_use_custom = False
@@ -155,7 +170,7 @@ class TypedExpr(object):
                 # TODO: n-ary predicates
                 raise TypeMismatch(op, args, "Function argument combination (too many arguments)")
             elif (len(args) == 0):
-                print("Warning: vacuous container TypedExpr")
+                logger.warning("Vacuous container TypedExpr")
                 self.type = op.type
                 self.op = op
                 self.args = list()
@@ -270,7 +285,7 @@ class TypedExpr(object):
                     new_op.type = unify_a
                     return derived(new_op, self, derivation_reason)
                 else:
-                    print("Warning: in type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
+                    logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
                     return self
 
     def __getitem__(self, key):
@@ -326,11 +341,11 @@ class TypedExpr(object):
         return c
 
     @classmethod
-    def parse_expr_string(cls, s, assignment=None):
+    def parse_expr_string(cls, s, assignment=None, locals=None):
         """Attempt to parse a string into a TypedExpr
         assignment: a variable assignment to use when parsing.
 
-        First, try to see if the string is a lambda expression.  (See try_parse_lambda)
+        First, try to see if the string is a binding operator expression.  (See try_parse_op_expr)
         Otherwise, do some regular expression magic, and then call eval.
 
         The gist of the magic:
@@ -344,7 +359,9 @@ class TypedExpr(object):
         #     if body is None:
         #         raise ValueError("Can't create body-less lambda expression from '%s'" % s)
         #     return LFun(vtype, body, vname)
-        test = cls.try_parse_op_expr(s, assignment=assignment)
+        if locals is None:
+            locals = dict()
+        test = cls.try_parse_op_expr(s, assignment=assignment, locals=locals)
         if test != None:
             return test
         ## Replace the alternative spellings of operators with canonical spellings
@@ -356,11 +373,13 @@ class TypedExpr(object):
         # TODO: test this more
         # somewhat counterintuitively, this will match some incorrect strings, because error checking is done at the factory level
         #s = re.sub(r'([a-zA-Z0-9_]*[a-zA-Z0-9]+(_[a-zA-Z0-9\?\<\>,]*)?)', r'TypedExpr.term_factory("\1", assignment=assignment)', s)
-        s = cls.expand_terms(s, assignment=assignment)
+        s = cls.expand_terms(s, assignment=assignment, ignore=locals.keys())
         ## Now eval the string.  (A security hole; do not use with an adversary.)
         # TODO: this won't necessarily do the right thing with assignment, can still result in inconsistent types
         #print(s)
-        result = eval(s, {'TypedExpr':TypedExpr,'TypedTerm':TypedTerm, 'assignment': assignment, 'type_e': type_e})
+        lcopy = locals.copy()
+        lcopy.update({'TypedExpr':TypedExpr,'TypedTerm':TypedTerm, 'assignment': assignment, 'type_e': type_e})
+        result = eval(s, dict(), lcopy)
         if isinstance(result, tuple):
             return Tuple(result)
         elif isinstance(result, set):
@@ -370,7 +389,7 @@ class TypedExpr(object):
         elif isinstance(result, TypedExpr):
             return result
         else:
-            print("Warning: parse_expr_string returning non-TypedExpr")
+            logger.warning("parse_expr_string returning non-TypedExpr")
             return result
 
     @classmethod
@@ -428,7 +447,17 @@ class TypedExpr(object):
         return (v, t, body)
 
     @classmethod
-    def try_parse_op_expr(cls, s, assignment=None):
+    def try_parse_op_expr(cls, s, assignment=None, locals=None):
+        try:
+            return BindingOp.try_parse_binding_expr(s, assignment=assignment, locals=locals)
+        except parsing.ParseError as e:
+            if not e.met_preconditions:
+                return None
+            else:
+                raise e
+
+    @classmethod
+    def try_parse_op_expr_old(cls, s, assignment=None, locals=None):
         """Attempt to parse s as a unary operator expression.  Used by the factory function.
         assignment: a variable assignment to use when parsing.
 
@@ -483,7 +512,7 @@ class TypedExpr(object):
                     assignment = dict(assignment)
                 assignment[v] = TypedTerm(v, t)
                 #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
-                body = cls.factory(l[1], assignment=assignment)
+                body = cls.parse_expr_string(l[1], assignment=assignment, locals=locals)
             except Exception as e:
                 print(e)
                 raise ValueError("Operator expression has unparsable body ('%s')" % (s))
@@ -574,11 +603,13 @@ class TypedExpr(object):
 
 
     @classmethod
-    def expand_terms(cls, s, i=0, assignment=None):
+    def expand_terms(cls, s, i=0, assignment=None, ignore=None):
         """Treat terms as macros for term_factory calls.  Attempt to find all term strings, and replace them with eval-able factory calls.
 
         This is an expanded version of the original regex approach; one reason to move away from that is that this will truely parse the types."""
         terms = cls.find_term_locations(s, i)
+        if ignore is None:
+            ignore = set()
         offset = 0
         for t in terms:
             if t.start() + offset < i:
@@ -587,7 +618,9 @@ class TypedExpr(object):
             #print("parsing '%s' at: '%s'" % (t.group(0), s[t.start()+offset:]))
             (name, typ, end) = cls.parse_term(s, t.start() + offset, return_obj=False, assignment=assignment)
             if name is None:
-                print("Warning: unparsed term '%s'" % t.group(0)) # TODO: more?
+                logger.warning("Unparsed term '%s'" % t.group(0)) # TODO: more?
+                continue
+            elif name in ignore:
                 continue
             # ugh this is sort of absurd
             if typ is None:
@@ -714,15 +747,16 @@ class TypedExpr(object):
             if isinstance(args[0], str):
                 # special case to test for lambda terms
                 # see if we can succesfully get a lambda expression out of args[0]
-                test = cls.try_parse_lambda(args[0], assignment)
+                # may want to eliminate, I'm not sure if this code path is used or important any more: it is
+                # a remnant from before the metalanguage parser.
+                test = cls.try_parse_op_expr(args[0], assignment)
                 if test != None:
-                    vname, vtype, body = test
-                    if body != None or len(args) > 2:
-                        raise ValueError("Too many bodies for lambda expression from '%s'" % repr(args))
-                    return LFun(vtype, args[1], vname)
+                    #args[0] = test
+                    args = (test,) + args[1:]
                 else:
                     if args[0] in op_symbols:
-                        return op_expr_factory(*args)
+                        return op_expr_factory(*args) # if args[0] isn't a lambda term, try 
+                        #                               to construct an n-ary operator expresssion
                     else:
                         raise ValueError("Don't know how to build TypedExpr from multi-element list '%s'" % repr(args))
             # package longer arg lengths in Tuples.
@@ -740,10 +774,10 @@ class TypedExpr(object):
                     coerced_op = args[0].try_coerce_new_argument(args[1].type)
                     #coerced_op = TypedTerm(args[0].op, FunType(args[1].type, type_t))
                     if coerced_op is not None:
-                        print("warning: coerced guessed type %s for '%s' into %s, to match argument '%s'" % (args[0].type, repr(args[0]), coerced_op.type, repr(args[1])))
+                        logger.info("Coerced guessed type %s for '%s' into %s, to match argument '%s'" % (args[0].type, repr(args[0]), coerced_op.type, repr(args[1])))
                         args = (coerced_op,) + args[1:]
                     else:
-                        print("warning: unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (args[0].type, repr(args[0]), repr(args[1]), args[1].type))
+                        logger.warning("Unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (args[0].type, repr(args[0]), repr(args[1]), args[1].type))
                 # no action in else case??
             if isinstance(args[0], TypedExpr) and args[0].type.functional() and not args[0].type.left.undetermined and args[1].type.undetermined:
                 # special case: applying undetermined type to function, would have to coerce to do full application
@@ -1301,7 +1335,7 @@ class UnaryOpExpr(TypedExpr):
                 self.args[0] = self.args[0].copy()
                 self.args[0].type = unify_a
             else:
-                print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.args[0].type, unify_a))
+                logger.warning("Unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.args[0].type, unify_a))
 
     def __str__(self):
         return "%s%s\nType: %s" % (self.op_name, repr(self.args[0]), self.type)
@@ -1542,6 +1576,16 @@ def op_expr_factory(op, *args):
 
 class BindingOp(TypedExpr):
     """abstract class for a unary operator that binds a single variable in its body."""
+
+    binding_operators = dict()
+    canonicalize_names = dict()
+    unparsed_operators = set()
+    op_regex = None
+    init_op_regex = None
+
+    canonical_name = None
+    secondary_names = set()
+
     def __init__(self, vartype, typ, op, var, body, op_name_uni=None, op_name_latex=None, body_type = None):
         if body_type is None:
             body_type = typ
@@ -1569,6 +1613,40 @@ class BindingOp(TypedExpr):
         self.var_instance = TypedTerm(self.varname, self.vartype)
         #self.body = typed_expr(body)
         self.args = [self.ensure_typed_expr(body, body_type, assignment={self.varname: self.var_instance})]
+
+    @classmethod
+    def add_op(cls, op):
+        if op.canonical_name is None:
+            BindingOp.unparsed_operators.add(op)
+        else:
+            if op.canonical_name in BindingOp.binding_operators:
+                logger.warning("Overriding existing binding operator '%s' in registry" % op.canonical_name)
+                cls.remove_op(op)
+            BindingOp.binding_operators[op.canonical_name] = op
+            for alias in op.secondary_names:
+                BindingOp.canonicalize_names[alias] = op.canonical_name
+        BindingOp.compile_ops_re()
+
+    @classmethod
+    def remove_op(cls, op):
+        if op.canonical_name is None:
+            BindigOp.unparsed_operators.remove(op)
+        else:
+            del BindingOp.binding_operators[op.canonical_name]
+        for alias in BindingOp.binding_operators[op.canonical_name].secondary_names:
+            del BindingOp.canonicalize_names[alias]
+        BindingOp.compile_ops_re()
+
+    @classmethod
+    def compile_ops_re(cls):
+        op_names = BindingOp.binding_operators.keys() | BindingOp.canonicalize_names
+        if len(op_names) == 0:
+            BindingOp.op_regex = None
+            BindingOp.init_op_regex = None
+        else:
+            regex = "(" + ("|".join(op_names)) + ")"
+            BindingOp.op_regex = re.compile(regex)
+            BindingOp.init_op_regex = re.compile("^" + regex)
 
     @property
     def body(self):
@@ -1628,14 +1706,71 @@ class BindingOp(TypedExpr):
     def term(self):
         return False
 
- 
+    @classmethod
+    def try_parse_header(cls, s, assignment=None, locals=None): 
+        i = 0
+        if BindingOp.init_op_regex is None:
+            return None # no operators to parse
+        op_match = re.match(BindingOp.init_op_regex, s)
+        if not op_match:
+            raise parsing.ParseError("Unknown operator when trying to parsing binding operator expression", s, None, met_preconditions=False)
+        op_name = op_match.group(1) # operator name
+        i += len(op_name)
 
+        if op_name in BindingOp.canonicalize_names:
+            op_name = BindingOp.canonicalize_names[op_name]
+        if op_name not in BindingOp.binding_operators:
+            raise Error("Can't find binding operator '%s'; should be impossible" % op_name)
+        op_class = BindingOp.binding_operators[op_name]
+
+        split = s.split(":", 1)
+        if (len(split) != 2):
+            # possibly should change to met_preconditions = True in the future.  At this point, we have seen a binding expression token.
+            raise parsing.ParseError("Missing ':' in binding operator expression", s, None, met_preconditions=False)
+        header, remainder = split
+        vname = header[i:].strip() # should remove everything but a variable name
+        (v, t) = cls.try_parse_typed_term(vname)
+        if not is_var_symbol(v):
+            raise parsing.ParseError("Need variable name in binding operator expression (received '%s')" % v, s, None)
+        if t is None:
+            # TODO: flag as a guessed type somehow?
+            t = default_variable_type(v)
+        return (op_class, v, t, remainder)
+
+    @classmethod
+    def try_parse_binding_expr(cls, s, assignment=None, locals=None):
+        result = cls.try_parse_header(s, assignment=assignment, locals=locals)
+        if not result:
+            return None
+        (op_class, v, t, remainder) = result # unpack results of parsing the header
+        body = None
+        remainder = remainder.strip()
+        if len(remainder) != 0:
+            try:
+                if assignment is None: 
+                    assignment = dict()
+                else:
+                    # create a new one to avoid side effects
+                    assignment = dict(assignment)
+                assignment[v] = TypedTerm(v, t)
+                #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
+                body = TypedExpr.parse_expr_string(remainder, assignment=assignment, locals=locals)
+            except Exception as e:
+                print(e)
+                raise parsing.ParseError("Binding operator expression has unparsable body", s, None)
+
+        if body is None:
+            raise parsing.ParseError("Can't create body-less binding operator expression", s, None)
+        return op_class(var=v, vtype=t, body=body)
 
 
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
 
     The body must be of type t."""
+
+    canonical_name = "Set"
+
     def __init__(self, vtype, body, var="x"):
         body = self.ensure_typed_expr(body)
         super().__init__(vartype=vtype, typ=types.SetType(vtype), op="(Set %s)" % var, var=var, body=body, op_name_uni="Set", op_name_latex="Set", body_type=types.type_t)
@@ -1685,6 +1820,8 @@ class ConditionSet(BindingOp):
             sub_var = TypedTerm(self.varname, inner_type)
             new_condition = char.apply(sub_var)
             return derived(ConditionSet(inner_type, new_condition, self.varname), self, derivation_reason)
+
+BindingOp.add_op(ConditionSet)
 
 class SingletonSet(TypedExpr):
     def __init__(self, body):
@@ -1799,6 +1936,9 @@ class ListedSet(TypedExpr):
             return derived(ListedSet(content), self, derivation_reason)
 
 class ForallUnary(BindingOp):
+
+    canonical_name = "Forall"
+
     def __init__(self, vtype, body, var="x"):
         body = self.ensure_typed_expr(body)
         super().__init__(vtype, types.type_t, "∀%s. " % var, var, body, op_name_uni="∀", op_name_latex="\\forall{}")
@@ -1828,7 +1968,11 @@ class ForallUnary(BindingOp):
     # def __repr__(self):
     #     return "∀%s. %s" % (self.varname, repr(self.body))
 
+BindingOp.add_op(ForallUnary)
+
 class ExistsUnary(BindingOp):
+
+    canonical_name = "Exists"
     def __init__(self, vtype, body, var="x"):
         body = self.ensure_typed_expr(body)
         #if body.type != types.type_t:
@@ -1839,7 +1983,10 @@ class ExistsUnary(BindingOp):
     def copy(self):
         return ExistsUnary(self.vartype, self.body, self.varname)
 
+BindingOp.add_op(ExistsUnary)
+
 class IotaUnary(BindingOp):
+    canonical_name = "Iota"
     def __init__(self, vtype, body, var="x"):
         body = self.ensure_typed_expr(body)
         #if body.type != types.type_t:
@@ -1850,11 +1997,15 @@ class IotaUnary(BindingOp):
     def copy(self):
         return IotaUnary(self.vartype, self.body, self.varname)
 
+BindingOp.add_op(IotaUnary)
 
 class LFun(BindingOp):
     """A typed function.  Can itself be used as an operator in a TypedExpr.
 
     """
+    canonical_name = "Lambda"
+    secondary_names = {"L", "λ", "lambda"}
+
     def __init__(self, vtype, body, var="x"):
         #print("LFun constructor: %s, '%s', %s" % (argtype, repr(body), var))
         body = self.ensure_typed_expr(body)
@@ -1952,6 +2103,8 @@ class LFun(BindingOp):
 
         call + reduce is equivalent to apply, for an LFun"""
         return TypedExpr.factory(self, *args)
+
+BindingOp.add_op(LFun)
 
 def unsafe_variables(fun, arg):
     return arg.free_variables() & fun.body.bound_variables()

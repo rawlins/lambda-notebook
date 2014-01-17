@@ -573,7 +573,7 @@ class CompositionTree(Tree, Composable):
                         ct.denotation = [composable,]
                         return ct
                     else:
-                        print("Warning: Unknown source '%s' when converting a TreeComposite to a CompositionTree" % repr(composable.source))
+                        lang.logger.warning("Unknown source '%s' when converting a TreeComposite to a CompositionTree" % repr(composable.source))
                 return CompositionTree(composable.name, children=composable.children, denotation=composable, system=system)
             else:
                 try:
@@ -1583,8 +1583,8 @@ class TreeCompositionSystem(CompositionSystem):
 
 
 
-def te(s):
-    return meta.TypedExpr.factory(s)
+def te(s, assignment=None):
+    return meta.TypedExpr.factory(s, assignment=assignment)
 
 def tp(s):
     ts = meta.get_type_system()

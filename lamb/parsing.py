@@ -6,18 +6,21 @@ from lamb.utils import *
 #    pass
 
 class ParseError(Exception):
-    def __init__(self, msg, s, i):
+    def __init__(self, msg, s, i, met_preconditions=True):
         self.s = s
         self.i = i
         self.msg = msg
+        self.met_preconditions = met_preconditions # set to False to indicate that a try_parse function did not find preconditions for what it is supposed to consume
 
     def __str__(self):
-        if self.s == None or self.i == None:
+        if self.s is None:
             return msg
-        if self.i >= len(self.s):
-            return "%s at point '%s!here!" % (self.msg, self.s)
+        if self.i is None:
+            return "%s, in string '%s'" % (self.msg, self.s)
+        elif self.i >= len(self.s):
+            return "%s, at point '%s!here!" % (self.msg, self.s)
         else:
-            return "%s at point '%s!here!%s'" % (self.msg, self.s[0:self.i], self.s[self.i:])
+            return "%s, at point '%s!here!%s'" % (self.msg, self.s[0:self.i], self.s[self.i:])
 
 
 def consume_char(s, i, match, error=None):
@@ -216,7 +219,7 @@ def consume_curly_bracketed(s, i):
             accum += s[i]
             i += 1
     if balance != 0:
-        raise ParseError(s, i, "Unbalanced '{...}' expression")
+        raise ParseError("Unbalanced '{...}' expression", s, i)
     return (accum, i)
 
 def consume_qtree_node(s, i):
@@ -269,8 +272,63 @@ def parse_qtree_r(s, i=0):
     return (tree_mini.Tree(label, children=children), i)
 
 
+def parse_paren_str(s, i, balance=0):
+    accum = ""
+    seq = list()
+    start_i = i
+    while i < len(s):
+        if s[i] == "(":
+            i += 1
+            r, new_i = parse_paren_str(s, i, balance + 1)
+            if len(accum) > 0:
+                seq.append(accum)
+                accum = ""
+            seq.append(r)
+            i = new_i
+        elif s[i] == ")":
+            if balance > 0:
+                i += 1
+                if len(accum) > 0:
+                    seq.append(accum)
+                    accum = ""
+                return (seq, i)
+            else:
+                raise ParseError("Unbalanced '(...)' expression", s, i)
+        else:
+            accum += s[i]
+            i += 1
+    if len(accum) > 0:
+        seq.append(accum)
+    if balance != 0:
+        raise ParseError("Unbalanced '(...)' expression at end of string", s, i)
+    return (seq, i)
+
+def macro_parse_r(struc, parse_fun, h, vnum=1, vprefix="ilnb", always_var=True):
+    s = ""
+    for sub in struc:
+        if isinstance(sub, str):
+            s += sub 
+        else:
+            (sub_str, new_hash, vnum) = macro_parse_r(sub, parse_fun, h, vnum, vprefix=vprefix, always_var=always_var)
+            h = new_hash
+            parsed_sub = parse_fun(sub_str, locals=h)
+            if isinstance(parsed_sub, str) and not always_var:
+                s += "(" + parsed_sub + ")"
+            else:
+                var = vprefix + str(vnum)
+                s += "(" + var + ")"
+                vnum += 1
+                h[var]= parsed_sub
+    return (s, h, vnum)
 
 
+def macro_parse(s, parse_fun):
+    vnum = 1
+    vprefix = "ilnb"
+    (struc, i) = parse_paren_str(s, 0)
+    (s, h, vnum) = macro_parse_r(struc, parse_fun, dict(), vnum, vprefix)
+    result = parse_fun(s, locals=h)
+    return result
 
 
 
