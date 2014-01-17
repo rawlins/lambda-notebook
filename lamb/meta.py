@@ -1629,12 +1629,12 @@ class BindingOp(TypedExpr):
 
     @classmethod
     def remove_op(cls, op):
+        for alias in BindingOp.binding_operators[op.canonical_name].secondary_names:
+            del BindingOp.canonicalize_names[alias]
         if op.canonical_name is None:
             BindigOp.unparsed_operators.remove(op)
         else:
             del BindingOp.binding_operators[op.canonical_name]
-        for alias in BindingOp.binding_operators[op.canonical_name].secondary_names:
-            del BindingOp.canonicalize_names[alias]
         BindingOp.compile_ops_re()
 
     @classmethod
