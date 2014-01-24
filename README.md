@@ -4,7 +4,7 @@ This project is a framework for linguists and especially semanticists developing
 
 The project is in an alpha state.  While code is publicly up on github, expect bugs and rapid changes.  Contributions, requests, and suggestions are welcome.  I hope to have a more stable beta by the beginning of summer 2014.
 
-If you are interested in discussing this project, you can join the following mailing list, which currently very low traffic: [http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com](http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com).
+If you are interested in discussing this project, you can join the following mailing list, which currently very low traffic: [http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com](http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com).  You can also ask questions directly to Kyle Rawlins, [kgr@jhu.edu](kgr@jhu.edu).
 
 ## Installation
 
@@ -47,6 +47,7 @@ To stop the server, hit Ctrl-C twice in the terminal window.
 
 It is also possible to load most of the facilities of the lambda notebook directly into a regularly-started notebook (or into an arbitrary (i)python 3 instance), by adding the base directory of the lambda notebook to the modules path, and then importing `lamb_setup`.
 
+_Important note: notebooks that are part of this project assume that the lambda notebook modules (and other facilities) are part of the namespace already, and will not work without modification when loaded into a regular lambda notebook.  This typically just means importing things; see `lamb_setup.py` for an idea._
 
 ## Code overview
 
