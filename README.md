@@ -8,7 +8,7 @@ If you are interested in discussing this project, you can join the following mai
 
 ## Installation
 
-Prerequisites: python 3.3.x, and IPython set up to run with python 3.  If you are using macports, skip to the directions below.
+Prerequisites: python 3.3.x, and IPython 1.0+, set up to work with that version of python.  If you are using macports, skip to the directions below.
   * Unfortunately this is not yet easy to install.  
   * For python 3, see [http://www.python.org/](http://www.python.org/).  We do not recommend using OS installed versions, for example, on OS X; installing an up-to-date version of python 3 is however very easy.
   * The complications lie in getting IPython to work with python 3.
@@ -31,12 +31,22 @@ You may need to run these as root, e.g. via doing _sudo -s_ and typing your user
 
 ## Getting started
 
-Run 'ipython3 notebook' in the main directory of the repository.  Then look through the various notebooks to see examples of what can be done.  I recommend starting (for now) with:
+To run the notebook:
+  * On a mac, double click `lambda_notebook.command`.
+  * Or, from a shell, run `lambda_notebook.py`.  On windows you may need to explicitly call something like `python3 lambda_notebook.py`.  (Untested.)
+  * To user a notebook directory other than the default `notebooks`, you can call something like `./lambda_notebook.py --notebook-dir=./local_notebooks/`.  Note that `local_notebooks` is untracked by git, so is a safe place to put testing notebooks etc.
+
+This will start a server in the terminal and open your web browser to the notebook directory.  Then, look through the various notebooks to see examples of what can be done.  I recommend starting (for now) with:
   * LSA Poster examples
   * Relative clauses
   * definite articles tutorial
   * Lamb demo (old, but thorough for what was available at the time)
   * Composition operations
+
+To stop the server, hit Ctrl-C twice in the terminal window.
+
+It is also possible to load most of the facilities of the lambda notebook directly into a regularly-started notebook (or into an arbitrary (i)python 3 instance), by adding the base directory of the lambda notebook to the modules path, and then importing `lamb_setup`.
+
 
 ## Code overview
 

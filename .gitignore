@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
+local_notebooks/
 
 # Sphinx documentation
 docs/_build/
