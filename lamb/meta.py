@@ -122,6 +122,7 @@ class TypedExpr(object):
         self.type_guessed = False
         type_sys = get_type_system()
         self.derivation = None
+        self.defer = defer
 
         if (op in basic_ops):
             #TODO: how to deal properly with the arguments here?
@@ -177,7 +178,7 @@ class TypedExpr(object):
             else:
                 history = False
                 arg = self.ensure_typed_expr(args[0])
-                unify_f, unify_a, unify_r = type_sys.local_unify_fa(op.type, arg.type)
+                unify_f, unify_a, unify_r = type_sys.unify_fa(op.type, arg.type)
                 if unify_f is None:
                     raise TypeMismatch(op, arg, "Function argument combination (unification failed)")
                 self.type = unify_r
@@ -195,6 +196,7 @@ class TypedExpr(object):
                     #print("hi %s %s" % (repr(self.op), repr(self.args[0])))
                     # bit of a hack: build a derivation with the deferred version as the origin
                     old = TypedExpr(op, arg, defer=True)
+                    #print(old[0], self[0])
                     derived(self, old, desc="Type inference")
             if isinstance(op, LFun):
                 arg.type_not_guessed()
@@ -227,14 +229,14 @@ class TypedExpr(object):
             if uncertain:
                 self.type = types.UndeterminedType(self.type)
         elif isinstance(self.op, LFun):
-            unify_f, unify_a, unify_r = type_sys.local_unify_fa(self.op.type, self.args[0].type)
+            unify_f, unify_a, unify_r = type_sys.unify_fa(self.op.type, self.args[0].type)
             #if arg.type != op.argtype and not arg.type.undetermined:
             self.type = unify_r
         elif isinstance(self.op, TypedExpr):
             if (len(args) == 0):
                 self.type = self.op.type
             else:
-                unify_f, unify_a, unify_r = type_sys.local_unify_fa(self.op.type, self.args[0].type)
+                unify_f, unify_a, unify_r = type_sys.unify_fa(self.op.type, self.args[0].type)
                 self.type = unify_r
             self.type_guessed = op.type_guessed
         elif (len(args) == 0):
@@ -294,6 +296,8 @@ class TypedExpr(object):
 
     def subst(self, i, s):
         """ Tries to consistently (relative to types) substitute s for element i of the TypedExpr.
+
+        Will return a modified copy.
         """
         s = TypedExpr.ensure_typed_expr(s)
         if i == 0:
@@ -304,33 +308,46 @@ class TypedExpr(object):
             raise ValueError("Cannot perform substitution on non-TypedExpr %s" % (old))
         c = self.copy()
         ts = get_type_system()
+        # check: is the type of the substitution compatible with the type of what it is replacing?
         unify_a, unify_b = ts.unify(old.type, s.type)
         #print("%s, %s" % (unify_a, unify_b))
         if unify_a is None:
             raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
         if unify_b != s.type:
+            # compatible but unify suggested a new type for the substitution.  
+            # Try adjusting the type of the expression.
             s_a = s.try_adjust_type(unify_b)
             if s_a is None:
                 raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
             #print("adjusting %s to %s" % (s,s_a))
             s = s_a
         if i == 0:
+            # the position is the operator position, need some special logic.  May have to adjust the types of 
+            # the argument and the output
             c.op = s
-            if c.op.type.functional() and c.args[0].type != unify_b.left:
-                new_arg = c.args[0].try_adjust_type(unify_b.left)
+            # TODO: used to check if op was functional.  This shouldn't arise any more?
+            unify_f, unify_arg, unify_out = ts.unify_fa(c.op.type, c.args[0].type)
+            if unify_f is None:
+                raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
+            if unify_arg != c.args[0].type:
+                new_arg = c.args[0].try_adjust_type(unify_arg)
                 if new_arg is None:
                     raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
                 c.args[0] = new_arg
-            c.type = unify_b.right
+            c.type = unify_out
         else:
             c.args[i-1] = s
-            # leave type for c unchanged?
             if isinstance(c.op, TypedExpr):
-                if c.op.type.left != unify_a:
-                    new_op = c.op.try_adjust_type(FunType(unify_a, c.op.type.right))
-                    if new_op is None: 
+                # op must be functional, make sure it is compatible with its new input
+                unify_f, unify_arg, unify_out = ts.unify_fa(c.op.type, c.args[0].type)
+                if unify_f is None:
+                    raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
+                if unify_f != c.op.type:
+                    new_op = c.op.try_adjust_type(unify_f)
+                    if new_op is None:
                         raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
                     c.op = new_op
+                c.type = unify_out
             else:
                 pass
                 # use a strict substitution rule for the time being
@@ -833,9 +850,12 @@ class TypedExpr(object):
         Must be overridden by subclasses, or this will go wrong.
         """
         # TODO should this call the factory?
-        c = TypedExpr(self.op, *self.args)
+        c = TypedExpr(self.op, *self.args, defer=self.defer)
         #c.derivation = self.derivation #TODO: should I do this?
+        #print(c.type, self.type, c, self, self.op, self.args[0])
         assert c == self
+        #if c != self:
+        #    raise Exception(c, self)
         return c
 
     def under_assignment(self, assignment):
@@ -1035,7 +1055,7 @@ class TypedExpr(object):
         # need to explicitly check this in case recursion accidentally descends into a string Op
         # TODO revisit
         if isinstance(other, TypedExpr):
-            return (other is self) or (self.op == other.op and self.args == other.args)
+            return (other is self) or (self.op == other.op and self.args == other.args and self.type == other.type)
         else:
             return False
         #TODO: equality by semantics, not syntax?
@@ -1707,7 +1727,12 @@ class BindingOp(TypedExpr):
         return False
 
     @classmethod
-    def try_parse_header(cls, s, assignment=None, locals=None): 
+    def try_parse_header(cls, s, assignment=None, locals=None):
+        """Try and parse the header of a binding operator expression, i.e. everything up to the body including ':'.
+        If this succeeds, it will return a tuple with the class object, the variable name, the variable type, and the string after the ':'' if any.
+        If it fails, it will either return None or raise an exception.  That exception is typically a ParseError.
+        """
+
         i = 0
         if BindingOp.init_op_regex is None:
             return None # no operators to parse
@@ -1739,6 +1764,19 @@ class BindingOp(TypedExpr):
 
     @classmethod
     def try_parse_binding_expr(cls, s, assignment=None, locals=None):
+        """Attempt to parse s as a unary operator expression.  Used by the factory function.
+        assignment: a variable assignment to use when parsing.
+
+        Format: 'Op v : b'
+          * 'L' is one of 'lambda', 'L', 'λ', 'Forall', 'Exists', 'Iota'.  (Subclasses can register themselves to be parsed.)
+          * 'v' is a variable name expression (see try_parse_typed_term), e.g. 'x_e'
+          * 'b' is a function body, i.e. something parseable into a TypedExpr.
+
+        If 'v' does not provide a type, it will attempt to guess one based on the variable name.
+        The body will be parsed using an initial call to factory, with a shifted assignment using the new variable 'v'.
+
+        Returns a subclass of BindingOp.
+        """
         result = cls.try_parse_header(s, assignment=assignment, locals=locals)
         if not result:
             return None
@@ -1763,6 +1801,13 @@ class BindingOp(TypedExpr):
             raise parsing.ParseError("Can't create body-less binding operator expression", s, None)
         return op_class(var=v, vtype=t, body=body)
 
+    @classmethod
+    def try_parse_binding_struc(cls, struc, assignment=None, locals=None):
+        result = cls.try_parse_header(struc[0])
+        if result is None:
+            return None
+        (op_class, v, t, remainder) = result
+        new_struc = [remainder,] + struc[1:]
 
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
@@ -2090,7 +2135,7 @@ class LFun(BindingOp):
         if ts.eq_check(self.argtype, arg.type):
             # first check for potential variable name collisions when substituting, and the substitute
             #TODO: do I want to actually return the result of alpha converting?  May be needed later?
-            new_self = alpha_convert_new(self, unsafe_variables(self, arg))
+            new_self = alpha_convert(self, unsafe_variables(self, arg))
             # TODO: the copy here is a hack.  Right now identity functions result in no copying at all, leading to very
             # wrong results.  This needs to be tracked down to its root and fixed.
             return (beta_reduce_ts(new_self.body, new_self.varname, arg)).copy()
@@ -2297,22 +2342,26 @@ def alpha_variant(x, blockset):
     return t
 
 
-def alpha_convert(t, blocklist):
-    """ produce an alphabetic variant of t that is guaranteed not to have any variables in blocklist.  
-
-    Possibly will not change t."""
+def alpha_convert_old(t, blocklist):
+    """left here for posterity -- does not work."""
     overlap = t.free_variables() & blocklist
     full_bl = blocklist | t.free_variables() | t.bound_variables()
     # note that this relies on the side effect of alpha_variant...
     conversions = {x : alpha_variant(x, full_bl) for x in overlap}
     return variable_convert(t, conversions)
 
-def alpha_convert_new(t, blocklist):
+def alpha_convert(t, blocklist):
+    """ produce an alphabetic variant of t that is guaranteed not to have any variables in blocklist.  
+
+    Possibly will not change t."""
     overlap = t.bound_variables() & blocklist
     full_bl = blocklist | t.free_variables() | t.bound_variables()
     # note that this relies on the side effect of alpha_variant...
     conversions = {x : alpha_variant(x, full_bl) for x in overlap}
     return alpha_convert_r(t, overlap, conversions)
+
+def alpha_convert_new(t, blocklist):
+    return alpha_convert(t, blocklist)
 
 def alpha_convert_r(t, overlap, conversions):
     overlap = overlap & t.bound_variables()

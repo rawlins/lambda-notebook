@@ -1067,6 +1067,34 @@ class UnderTypeSystem(TypeSystem):
     def local_unify_fa(self, f, a):
         return self.local_unify_fa_weak(f,a)
 
+    def unify_fa_weak(self, fun, arg):
+        """The main distinguishing property of this is that the type of the whole inherits some
+        uncertainty from any uncertain parts."""
+        if fun.functional():
+            new_f_left, new_a = self.unify(fun.left, arg)
+            if new_f_left is None:
+                return (None, None, None)
+            if (isinstance(fun, UndeterminedType) or 
+                        isinstance(fun.left, UndeterminedType) or
+                        isinstance(fun.right, UndeterminedType) or
+                        isinstance(arg, UndeterminedType)):
+                new_out = UndeterminedType(fun.right)
+            else:
+                new_out = fun.right
+            new_f = FunType(new_f_left, fun.right)
+            if isinstance(fun, UndeterminedType):
+                new_f = UndeterminedType(new_f)
+        elif fun == undetermined_type:
+            new_a = arg
+            new_f = UndeterminedType(FunType(new_a, undetermined_type))
+            new_out = undetermined_type
+        else:
+            return (None, None, None)
+        return (new_f, new_a, new_out)
+
+    def unify_fa(self, f, a):
+        return self.unify_fa_weak(f, a)
+
     def eq_check(self, a, b):
         return flexible_equal(a,b)
 

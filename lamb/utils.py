@@ -24,7 +24,10 @@ def ltx_print(*args):
         try:
             s += x._repr_latex_()
         except:
-            s += repr(x)
+            if isinstance(x, str):
+                s += x
+            else:
+                s += repr(x)
         s += "<br />"
     return MiniLatex(s)
 

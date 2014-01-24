@@ -1,5 +1,5 @@
 #!/usr/local/bin/python3
-import collections, itertools
+import collections, itertools, logging
 
 from lamb import utils, types, meta
 from lamb.utils import *
@@ -573,7 +573,7 @@ class CompositionTree(Tree, Composable):
                         ct.denotation = [composable,]
                         return ct
                     else:
-                        lang.logger.warning("Unknown source '%s' when converting a TreeComposite to a CompositionTree" % repr(composable.source))
+                        meta.logger.warning("Unknown source '%s' when converting a TreeComposite to a CompositionTree" % repr(composable.source))
                 return CompositionTree(composable.name, children=composable.children, denotation=composable, system=system)
             else:
                 try:
@@ -1762,6 +1762,8 @@ def pm_fun(fun1, fun2, assignment=None):
 def setup_type_driven():
     global td_system, cat, gray, john, pm, fa, pa, inP, texas, isV, julius
     # note that PM is only commutative if the underlying logic has commutative conjunction...
+    oldlevel = meta.logger.level
+    meta.logger.setLevel(logging.WARNING)
     pm = BinaryCompositionOp("PM", pm_fun, commutative=False)
     fa = BinaryCompositionOp("FA", fa_fun)
     pa = BinaryCompositionOp("PA", pa_fun, allow_none=True)
@@ -1776,6 +1778,7 @@ def setup_type_driven():
     isV = Item("is", meta.LFun(types.type_property, pvar, "p"))
     td_system.add_items(cat, gray, john, julius, inP, texas, isV)
     set_system(td_system)
+    meta.logger.setLevel(oldlevel)
 
 setup_type_driven()
 
