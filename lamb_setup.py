@@ -1,4 +1,7 @@
 #setup and load the lambda notebook
+# this is intended to be run automatically during notebook startup.  If you want to use lambda notebook files
+# without the branded version of notebook, you will need to insert some variant of these imports into the beginning 
+# of your notebook.
 import lamb
 from lamb import *
 from lamb.tree_mini import Tree
@@ -37,5 +40,8 @@ def reload_lamb():
 	lamb.reload_all = reload_lamb
 	inject()
 
-lamb.reload_all = reload_lamb
-inject()
+if __name__ == "__main__":
+	print("Please run 'lambda_notebook.py' to start the IPython Lambda Notebook.")
+else:
+	lamb.reload_all = reload_lamb
+	inject()
