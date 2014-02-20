@@ -2648,6 +2648,55 @@ def PM(fun1, fun2):
         body2 = fun2.body
     return LFun(fun1.argtype, fun1.body & body2, fun1.varname)
 
+import unittest
+
+class MetaTest(unittest.TestCase):
+    def setUp(self):
+        self.ident = LFun(type_e, "x", "x")
+        self.ia = TypedExpr.factory(self.ident, "y")
+        self.ib = LFun(type_e, self.ia, "y")
+        self.P = TypedTerm("P", FunType(type_e, type_t))
+        self.Q = TypedTerm("Q", FunType(type_e, type_t))
+        self.x = TypedTerm("x", type_e)
+        self.y = TypedTerm("y", type_e)
+        self.t = TypedExpr.factory(self.P, self.x)
+        self.t2 = TypedExpr.factory(self.Q, self.x)
+        self.body = TypedExpr.factory("&", self.t, self.t) | self.t
+        self.p = TypedTerm("p", type_t)
+        self.testf = LFun(type_e, self.body)
+
+    def test_basic(self):
+        # equality basics
+        self.assertEqual(self.P, self.P)
+        self.assertEqual(self.x, self.x)
+        self.assertEqual(self.testf, self.testf)
+        self.assertNotEqual(self.P, self.Q)
+        self.assertNotEqual(self.x, self.y)
+
+    def test_parse(self):
+        # overall: compare parsed TypedExprs with constructed TypedExprs
+        # basic operator syntax
+        self.assertEqual(TypedExpr.factory("(P_<e,t>(x_e) & P_<e,t>(x_e)) | P_<e,t>(x_e)"), self.body)
+        # parenthesis reduction
+        self.assertEqual(TypedExpr.factory("((P_<e,t>(x_e) & P_<e,t>(x_e)) | (P_<e,t>(x_e)))"), self.body)
+        # parenthesis grouping
+        self.assertNotEqual(TypedExpr.factory("P_<e,t>(x_e) & (P_<e,t>(x_e) | P_<e,t>(x_e))"), self.body)
+        # variable binding syntax
+        self.assertEqual(TypedExpr.factory("L x_e : x_e"), self.ident)
+        self.assertRaises(parsing.ParseError, TypedExpr.factory, "L x_e : x_t")
+
+    def test_reduce(self):
+        self.assertEqual(self.ident(self.y).reduce(), self.y)
+
+        # test: when a free variable in a function scopes under an operator, do not bind the variable on application        
+        pmw_test1 = LFun(type_t, LFun(type_e, self.t & self.p, "x"), "p")
+        pmw_test1b = LFun(type_e, self.t & self.t2, "x")
+        self.assertNotEqual(pmw_test1.apply(self.t2), pmw_test1b)
+
+        # Different version of the same test: direct variable substitution
+        test2 = TypedExpr.factory("L y_e : L x_e : y_e")
+        test2b = TypedExpr.factory("L x_e : x_e")
+        self.assertNotEqual(test2.apply(self.x), test2b)
 
 
 # def setup():
