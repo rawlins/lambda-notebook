@@ -6,15 +6,18 @@ from lamb.utils import *
 #    pass
 
 class ParseError(Exception):
-    def __init__(self, msg, s, i, met_preconditions=True):
+    def __init__(self, msg, s, i=None, met_preconditions=True, e=None):
         self.s = s
         self.i = i
+        self.e = e
         self.msg = msg
         self.met_preconditions = met_preconditions # set to False to indicate that a try_parse function did not find preconditions for what it is supposed to consume
 
     def __str__(self):
+        if self.e is not None:
+            return str(self.e)
         if self.s is None:
-            return msg
+            return self.msg
         if self.i is None:
             return "%s, in string '%s'" % (self.msg, self.s)
         elif self.i >= len(self.s):
@@ -272,38 +275,82 @@ def parse_qtree_r(s, i=0):
     return (tree_mini.Tree(label, children=children), i)
 
 
-def parse_paren_str(s, i, balance=0):
+def flatten_paren_struc(struc):
+    """Flatten a parsed structure into a string"""
+    s = ""
+    for sub in struc:
+        if isinstance(sub, str):
+            s += sub
+        else:
+            s += flatten_paren_struc(sub)
+    #return "(" + s + ")"
+    return s
+
+global brackets, close_brackets
+#brackets = {"(": ")", "{": "}", "<": ">"}
+brackets = {"(" : ")"}
+close_brackets = {brackets[y] : y for y in brackets.keys()}
+
+def parse_paren_str(s, i, type_sys=None):
+    """Turn a string with parenthesis into a structured representation, checking balance.
+
+    The structure consists of a list of strings/lists.  Sub-elements that are lists have the same structure.
+    Each distinct sub-element represents a parenthesized grouping.
+
+    Right now only pays attention to ().  TODO: check other bracketings?"""
+    stack = list()
+    (seq, i) = parse_paren_str_r(s, i, stack, type_sys=type_sys)
+    if len(stack) != 0:
+        raise ParseError("Unbalanced '%s...%s' expression at end of string" % (stack[-1], brackets[stack[-1]]), s, i)
+    return (seq, i)
+
+
+def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
     accum = ""
     seq = list()
+    if initial_accum is not None:
+        seq.append(initial_accum)
     start_i = i
     while i < len(s):
-        if s[i] == "(":
+        if s[i] == "_" and type_sys != None:
+            accum += "_"
+            # have to parse type here in order to handle bracketing in types correctly.
+            # I don't think there's a shortcut to this.  In the long run, this should do proper tokenizing of terms.
+            typ, end = type_sys.type_parser_recursive(s, i+1)
+            assert(typ is not None)
+            # oh good god
+            accum += repr(typ)
+            i = end
+        elif s[i] in brackets.keys():
+            stack.append(s[i])
             i += 1
-            r, new_i = parse_paren_str(s, i, balance + 1)
+
+            r, new_i = parse_paren_str_r(s, i, stack, initial_accum=stack[-1], type_sys=type_sys)
             if len(accum) > 0:
                 seq.append(accum)
                 accum = ""
             seq.append(r)
             i = new_i
-        elif s[i] == ")":
-            if balance > 0:
-                i += 1
+        elif s[i] in close_brackets.keys():
+            if len(stack) > 0 and s[i] == brackets[stack[-1]]:
                 if len(accum) > 0:
                     seq.append(accum)
                     accum = ""
+                stack.pop()
+                seq.append(s[i])
+                i += 1
                 return (seq, i)
             else:
-                raise ParseError("Unbalanced '(...)' expression", s, i)
+                raise ParseError("Unbalanced '%s...%s' expression" % (close_brackets[s[i]], s[i]), s, i)
         else:
             accum += s[i]
             i += 1
     if len(accum) > 0:
         seq.append(accum)
-    if balance != 0:
-        raise ParseError("Unbalanced '(...)' expression at end of string", s, i)
     return (seq, i)
 
 def macro_parse_r(struc, parse_fun, h, vnum=1, vprefix="ilnb", always_var=True):
+    """Proof of concept for parsing paren structures.  Not used generally."""
     s = ""
     for sub in struc:
         if isinstance(sub, str):
@@ -323,6 +370,7 @@ def macro_parse_r(struc, parse_fun, h, vnum=1, vprefix="ilnb", always_var=True):
 
 
 def macro_parse(s, parse_fun):
+    """Proof of concept for parsing paren structures.  Not used generally."""
     vnum = 1
     vprefix = "ilnb"
     (struc, i) = parse_paren_str(s, 0)

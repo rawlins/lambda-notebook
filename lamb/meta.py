@@ -358,6 +358,12 @@ class TypedExpr(object):
         return c
 
     @classmethod
+    def parse(cls, s, assignment=None, locals=None):
+        ts = get_type_system()
+        (struc, i) = parsing.parse_paren_str(s, 0, ts)
+        return cls.try_parse_paren_struc_r(struc, assignment=assignment, locals=locals)
+
+    @classmethod
     def parse_expr_string(cls, s, assignment=None, locals=None):
         """Attempt to parse a string into a TypedExpr
         assignment: a variable assignment to use when parsing.
@@ -410,58 +416,47 @@ class TypedExpr(object):
             return result
 
     @classmethod
-    def try_parse_lambda(cls, s, assignment=None):
-        """Attempt to parse s as a lambda expression.  Used by the factory function.
+    def try_parse_flattened(cls, s, assignment=None, locals=None):
+        """Attempt to parse a flat, simplified string into a TypedExpr.  Binding expressions should be already handled.
         assignment: a variable assignment to use when parsing.
+        locals: a dict to use as the local variables when parsing.
 
-        Format: 'L v : b'
-          * 'L' is one of 'lambda', 'L', or 'λ'
-          * 'v' is a variable name expression (see try_parse_typed_term), e.g. x_e
-          * 'b' is a function body, i.e. something parseable into a TypedExpr.
+        Do some regular expression magic to expand metalanguage terms into constructor/factory calls, 
+        and then call eval.
 
-        If 'v' does not provide a type, it will attempt to guess one based on the variable name.
-        The body will be parsed using an initial call to factory, with a shifted assignment using the new variable 'v'.
+        The gist of the magic (see expand_terms):
+          * replace some special cases with less reasonable operator names.  (This is based on AIMA logic.py)
+          * find things that look like term names, and surround them with calls to the term factory function.
 
-        Returns a tuple containing the variable, the type, and the body.  If you want a LFun, call the factory, not this.
+        Certain special case results are wrapped in TypedExprs, e.g. sets and tuples.
         """
-        # TODO: some kind of error messages / exceptions?
-        next = None
-        if s.startswith("lambda "):
-            next = s[7:]
-        elif s.startswith("L "):
-            next = s[2:]
-        elif s.startswith("λ"):
-            next = s[1:]
+        if locals is None:
+            locals = dict()
+        ## Replace the alternative spellings of operators with canonical spellings
+        s = s.replace('==>', '>>').replace('<==', '<<')
+        s = s.replace('<=>', '%').replace('=/=', '^')
+        s = TypedExpr.expand_terms(s, assignment=assignment, ignore=locals.keys())
+        ## Now eval the string.  (A security hole; do not use with an adversary.)
+        # TODO: this won't necessarily do the right thing with assignment, can still result in inconsistent types
+        #print(s)
+        lcopy = locals.copy()
+        lcopy.update({'TypedExpr':TypedExpr,'TypedTerm':TypedTerm, 'assignment': assignment, 'type_e': type_e})
+        #print("test: " + s)
+        result = eval(s, dict(), lcopy)
+        if isinstance(result, tuple):
+            return Tuple(result)
+        elif isinstance(result, set):
+            return ListedSet(result)
+        elif isinstance(result, dict) and len(result) == 0:
+            # hack: empty dict is treated as empty set, so that "{}" makes sense
+            return ListedSet(set())
+        elif isinstance(result, TypedExpr):
+            return result
         else:
-            return None # failed to find proper initial chars
-        l = next.split(":", 1)
-        l = [x.strip() for x in l]
-        #print("parsing with %s" % repr(l))
-        if len(l) != 2:
-            # TODO should the prefixes be treated as reserved?  Stronger error here?
-            # right now, failure at this point leads to cryptic syntax errors on eval
-            return None # failed to find properly terminated variable name
-        (v, t) = cls.try_parse_typed_term(l[0])
-        if not is_var_symbol(v):
-            return None # failed to find variable name
-        if t is None:
-            # TODO: flag as a guessed type somehow?
-            t = default_variable_type(v)
-        body = None
-        if len(l[1]) != 0:
-            try:
-                if assignment is None: 
-                    assignment = dict()
-                else:
-                    # create a new one to avoid side effects
-                    assignment = dict(assignment)
-                assignment[v] = TypedTerm(v, t)
-                #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
-                body = cls.factory(l[1], assignment=assignment)
-            except Exception as e:
-                print(e)
-                raise ValueError("Lambda string has unparsable body ('%s')" % (s))
-        return (v, t, body)
+            logger.warning("parse_flattened returning non-TypedExpr")
+            return result
+
+
 
     @classmethod
     def try_parse_op_expr(cls, s, assignment=None, locals=None):
@@ -474,83 +469,36 @@ class TypedExpr(object):
                 raise e
 
     @classmethod
-    def try_parse_op_expr_old(cls, s, assignment=None, locals=None):
-        """Attempt to parse s as a unary operator expression.  Used by the factory function.
-        assignment: a variable assignment to use when parsing.
+    def try_parse_binding_struc(cls, s, assignment=None, locals=None, vprefix="ilnb"):
+        try:
+            return BindingOp.try_parse_binding_struc_r(s, assignment=assignment, locals=locals, vprefix=vprefix)
+        except parsing.ParseError as e:
+            if not e.met_preconditions:
+                return None
+            else:
+                raise e
 
-        Format: 'Op v : b'
-          * 'L' is one of 'lambda', 'L', 'λ', 'Forall', 'Exists', 
-          * 'v' is a variable name expression (see try_parse_typed_term), e.g. x_e
-          * 'b' is a function body, i.e. something parseable into a TypedExpr.
-
-        If 'v' does not provide a type, it will attempt to guess one based on the variable name.
-        The body will be parsed using an initial call to factory, with a shifted assignment using the new variable 'v'.
-
-        Returns a subclass of UnaryOpExpr.
-        """
-        # TODO: some kind of error messages / exceptions?
-
-        # normalize various ways of writing certain operators (bit of a hack)
-        ops = {"lambda " : "L", "L " : "L", "λ" : "L", "Iota ": "I", "Forall " : "A", "Exists " : "E", "Set " : "S"}
-        # map operators to classes (for standardized BindingOp constructors)
-        op_classes = {"L" : LFun, "I" : IotaUnary, "A" : ForallUnary, "E": ExistsUnary, "S" : ConditionSet}
-        # To add a new unary variable-binding operator to the parser, decide on a normalized operator string and add
-        # it to ops, and then add the right mapping to op_classes.  If your operator has a non-standard constructor,
-        # instead of adding it to op_classes, add a new condition to the if section at the end of this function.
-        next = None
-        op = None
-        for k in ops.keys():
-            if s.startswith(k):
-                op = ops[k]
-                next = s[len(k):]
-                break
-        if op is None:
-            return None # failed to find proper initial chars
-        l = next.split(":", 1)
-        l = [x.strip() for x in l]
-        #print("parsing with %s" % repr(l))
-        if len(l) != 2:
-            # TODO should the prefixes be treated as reserved?  Stronger error here?
-            # right now, failure at this point leads to cryptic syntax errors on eval
-            return None # failed to find properly terminated variable name
-        (v, t) = cls.try_parse_typed_term(l[0])
-        if not is_var_symbol(v):
-            return None # failed to find variable name
-        if t is None:
-            # TODO: flag as a guessed type somehow?
-            t = default_variable_type(v)
-        body = None
-        if len(l[1]) != 0:
-            try:
-                if assignment is None: 
-                    assignment = dict()
-                else:
-                    # create a new one to avoid side effects
-                    assignment = dict(assignment)
-                assignment[v] = TypedTerm(v, t)
-                #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
-                body = cls.parse_expr_string(l[1], assignment=assignment, locals=locals)
-            except Exception as e:
-                print(e)
-                raise ValueError("Operator expression has unparsable body ('%s')" % (s))
-
-        if body is None:
-            raise ValueError("Can't create body-less operator expression from '%s'" % s)
-        if op in op_classes:
-            return op_classes[op](var=v, vtype=t, body=body)
-        else:
-            raise ValueError("Unknown op " + op)
-        # if op == "L":
-        #     return LFun(var=v, vtype=t, body=body)
-        # elif op == "E":
-        #     return ExistsUnary(var=v, vtype=t, body=body)
-        # elif op == "A":
-        #     return ForallUnary(var=v, vtype=t, body=body)
-        # elif op == "I":
-        #     return IotaUnary(var=v, vtype=t, body=body)
-        # elif op == "S":
-        #     return ConditionSet(var=v, vtype=t, body=body)
-        # 
+    @classmethod
+    def try_parse_paren_struc_r(cls, struc, assignment=None, locals=None, vprefix="ilnb"):
+        #print("test: " + repr(struc))
+        expr = cls.try_parse_binding_struc(struc, assignment=assignment, locals=locals, vprefix=vprefix)
+        if expr is not None:
+            return expr
+        # struc is not primarily a binding expression
+        s = ""
+        h = dict()
+        vnum = 1
+        for sub in struc:
+            if isinstance(sub, str):
+                s += sub 
+            else:
+                sub_expr = cls.try_parse_paren_struc_r(sub, assignment=assignment, locals=locals, vprefix=vprefix)
+                var = vprefix + str(vnum)
+                s += "(" + var + ")"
+                vnum += 1
+                h[var] = sub_expr
+        expr = cls.try_parse_flattened(s, assignment=assignment, locals=h)
+        return expr
 
 
     @classmethod
@@ -566,11 +514,6 @@ class TypedExpr(object):
 
     @classmethod
     def try_parse_typed_term(cls, s, assignment=None):
-        v, typ, end = cls.parse_term(s, i=0, return_obj=False, assignment=assignment)
-        return (v, typ)
-
-    @classmethod
-    def try_parse_typed_term_old(cls, s, assignment=None):
         """Try to parse string 's' as a typed term.
         assignment: a variable assignment to parse s with.
 
@@ -583,28 +526,8 @@ class TypedExpr(object):
         Returns a tuple of a variable name, and a type.  If you want a TypedTerm, call one of the factory functions.
         Raises: TypeMismatch if the assignment supplies a type inconsistent with the specified one.
         """
-        # TODO: should this just return a typed term??
-        l = s.strip().split("_", 1)
-        v = l[0]
-        t = None
-        if l[0].isnumeric():
-            # note that this will override any provided type -- maybe a bad idea?
-            return (int(l[0]), type_n)
-        if not is_symbol(v):
-            raise ValueError("Can't parse term: '%s' is not a symbol." % s)
-        if len(l) == 1 or len(l[1]) == 0:
-            if (assignment is not None) and v in assignment:
-                # inherit type from context
-                return (v, assignment[v].type)
-            else:
-                # no type provided by context or string
-                return (v, None)
-        t = cls.try_parse_type(l[1])
-        # disallow overloading of variables with different types
-        # TODO: should this not be in the parsing function?
-        if assignment is not None and v in assignment and assignment[v].type != t:
-            raise TypeMismatch(s, assignment[v], "Variable type inheritence")
-        return (v,t)
+        v, typ, end = cls.parse_term(s, i=0, return_obj=False, assignment=assignment)
+        return (v, typ)
 
     @classmethod
     def find_term_locations(cls, s, i=0):
@@ -613,11 +536,10 @@ class TypedExpr(object):
         result = list()
         for r in unfiltered_result:
             if r.start() > 0 and s[r.start() - 1] == ".":
-                # result is prefaced by a ".", and so therefore is a functional call or attribute
+                # result is prefaced by a ".", and therefore is a functional call or attribute
                 continue
             result.append(r)
         return result
-
 
     @classmethod
     def expand_terms(cls, s, i=0, assignment=None, ignore=None):
@@ -751,52 +673,41 @@ class TypedExpr(object):
             elif s is False:
                 return false_term
             elif isinstance(s, str):
-                return cls.parse_expr_string(s, assignment)
+                #return cls.parse_expr_string(s, assignment)
+                return cls.parse(s, assignment)
             else:
                 raise NotImplementedError
         else:
-            # argument length > 1
-
-            # this is redundant with the constructor, but I can't currently find a way to simplify
-            args = (args[0],) + tuple([cls.ensure_typed_expr(a) for a in args[1:]])
-
+            # Argument length > 1.  
+            # This code path is for constructing complex TypedExprs where args[0] must be a function / operator.
+            # Will potentially recurse via ensure_typed_expr on all arguments.
 
             if isinstance(args[0], str):
-                # special case to test for lambda terms
-                # see if we can succesfully get a lambda expression out of args[0]
-                # may want to eliminate, I'm not sure if this code path is used or important any more: it is
-                # a remnant from before the metalanguage parser.
-                test = cls.try_parse_op_expr(args[0], assignment)
-                if test != None:
-                    #args[0] = test
-                    args = (test,) + args[1:]
-                else:
-                    if args[0] in op_symbols:
-                        return op_expr_factory(*args) # if args[0] isn't a lambda term, try 
-                        #                               to construct an n-ary operator expresssion
-                    else:
-                        raise ValueError("Don't know how to build TypedExpr from multi-element list '%s'" % repr(args))
-            # package longer arg lengths in Tuples.
+                if args[0] in op_symbols:
+                    return op_expr_factory(*args) # args[0] is a special-cased operator symbol
+            arg0 = cls.ensure_typed_expr(args[0])
+
+            # this is redundant with the constructor, but I can't currently find a way to simplify.
+            # after this point, all elements of args will be TypedExprs.
+            args = (arg0,) + tuple([cls.ensure_typed_expr(a) for a in args[1:]])
+
+            # package longer arg lengths in Tuples.  After this point, len(args) can only be 2.
             if len(args) > 2:
                 packaged_args = Tuple(args[1:])
                 args = (args[0], packaged_args)
-            if isinstance(args[0], TypedExpr) and (not args[0].type.functional()) and args[0].type_guessed:
-                # TODO more general case: coerce any guessed type, not just basic types?
+            if (not args[0].type.functional()) and args[0].type_guessed:
                 # special case: see if the type of the operator is guessed and coerce accordingly
-                if len(args) == 2 and isinstance(args[1], TypedExpr):
-                    #TODO make this smarter.  What if arg is a string?
-                    # TODO: should type t be the default return type?
-                    # prevent future coercion of the argument
-                    args[1].type_not_guessed()
-                    coerced_op = args[0].try_coerce_new_argument(args[1].type)
-                    #coerced_op = TypedTerm(args[0].op, FunType(args[1].type, type_t))
-                    if coerced_op is not None:
-                        logger.info("Coerced guessed type %s for '%s' into %s, to match argument '%s'" % (args[0].type, repr(args[0]), coerced_op.type, repr(args[1])))
-                        args = (coerced_op,) + args[1:]
-                    else:
-                        logger.warning("Unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (args[0].type, repr(args[0]), repr(args[1]), args[1].type))
-                # no action in else case??
-            if isinstance(args[0], TypedExpr) and args[0].type.functional() and not args[0].type.left.undetermined and args[1].type.undetermined:
+                # TODO: should type t be the default return type?
+
+                # prevent future coercion of the argument
+                args[1].type_not_guessed()
+                coerced_op = args[0].try_coerce_new_argument(args[1].type)
+                if coerced_op is not None:
+                    logger.info("Coerced guessed type %s for '%s' into %s, to match argument '%s'" % (args[0].type, repr(args[0]), coerced_op.type, repr(args[1])))
+                    args = (coerced_op,) + args[1:]
+                else:
+                    logger.warning("Unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (args[0].type, repr(args[0]), repr(args[1]), args[1].type))
+            if args[0].type.functional() and not args[0].type.left.undetermined and args[1].type.undetermined:
                 # special case: applying undetermined type to function, would have to coerce to do full application
                 # TODO: implement coercion here?
                 pass
@@ -1666,7 +1577,7 @@ class BindingOp(TypedExpr):
         else:
             regex = "(" + ("|".join(op_names)) + ")"
             BindingOp.op_regex = re.compile(regex)
-            BindingOp.init_op_regex = re.compile("^" + regex)
+            BindingOp.init_op_regex = re.compile("^\s*" + regex)
 
     @property
     def body(self):
@@ -1712,7 +1623,7 @@ class BindingOp(TypedExpr):
     #    return super().__eq__(other)
 
     def __repr__(self):
-        return "(%s %s). %s" % (self.op_name, self.varname, repr(self.body))
+        return "%s %s: %s" % (self.op_name, self.varname, repr(self.body))
 
     def free_variables(self):
         return super().free_variables() - {self.varname}
@@ -1740,7 +1651,8 @@ class BindingOp(TypedExpr):
         if not op_match:
             raise parsing.ParseError("Unknown operator when trying to parsing binding operator expression", s, None, met_preconditions=False)
         op_name = op_match.group(1) # operator name
-        i += len(op_name)
+        #i += len(op_name)
+        i = op_match.end(1)
 
         if op_name in BindingOp.canonicalize_names:
             op_name = BindingOp.canonicalize_names[op_name]
@@ -1794,20 +1706,51 @@ class BindingOp(TypedExpr):
                 #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
                 body = TypedExpr.parse_expr_string(remainder, assignment=assignment, locals=locals)
             except Exception as e:
-                print(e)
-                raise parsing.ParseError("Binding operator expression has unparsable body", s, None)
+                #print(e)
+                raise parsing.ParseError("Binding operator expression has unparsable body", s, None,e=e)
 
         if body is None:
             raise parsing.ParseError("Can't create body-less binding operator expression", s, None)
         return op_class(var=v, vtype=t, body=body)
 
     @classmethod
-    def try_parse_binding_struc(cls, struc, assignment=None, locals=None):
-        result = cls.try_parse_header(struc[0])
+    def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None, vprefix="ilnb"):
+        #print(struc)
+
+        if isinstance(struc[0], str) and struc[0] in parsing.brackets:
+            potential_header = struc[1]
+            bracketed = True
+        else:
+            potential_header = struc[0]
+            bracketed = False
+        if not isinstance(potential_header, str):
+            return None
+        result = BindingOp.try_parse_header(potential_header)
         if result is None:
             return None
         (op_class, v, t, remainder) = result
-        new_struc = [remainder,] + struc[1:]
+        # remainder is any string left over from parsing the header.
+        if bracketed:
+            # note: syntax checking for bracket matching is already done, this does not need to check for that here.
+            assert(parsing.brackets[struc[0]] == struc[-1])
+            new_struc = [remainder,] + struc[2:-1]
+        else:
+            new_struc = [remainder,] + struc[1:]
+        #print(new_struc)
+        if assignment is None: 
+            assignment = dict()
+        else:
+            # create a new one to avoid side effects
+            assignment = dict(assignment)
+        assignment[v] = TypedTerm(v, t)
+        body = None
+        try:
+            body = TypedExpr.try_parse_paren_struc_r(new_struc, assignment=assignment, locals=locals, vprefix=vprefix)
+        except Exception as e:
+            raise parsing.ParseError("Binding operator expression has unparsable body", parsing.flatten_paren_struc(struc), None, e=e)
+        if body is None:
+            raise parsing.ParseError("Can't create body-less binding operator expression", parsing.flatten_paren_struc(struc), None)
+        return op_class(var=v, vtype=t, body=body)
 
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
