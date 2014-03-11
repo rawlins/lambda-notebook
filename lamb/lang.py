@@ -113,6 +113,7 @@ class Composable(object):
         raise NotImplementedError
 
     def latex_step_tree(self, derivations=False):
+        """Show the step-by-step derivation(s) as a proof tree."""
         return meta.MiniLatex(self.latex_step_tree_r(derivations=derivations))
 
     def latex_step_tree_r(self, derivations=False):
@@ -525,6 +526,7 @@ class CompositionTree(Tree, Composable):
         return self.latex_step_tree()
 
     def latex_step_tree(self,derivations=False):
+        """Show the step-by-step derivation(s) as a proof tree."""
         if self.content is None:
             return Tree.print_ipython_mathjax(self)
         elif isinstance(self.content, CompositionResult):
@@ -870,6 +872,7 @@ class CompositionResult(Composable):
 
 
     def full_trace_latex(self):
+        """Trace all derivation paths in detail"""
         s = str()
         i = 1
         s += "Full composition trace.  "
@@ -892,6 +895,7 @@ class CompositionResult(Composable):
         return meta.MiniLatex(s)
 
     def latex_step_tree(self, derivations=False):
+        """Show the step-by-step derivation(s) as a proof tree."""
         s = str()
         if len(self.results) == 0:
             return "No succesful composition paths."
@@ -910,10 +914,13 @@ class CompositionResult(Composable):
         return MiniLatex(s)
 
     def reduce_all(self):
+        """Replace contents with versions that have been reduced as much as possible."""
         for i in range(len(self.results)):
             new_c = self.results[i].content.reduce_all()
             # TODO probably should copy
+            # currently, works by side effect
             self.results[i].content = new_c
+        return self
 
 
 
@@ -992,6 +999,7 @@ class Item(TreeComposite):
         return Item(self.name, self.content.copy(), self.index)
 
     def reduce_all(self):
+        """Replace contents with versions that have been reduced as much as possible."""
         self.content = self.content.reduce_all()
         return self
 
