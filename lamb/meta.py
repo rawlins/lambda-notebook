@@ -55,6 +55,12 @@ def tp(s):
     result = ts.type_parser(s)
     return result
 
+def te(s, assignment=None):
+    return TypedExpr.factory(s, assignment=assignment)
+
+def term(s, typ=None, assignment=None):
+    return TypedTerm.term_factory(s, typ=typ, assignment=assignment)
+
 #_type_system = types.UnderTypeSystem()
 _type_system = types.under_system
 
@@ -1517,7 +1523,7 @@ class BindingOp(TypedExpr):
     canonical_name = None
     secondary_names = set()
 
-    def __init__(self, vartype, typ, op, var, body, op_name_uni=None, op_name_latex=None, body_type = None):
+    def __init__(self, vartype, typ, op, var, body, op_name_uni=None, op_name_latex=None, body_type = None, assignment=None):
         if body_type is None:
             body_type = typ
         # maybe add way to block body type checking in init altogether?
@@ -1542,8 +1548,13 @@ class BindingOp(TypedExpr):
         self.type = typ
         self.derivation = None
         self.var_instance = TypedTerm(self.varname, self.vartype)
+        if assignment is None:
+            assignment = {self.varname: self.var_instance}
+        else:
+            assignment = assignment.copy()
+            assignment[self.varname] = self.var_instance
         #self.body = typed_expr(body)
-        self.args = [self.ensure_typed_expr(body, body_type, assignment={self.varname: self.var_instance})]
+        self.args = [self.ensure_typed_expr(body, body_type, assignment=assignment)]
 
     @classmethod
     def add_op(cls, op):
@@ -1759,9 +1770,9 @@ class ConditionSet(BindingOp):
 
     canonical_name = "Set"
 
-    def __init__(self, vtype, body, var="x"):
-        body = self.ensure_typed_expr(body)
-        super().__init__(vartype=vtype, typ=types.SetType(vtype), op="(Set %s)" % var, var=var, body=body, op_name_uni="Set", op_name_latex="Set", body_type=types.type_t)
+    def __init__(self, vtype, body, var="x", assignment=None):
+        body = self.ensure_typed_expr(body, assignment=assignment)
+        super().__init__(vartype=vtype, typ=types.SetType(vtype), op="(Set %s)" % var, var=var, body=body, op_name_uni="Set", op_name_latex="Set", body_type=types.type_t, assignment=assignment)
         #self.type = types.SetType(vtype)
         self.latex_op_str = self.latex_op_str_short
 
@@ -1812,8 +1823,8 @@ class ConditionSet(BindingOp):
 BindingOp.add_op(ConditionSet)
 
 class SingletonSet(TypedExpr):
-    def __init__(self, body):
-        self.args = [self.ensure_typed_expr(body)]
+    def __init__(self, body, assignment=None):
+        self.args = [self.ensure_typed_expr(body, assignment=assignment)]
         self.op = "Set"
         self.type = types.SetType(body.type)
         self.derivation = None
@@ -1861,9 +1872,9 @@ class SingletonSet(TypedExpr):
             return derived(SingletonSet(content), self, derivation_reason)
 
 class ListedSet(TypedExpr):
-    def __init__(self, iterable, typ=None):
+    def __init__(self, iterable, typ=None, assignment=None):
         s = set(iterable) # just make it a set first, remove duplicates, flatten order
-        self.args = [self.ensure_typed_expr(a) for a in s]
+        self.args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
         if len(self.args) == 0 and typ is None:
             typ = types.undetermined_type
         elif typ is None:
@@ -1927,9 +1938,9 @@ class ForallUnary(BindingOp):
 
     canonical_name = "Forall"
 
-    def __init__(self, vtype, body, var="x"):
-        body = self.ensure_typed_expr(body)
-        super().__init__(vtype, types.type_t, "∀%s. " % var, var, body, op_name_uni="∀", op_name_latex="\\forall{}")
+    def __init__(self, vtype, body, var="x", assignment=None):
+        body = self.ensure_typed_expr(body, assignment=assignment)
+        super().__init__(vtype, types.type_t, "∀%s. " % var, var, body, op_name_uni="∀", op_name_latex="\\forall{}", assignment=assignment)
         self.latex_op_str = self.latex_op_str_short
 
     def copy(self):
@@ -1961,11 +1972,11 @@ BindingOp.add_op(ForallUnary)
 class ExistsUnary(BindingOp):
 
     canonical_name = "Exists"
-    def __init__(self, vtype, body, var="x"):
-        body = self.ensure_typed_expr(body)
+    def __init__(self, vtype, body, var="x", assignment=None):
+        body = self.ensure_typed_expr(body, assignment=assignment)
         #if body.type != types.type_t:
         #    raise TypeMismatch
-        super().__init__(vtype, types.type_t, "∃%s. " % var, var, body, op_name_uni="∃", op_name_latex="\\exists{}")
+        super().__init__(vtype, types.type_t, "∃%s. " % var, var, body, op_name_uni="∃", op_name_latex="\\exists{}", assignment=assignment)
         self.latex_op_str = self.latex_op_str_short
 
     def copy(self):
@@ -1975,11 +1986,11 @@ BindingOp.add_op(ExistsUnary)
 
 class IotaUnary(BindingOp):
     canonical_name = "Iota"
-    def __init__(self, vtype, body, var="x"):
-        body = self.ensure_typed_expr(body)
+    def __init__(self, vtype, body, var="x", assignment=None):
+        body = self.ensure_typed_expr(body, assignment=assignment)
         #if body.type != types.type_t:
         #    raise TypeMismatch
-        super().__init__(vartype=vtype, typ=vtype, op=("i%s. " % var), var=var, body=body, op_name_uni="i", op_name_latex="\\iota{}", body_type=types.type_t)
+        super().__init__(vartype=vtype, typ=vtype, op=("i%s. " % var), var=var, body=body, op_name_uni="i", op_name_latex="\\iota{}", body_type=types.type_t, assignment=assignment)
         self.latex_op_str = self.latex_op_str_short
 
     def copy(self):
@@ -1994,10 +2005,10 @@ class LFun(BindingOp):
     canonical_name = "Lambda"
     secondary_names = {"L", "λ", "lambda"}
 
-    def __init__(self, vtype, body, var="x"):
+    def __init__(self, vtype, body, var="x", assignment=None):
         #print("LFun constructor: %s, '%s', %s" % (argtype, repr(body), var))
-        body = self.ensure_typed_expr(body)
-        super().__init__(vartype=vtype, typ=FunType(vtype, body.type), op="λ%s. " % var, var=var, body=body, op_name_uni="λ", op_name_latex="\\lambda{}", body_type=body.type)
+        body = self.ensure_typed_expr(body, assignment=assignment)
+        super().__init__(vartype=vtype, typ=FunType(vtype, body.type), op="λ%s. " % var, var=var, body=body, op_name_uni="λ", op_name_latex="\\lambda{}", body_type=body.type, assignment=assignment)
         #self.argtype = argtype
         #self.returntype = body.type
         self.latex_op_str = self.latex_op_str_short

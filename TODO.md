@@ -17,6 +17,10 @@
 
  * better parsing (in progress)
  * presuppositions
+ * better handling of programmatic construction
+    - e.g. properly handle types in something like `meta.LFun(lang.tp("<e,t>"), "f(x_e)", "f")`
+    - automatic variable name selection in BindingOp construction
+
 
 ### Notebooks
 

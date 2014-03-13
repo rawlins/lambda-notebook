@@ -72,13 +72,16 @@ class OntoType(AbstractType):
     Extras:
     values: an object implementing the OntoSet interface representing the set that this type characterizes.
     """
-    def __init__(self, symbol, values, name=None):
+    def __init__(self, symbol, values=None, name=None):
         self.symbol = symbol
         if name is None:
             self.name = symbol
         else:
             self.name = name
-        self.values = values
+        if values is None:
+            self.values = SimpleInfiniteSet("c" + symbol)
+        else:
+            self.values = values
         self.undetermined = False
         # pre-escape because of the use of "?" for undetermined type
         self.regex = re.compile(re.escape(self.symbol))

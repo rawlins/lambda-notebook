@@ -1264,6 +1264,7 @@ class CompositionSystem(object):
     rules/operations, types, and a lexicon."""
     def __init__(self, rules=None, basictypes = None, name=None, a_controller=None):
         self.rules = list()
+        self.ruledict = dict()
         for r in rules:
             self.add_rule(r)
 
@@ -1283,13 +1284,29 @@ class CompositionSystem(object):
         self.lexicon = dict()
 
     def copy(self):
-        new_sys = CompositionSystem(rules=self.rules, basictypes=self.basictypes, name=self.name, a_controller=self.assign_controller)
+        new_sys = CompositionSystem(rules=self.rules, basictypes=self.basictypes, name=(self.name + " (copy)"), a_controller=self.assign_controller)
         new_sys.lexicon = self.lexicon
         return new_sys
 
     def add_rule(self, r):
         r.system = self
+        if r.name is not None:
+            if r.name in self.ruledict.keys():
+                meta.logger.warning("Composition rule named '%s' already present in system" % r.name)
+            self.ruledict[r.name] = r
         self.rules.append(r)
+
+    def remove_rule(self, r):
+        """Remove a composition rule by name."""
+        if isinstance(r, str):
+            name = r
+        else:
+            name = r.name
+        if name not in self.ruledict.keys():
+            meta.logger.warning("Composition rule '%s' not found in system" % name)
+            return
+        del self.ruledict[name]
+        self.rules = [r for r in self.rules if r.name != name]
 
     def hastype(self, t):
         if t in self.basictypes:
@@ -1312,6 +1329,26 @@ class CompositionSystem(object):
             return "Anonymous composition system"
         else:
             return "Composition system: " + self.name
+
+    def __str__(self):
+        return self.description(latex=False)
+
+    def description(self, latex=False):
+        if self.name is None:
+            name = "Anonymous composition system"
+        else:
+            name = self.name
+        s = "Composition system '%s'" % name
+        if latex:
+            s += "<br />"
+        else:
+            s += "\n"
+        s += "Operations: "
+        s += ", ".join([x.name for x in self.rules])
+        return s
+
+    def _repr_latex_(self):
+        return self.description(latex=True)
 
     def lookup(self, *items):
         r = list()
@@ -1776,7 +1813,7 @@ def setup_type_driven():
     # note that PM is only commutative if the underlying logic has commutative conjunction...
     oldlevel = meta.logger.level
     meta.logger.setLevel(logging.WARNING)
-    pm = BinaryCompositionOp("PM", pm_fun, commutative=False)
+    pm = BinaryCompositionOp("PM", pm_fun, commutative=True)
     fa = BinaryCompositionOp("FA", fa_fun)
     pa = BinaryCompositionOp("PA", pa_fun, allow_none=True)
     td_system = CompositionSystem(rules=[fa, pm, pa], basictypes={type_e, type_t}, name="H&K simple")
