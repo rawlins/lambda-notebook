@@ -2602,6 +2602,10 @@ def PM(fun1, fun2):
         body2 = fun2.body
     return LFun(fun1.argtype, fun1.body & body2, fun1.varname)
 
+def repr_parse(e):
+    result = te(repr(e))
+    return result == e
+
 import unittest
 
 class MetaTest(unittest.TestCase):

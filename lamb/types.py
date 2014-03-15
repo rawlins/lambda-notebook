@@ -1,13 +1,17 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
-import sys, re
+import sys, re, random
 from numbers import Number
 from lamb import utils, parsing
 from lamb.utils import *
 #import logic, utils
 
 # constant for third truth value
+global Maybe, random_len_cap
 Maybe = 2
+
+random_len_cap = 5
+
 
 class OntoSet(object):
     def __init__(self, finite, values):
@@ -54,12 +58,16 @@ class AbstractType(object):
     def check(self, x):
         raise NotImplementedError
 
+    def __repr__(self):
+        return re.sub(r'[\s]+', '', self.__str__())
+
     @classmethod
     def parse(cls, s, i, parse_control_fun):
         raise NotImplementedError
 
-    def __repr__(self):
-        return re.sub(r'[\s]+', '', self.__str__())
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        raise NotImplementedError
 
 
 
@@ -87,7 +95,7 @@ class OntoType(AbstractType):
         self.regex = re.compile(re.escape(self.symbol))
 
     def functional(self):
-        return 0
+        return False
 
     def check(self, x):
         return self.values.check(x)
@@ -132,6 +140,7 @@ class OntoType(AbstractType):
             return (self, other)
         else:
             return (None, None)
+
 
 class FunType(AbstractType):
     """Class for non-atomic (functional) binary types.  These characterize a set of functions.
@@ -231,13 +240,18 @@ class FunType(AbstractType):
         else:
             return (None, None)
 
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        return FunType(random_ctrl_fun(), random_ctrl_fun())
+
+
 
 class SetType(AbstractType):
     def __init__(self, ctype):
         self.content_type = ctype
         self.undetermined = False
 
-    def function(self):
+    def functional(self):
         return False
 
     def check(self, x):
@@ -286,8 +300,15 @@ class SetType(AbstractType):
             i = parsing.consume_char(s, i, "}", "Unmatched {")
             return (SetType(ctype), i)
 
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        return SetType(random_ctrl_fun())
+
+
 class TupleType(AbstractType):
     def __init__(self, *signature):
+        if len(signature) == 0:
+            raise ValueError("Tuple type can't be 0 length")
         self.signature = tuple(signature)
         self.undetermined = False
 
@@ -382,6 +403,11 @@ class TupleType(AbstractType):
 
     #def add_internal_argument(self, arg_type):
     #    return FunType(self.left, self.right.add_internal_argument(arg_type))
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        tuple_len = random.randint(2, random_len_cap)
+        args = tuple([random_ctrl_fun() for i in range(0,tuple_len)])
+        return TupleType(*args)
 
 
 # TODO make real singleton
@@ -518,6 +544,11 @@ class UndeterminedType(OntoType):
             return (None, i)
         else:
             return (UndeterminedType(result), next)
+
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        return UndeterminedType(random_ctrl_fun())
+
 
 
 # used while parsing to defer type evaluation
@@ -845,6 +876,29 @@ class TypeSystem(object):
 
     def _repr_latex_(self):
         return self.latex_str()
+
+    def random_type(self, max_depth, p_terminate_early, undetermined=False):
+        term = random.random()
+        #print(max_depth)
+        if max_depth == 0 or term < p_terminate_early:
+            #print(term, p_terminate_early, term > p_terminate_early)
+            # choose an atomic type
+            t = random.choice(list(self.atomics))
+            if not undetermined:
+                while isinstance(t, UndeterminedType):
+                    t = random.choice(list(self.atomics))
+            return t
+        else:
+            # choose a non-atomic type and generate a random instantiation of it
+            ctrl_fun = lambda *a: self.random_type(max_depth - 1, p_terminate_early)
+            t_class = random.choice(list(self.nonatomics))
+            if not undetermined:
+                while t_class == UndeterminedType:
+                    t_class = random.choice(list(self.nonatomics))
+            return t_class.random(ctrl_fun)
+
+    def repr_check(self, t):
+        return (t == self.type_parser(repr(t)))
 
 
 class StrictTypeSystem(TypeSystem):
@@ -1174,6 +1228,10 @@ def type_parser(s):
     (r, i) = type_parser_recursive(s)
     return r
 
+
+
+
+
 def setup_type_constants():
     global type_e, type_t, type_n, type_property, type_transitive, basic_system, under_system
 
@@ -1188,3 +1246,11 @@ def setup_type_constants():
 setup_type_constants()
 
 
+import unittest
+class TypeTest(unittest.TestCase):
+    def setUp(self):
+        setup_type_constants()
+
+    def test_parser(self):
+        for i in range(0, 1000):
+            self.assertTrue(under_system.repr_check(under_system.random_type(5, 0.2, True)))
