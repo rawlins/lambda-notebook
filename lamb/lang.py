@@ -31,11 +31,9 @@ from lamb.tree_mini import Tree
 def inbr(s):
     # negative space produces the wrong results sometimes?
     #return "|\!|\\mathbf{\\text{" + s + "}}|\!|"
-    #return "||\\mathbf{\\text{" + s + "}}||"
-    return "[\![\\mathbf{\\text{" + s + "}}]\!]"
-
-    # would be better, but doesn't work
-    # return "|\\!|\\text{<b>" + s + "</b>}|\\!|"
+    return "||\\mathbf{\\text{" + s + "}}||"
+    #return "[\![\\mathbf{\\text{" + s + "}}]\!]"
+    #return "[[\\mathbf{\\text{" + s + "}}]]"
 
 def inbrs(s, super):
     return inbr(s) + "^{" + super + "}"
