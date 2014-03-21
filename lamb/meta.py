@@ -1520,34 +1520,49 @@ class BindingOp(TypedExpr):
     op_regex = None
     init_op_regex = None
 
+    # set the following in subclasses
     canonical_name = None
     secondary_names = set()
+    op_name_uni = None
+    op_name_latex = None
 
-    def __init__(self, vartype, typ, op, var, body, op_name_uni=None, op_name_latex=None, body_type = None, assignment=None):
+    def __init__(self, var_or_vtype, typ, body, varname=None, body_type = None, assignment=None):
+        # Warning: can't assume in general that typ is not None.  I.e. may be set in subclass after a call
+        # to this function.  Subclass is responsible for doing this properly...
         if body_type is None:
             body_type = typ
         # maybe add way to block body type checking in init altogether?
-        self.op = op
-        if op_name_uni is None:
-            self.op_name = op
+        #self.op = op
+        # if op_name_uni is None:
+        #     self.op_name = op
+        # else:
+        #     self.op_name = op_name_uni
+        # if op_name_latex is None:
+        #     self.op_name_latex = op_name_uni
+        # else:
+        #     self.op_name_latex = op_name_latex
+        if isinstance(var_or_vtype, str): # TODO: support type strings
+            var_or_vtype = TypedExpr.term_factory(var_or_vtype)
+        if isinstance(var_or_vtype, TypedTerm):
+            if varname is not None:
+                logger.warning("Overriding varname '%s' with '%s'" % (varname, var_or_vtype.op))
+            self.varname = var_or_vtype.op
+            self.vartype = var_or_vtype.type
+        elif isinstance(var_or_vtype, types.AbstractType):
+            if varname is None:
+                varname = self.default_varname()
+            self.varname = varname
+            self.vartype = var_or_vtype
         else:
-            self.op_name = op_name_uni
-        if op_name_latex is None:
-            self.op_name_latex = op_name_uni
-        else:
-            self.op_name_latex = op_name_latex
-        if isinstance(var, TypedTerm):
-            if var.type != vartype:
-                pass #TODO be less forgiving?
-            self.varname = var.op
-        else:
-            self.varname = str(var) # TODO fail on other types?
+            raise NotImplementedError
         if not is_var_symbol(self.varname):
             raise ValueError("Need variable name (got '%s')" % var)
-        self.vartype = vartype
         self.type = typ
         self.derivation = None
-        self.var_instance = TypedTerm(self.varname, self.vartype)
+        self.var_instance = TypedTerm(self.varname, self.vartype) # normalize class
+        # set self.op so that hashing and equality comparison work correctly
+        # TODO: consider overriding __eq__ and __hash__.
+        self.op = "%s %s:" % (self.canonical_name, repr(self.var_instance))
         if assignment is None:
             assignment = {self.varname: self.var_instance}
         else:
@@ -1555,6 +1570,9 @@ class BindingOp(TypedExpr):
             assignment[self.varname] = self.var_instance
         #self.body = typed_expr(body)
         self.args = [self.ensure_typed_expr(body, body_type, assignment=assignment)]
+
+    def default_varname(self):
+        return "x"
 
     @classmethod
     def add_op(cls, op):
@@ -1595,8 +1613,8 @@ class BindingOp(TypedExpr):
         return self.args[0]
 
     def copy(self):
-        return BindingOp(vartype=self.vartype, typ=self.type, op=self.op, var=self.var_name, body=self.body, op_name_uni = self.op_name_uni, op_name_latex=self.op_name_latex)
-        #raise NotImplementedError
+        #return BindingOp(var_or_vtype=self.vartype, typ=self.type, varname=self.var_name, body=self.body)
+        raise NotImplementedError
 
     def alpha_convert(self, new_varname):
         """Produce an alphabetic variant of the expression w.r.t. the bound variable, with new_varname as the new name.
@@ -1608,9 +1626,7 @@ class BindingOp(TypedExpr):
         return new_self
 
     def latex_op_str(self):
-        return "(%s \\:%s_{%s}) \\: . \\:" % (self.op_name_latex, 
-                                                self.varname, 
-                                                self.vartype.latex_str())
+        return self.latex_op_str_short()
 
     def latex_op_str_short(self):
         return "%s %s_{%s} \\: . \\:" % (self.op_name_latex, 
@@ -1635,6 +1651,14 @@ class BindingOp(TypedExpr):
 
     def __repr__(self):
         return "%s %s: %s" % (self.op_name, self.varname, repr(self.body))
+
+    @property
+    def op_name(self):
+        if self.op_name_uni is not None and self.op_name_uni in self.secondary_names:
+            return self.op_name_uni
+        else:
+            return self.canonical_name
+
 
     def free_variables(self):
         return super().free_variables() - {self.varname}
@@ -1722,7 +1746,7 @@ class BindingOp(TypedExpr):
 
         if body is None:
             raise parsing.ParseError("Can't create body-less binding operator expression", s, None)
-        return op_class(var=v, vtype=t, body=body)
+        return op_class(varname=v, var_or_vtype=t, body=body)
 
     @classmethod
     def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None, vprefix="ilnb"):
@@ -1761,7 +1785,7 @@ class BindingOp(TypedExpr):
             raise parsing.ParseError("Binding operator expression has unparsable body", parsing.flatten_paren_struc(struc), None, e=e)
         if body is None:
             raise parsing.ParseError("Can't create body-less binding operator expression", parsing.flatten_paren_struc(struc), None)
-        return op_class(var=v, vtype=t, body=body)
+        return op_class(var_or_vtype=t, varname=v, body=body)
 
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
@@ -1769,12 +1793,13 @@ class ConditionSet(BindingOp):
     The body must be of type t."""
 
     canonical_name = "Set"
+    op_name_uni="Set"
+    op_name_latex="Set"
 
-    def __init__(self, vtype, body, var="x", assignment=None):
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
         body = self.ensure_typed_expr(body, assignment=assignment)
-        super().__init__(vartype=vtype, typ=types.SetType(vtype), op="(Set %s)" % var, var=var, body=body, op_name_uni="Set", op_name_latex="Set", body_type=types.type_t, assignment=assignment)
+        super().__init__(var_or_vtype=var_or_vtype, typ=types.SetType(vtype), body=body, varname=varname, body_type=types.type_t, assignment=assignment)
         #self.type = types.SetType(vtype)
-        self.latex_op_str = self.latex_op_str_short
 
     def copy(self):
         return ConditionSet(self.vartype, self.body, self.varname)
@@ -1785,11 +1810,11 @@ class ConditionSet(BindingOp):
     def term(self):
         return False
 
-    def __repr__(self):
-        return "{%s | " % self.varname + repr(self.body) + "}"
+    #def __repr__(self):
+    #    return "{%s | " % self.varname + repr(self.body) + "}"
 
     def latex_str(self, parens=True):
-        return ensuremath("\{%s_{%s}\:|\: " % (self.varname, self.vartype) + self.body.latex_str() + "\}")
+        return ensuremath("\{%s_{%s}\:|\: " % (self.varname, self.vartype.latex_str()) + self.body.latex_str() + "\}")
 
     def __lshift__(self, i):
         return SetContains(i, self)
@@ -1904,7 +1929,7 @@ class ListedSet(TypedExpr):
         # ensure that we build a condition set from a variable that is not free in any of the members
         varname = self.find_safe_variable(starting="x")
         conditions = [BinaryGenericEqExpr(TypedTerm(varname, a.type), a) for a in self.args]
-        return ConditionSet(self.type.content_type, BinaryOrExpr.join(*conditions), var=varname)
+        return ConditionSet(self.type.content_type, BinaryOrExpr.join(*conditions), varname=varname)
 
 
     def __repr__(self):
@@ -1937,11 +1962,12 @@ class ListedSet(TypedExpr):
 class ForallUnary(BindingOp):
 
     canonical_name = "Forall"
+    op_name_uni = "∀"
+    op_name_latex = "\\forall{}"
 
-    def __init__(self, vtype, body, var="x", assignment=None):
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
         body = self.ensure_typed_expr(body, assignment=assignment)
-        super().__init__(vtype, types.type_t, "∀%s. " % var, var, body, op_name_uni="∀", op_name_latex="\\forall{}", assignment=assignment)
-        self.latex_op_str = self.latex_op_str_short
+        super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment)
 
     def copy(self):
         return ForallUnary(self.vartype, self.body, self.varname)
@@ -1972,12 +1998,14 @@ BindingOp.add_op(ForallUnary)
 class ExistsUnary(BindingOp):
 
     canonical_name = "Exists"
-    def __init__(self, vtype, body, var="x", assignment=None):
+    op_name_uni="∃"
+    op_name_latex="\\exists{}"
+
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
         body = self.ensure_typed_expr(body, assignment=assignment)
         #if body.type != types.type_t:
         #    raise TypeMismatch
-        super().__init__(vtype, types.type_t, "∃%s. " % var, var, body, op_name_uni="∃", op_name_latex="\\exists{}", assignment=assignment)
-        self.latex_op_str = self.latex_op_str_short
+        super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment)
 
     def copy(self):
         return ExistsUnary(self.vartype, self.body, self.varname)
@@ -1986,12 +2014,16 @@ BindingOp.add_op(ExistsUnary)
 
 class IotaUnary(BindingOp):
     canonical_name = "Iota"
-    def __init__(self, vtype, body, var="x", assignment=None):
+    op_name_uni = "ι"
+    op_name_latex="\\iota{}"
+    secondary_names = {"ι"}
+
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
         body = self.ensure_typed_expr(body, assignment=assignment)
         #if body.type != types.type_t:
         #    raise TypeMismatch
-        super().__init__(vartype=vtype, typ=vtype, op=("i%s. " % var), var=var, body=body, op_name_uni="i", op_name_latex="\\iota{}", body_type=types.type_t, assignment=assignment)
-        self.latex_op_str = self.latex_op_str_short
+        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment)
+        self.type = self.vartype
 
     def copy(self):
         return IotaUnary(self.vartype, self.body, self.varname)
@@ -2004,14 +2036,20 @@ class LFun(BindingOp):
     """
     canonical_name = "Lambda"
     secondary_names = {"L", "λ", "lambda"}
+    op_name_uni="λ"
+    op_name_latex="\\lambda{}"
 
-    def __init__(self, vtype, body, var="x", assignment=None):
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
         #print("LFun constructor: %s, '%s', %s" % (argtype, repr(body), var))
         body = self.ensure_typed_expr(body, assignment=assignment)
-        super().__init__(vartype=vtype, typ=FunType(vtype, body.type), op="λ%s. " % var, var=var, body=body, op_name_uni="λ", op_name_latex="\\lambda{}", body_type=body.type, assignment=assignment)
+        # Use placeholder typ argument of None.  This is because the input type won't be known until
+        # the var_or_vtype argument is parsed, which is done in the superclass constructor.
+        # sort of a hack, this could potentially cause odd side effects if BindingOp.__init__ is changed without
+        # taking this into account.
+        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=body.type, assignment=assignment)
+        self.type = FunType(self.vartype, body.type)
         #self.argtype = argtype
         #self.returntype = body.type
-        self.latex_op_str = self.latex_op_str_short
 
         #self.op = "λ%s. " % var
 

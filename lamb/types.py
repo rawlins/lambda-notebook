@@ -156,7 +156,7 @@ class FunType(AbstractType):
         self.undetermined = (left.undetermined or right.undetermined)
 
     def functional(self):
-        return 1
+        return True
 
     def check(self, x):
         raise NotImplementedError()
