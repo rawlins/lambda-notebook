@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
-import sys, re, logging
+import sys, re, logging, random
 from numbers import Number
 from lamb import types, utils, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n, type_property, type_transitive, OntoType, FunType
@@ -65,12 +65,13 @@ def term(s, typ=None, assignment=None):
 _type_system = types.under_system
 
 unary_tf_ops = set(['~'])
-binary_tf_ops = set(['>>', '<<', '&', '|', '<=>', '^'])
+binary_tf_ops = set(['>>', '<<', '&', '|', '<=>', '%'])
 tf_ops = unary_tf_ops | binary_tf_ops
 
 unary_num_ops = set(['-'])
-binary_num_ops = set(['<', '<=', '>=', '>', '+', '-', '/', '*', '**'])
-num_ops = unary_num_ops | binary_num_ops
+binary_num_rels = set(['<', '<=', '>=', '>'])
+binary_num_ops = {'+', '-', '/', '*', '**'}
+num_ops = unary_num_ops | binary_num_ops | binary_num_rels
 
 basic_ops = tf_ops | num_ops
 
@@ -926,7 +927,7 @@ class TypedExpr(object):
         if not self.args:         # Constant or proposition with arity 0
             return repr(self.op)
         elif isinstance(self.op, LFun):
-            return "[%s](%s)" % (repr(self.op), ', '.join([repr(a) for a in self.args]))
+            return "(%s)(%s)" % (repr(self.op), ', '.join([repr(a) for a in self.args]))
         elif isinstance(self.op, TypedExpr) and self.op.type.functional():  # Functional or propositional operator
             arg_str = ', '.join([repr(a) for a in self.args])
             if isinstance(self.op, CustomTerm):
@@ -1098,7 +1099,7 @@ class TypedTerm(TypedExpr):
         return is_var_symbol(self.op)
 
     def __repr__(self):
-        return self.op
+        return "%s_%s" % (self.op, repr(self.type))
 
     def show_type(self):
         if self.suppress_type:
@@ -1395,7 +1396,7 @@ class BinaryBiarrowExpr(BinaryOpExpr):
 # TODO: generalize this?
 class BinaryNeqExpr(BinaryOpExpr):
     def __init__(self, arg1, arg2):
-        super().__init__(type_t, "^", arg1, arg2, "!=", "\\not=")
+        super().__init__(type_t, "^", arg1, arg2, "=/=", "\\not=")
 
 class BinaryGenericEqExpr(BinaryOpExpr):
     def __init__(self, arg1, arg2):
@@ -1453,6 +1454,9 @@ class UnaryNegativeExpr(UnaryOpExpr):
         super().__init__(type_n, "-", body, "-", "-")
 
 
+#binary_num_rels = {"<", "<=", ">=", ">"}
+#binary_num_ops = {"+", "-", "/", "*", "**"}
+
 BinaryLExpr = binary_num_rel("<", "<", "<")
 BinaryLeqExpr = binary_num_rel("<=", "<=", "\\leq{}")
 BinaryGeqExpr = binary_num_rel(">=", ">=", "\\geq{}")
@@ -1475,6 +1479,7 @@ binary_symbols_to_op_exprs = {
                         "<=>" : eq_factory,
                         "==" : eq_factory,
                         "%" : BinaryNeqExpr,
+                        "^" : BinaryNeqExpr,
                         "<" : BinaryLExpr,
                         ">" : BinaryGExpr,
                         "<=" : BinaryLeqExpr,
@@ -1556,7 +1561,7 @@ class BindingOp(TypedExpr):
         else:
             raise NotImplementedError
         if not is_var_symbol(self.varname):
-            raise ValueError("Need variable name (got '%s')" % var)
+            raise ValueError("Need variable name (got '%s')" % self.varname)
         self.type = typ
         self.derivation = None
         self.var_instance = TypedTerm(self.varname, self.vartype) # normalize class
@@ -1650,7 +1655,7 @@ class BindingOp(TypedExpr):
     #    return super().__eq__(other)
 
     def __repr__(self):
-        return "%s %s: %s" % (self.op_name, self.varname, repr(self.body))
+        return "(%s %s: %s)" % (self.op_name, repr(self.var_instance), repr(self.body))
 
     @property
     def op_name(self):
@@ -2619,32 +2624,162 @@ def derived(result, origin, desc=None, latex_desc=None):
 
 test_setup()
 
-def FA(fun, arg):
-    if (not fun.type.functional()) or fun.type.left != arg.type:
-        raise TypeMismatch(fun, arg, "Function Application")
-    return fun(arg)
+######################
+#
+# testing code
+#
+# * some code for generating random expressions within certain parameters
+# * unit tests
+#
+######################
 
-def PM(fun1, fun2):
-    """H&K predicate modification -- restricted to type <et>."""
-    if fun1.type != fun2.type or fun1.type != type_property:
-        raise TypeMismatch(fun1, fun2, "Predicate Modification")
-    varname = fun1.varname
-    if fun2.varname != varname:
-        # ensure that the two functions use the same variable name, by beta reduction
-        #body2 = LFun(fun2.argtype, beta_reduce(fun2.body, fun2.varname, TypedTerm(varname, fun2.argtype)))
-        # actually direct beta reduction isn't a good idea, because I'd have to ensure alpha conversion
-        # so just apply with a new variable to get a body
-        body2 = fun2.apply(TypedTerm(varname, fun2.argtype))
-    else:
-        # not sure this efficiency is really necessary
-        body2 = fun2.body
-    return LFun(fun1.argtype, fun1.body & body2, fun1.varname)
+
 
 def repr_parse(e):
     result = te(repr(e))
     return result == e
 
+random_types = [type_t]
+random_ops = ["&", "|", ">>", "%"]
+
+def random_tf_op_expr(ctrl_fun):
+    # TODO: not hardcode this
+    op = random.choice(random_ops)
+    while (op in binary_num_ops):
+        op = random.choice(random_ops)
+    if op == "~":
+        return UnaryNegExpr(ctrl_fun(typ=type_t))
+    elif op in binary_symbols_to_op_exprs.keys():
+        op_class = binary_symbols_to_op_exprs[op]
+        if op_class == eq_factory:
+            raise NotImplementedError
+        elif op_class == SetContains:
+            raise NotImplementedError
+        elif issubclass(op_class, BinaryOpExpr):
+            if op in binary_num_rels:
+                return op_class(ctrl_fun(typ=type_n), ctrl_fun(typ=type_n))
+            elif op in binary_tf_ops:
+                return op_class(ctrl_fun(typ=type_t), ctrl_fun(typ=type_t))
+            else:
+                raise NotImplementedError
+        else:
+            #print(repr(op_class))
+            raise NotImplementedError
+    else:
+        raise NotImplementedError
+
+random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
+
+def random_term(typ, blockset=None, usedset=set(), prob_used=0.8, prob_var=0.5):
+    if blockset is None:
+        blockset = set()
+    is_var = True
+    if random.random() > prob_var:
+        is_var = False
+    # need to first filter to see if there is a possible used term.  Decide whether we're generating
+    # a variable first so that this can be part of the filter.
+    used_typed = [x for x in list(usedset) if (x.type==typ and x.variable() == is_var)]
+    if random.random() < prob_used and len(used_typed) > 0:
+        varname = (random.choice(list(used_typed))).op
+    else:
+        if typ in random_term_base.keys():
+            base = random_term_base[typ]
+        else:
+            base = "f"
+        if not is_var:
+            base = base.upper()
+        varname = alpha_variant(base, blockset | {n.op for n in usedset})
+    return TypedExpr.term_factory(varname, typ)
+
+def random_fa_combo(output_type, ctrl, max_type_depth=1):
+    ts = get_type_system()
+    input_type = ts.random_type(max_type_depth, 0.5)
+    fun_type = types.FunType(input_type, output_type)
+    result = (ctrl(typ=fun_type))(ctrl(typ=input_type))
+    return result
+
+def random_lfun(typ, ctrl):
+    global random_used_vars
+    input_type = typ.left
+    body_type = typ.right
+    variable = random_term(input_type, usedset=random_used_vars, prob_used=0.2, prob_var=1.0)
+    random_used_vars |= {variable}
+    return LFun(variable, ctrl(typ=body_type))
+
+def random_binding_expr(ctrl, max_type_depth=1):
+    global random_used_vars
+    ts = get_type_system()
+    options = [ForallUnary, ExistsUnary]
+    op_class = random.choice(options)
+    var_type = ts.random_type(max_type_depth, 0.5)
+    variable = random_term(var_type, usedset=random_used_vars, prob_used=0.2, prob_var=1.0)
+    random_used_vars |= {variable}
+    return op_class(variable, ctrl(typ=type_t))
+
+# ugh, need to find a way to do this not by side effect
+global random_used_vars
+random_used_vars = set()
+
+def random_expr(typ=None, depth=1, used_vars=None):
+    """Generate a random expression of the specified type `typ`, with an AST of specified `depth`.
+    leaved used_vars as None for expected behavior.
+
+    This won't generate absolutely everything, and I haven't tried to make this use some sensible
+    distribution over expressions (whatever that would be).  If typ is None, it will draw from the
+    random_types module level variable, which is currently just [type_t].
+
+    An alternative approach would be to generate a random AST first, and fill it in.
+    """
+    global random_used_vars
+    if used_vars is None:
+        used_vars = set()
+        random_used_vars = used_vars
+    if typ is None:
+        typ = random.choice(random_types)
+    if depth == 0:
+        term = random_term(typ, usedset=random_used_vars)
+        random_used_vars |= {term}
+        #print(random_used_vars)
+        return term
+    else:
+        # possibilities:
+        #  1. any typ: function-argument combination resulting in typ
+        #  2. if typ is type_t: operator expression of typ (exclude non type_t options for now)
+        #  3. if typ is type_t: binding expression of type_t
+        #  4. if typ is functional: LFun of typ
+        # ignore sets for now (variables with set types can be generated as part of option 1)
+        # ignore iota for now
+        options = [1]
+        if typ == type_t:
+            options.append(2)
+            options.append(3)
+        if typ.functional():
+            options.append(4)
+        choice = random.choice(options)
+        def ctrl(**args):
+            global random_used_vars
+            return random_expr(depth=depth-1, used_vars=random_used_vars, **args)
+        if choice == 1:
+            return random_fa_combo(typ, ctrl)
+        elif choice == 2:
+            return random_tf_op_expr(ctrl)
+        elif choice == 3:
+            return random_binding_expr(ctrl)
+        elif choice == 4:
+            return random_lfun(typ, ctrl)
+        else:
+            raise NotImplementedError
+
+
 import unittest
+
+def test_repr_parse_abstract(self, depth):
+    for i in range(1000):
+        x = random_expr(depth=depth)
+        result = repr_parse(x)
+        if not result:
+            print("Failure on '%s'" % repr(x))
+        self.assertTrue(result)
 
 class MetaTest(unittest.TestCase):
     def setUp(self):
@@ -2693,6 +2828,16 @@ class MetaTest(unittest.TestCase):
         test2 = TypedExpr.factory("L y_e : L x_e : y_e")
         test2b = TypedExpr.factory("L x_e : x_e")
         self.assertNotEqual(test2.apply(self.x), test2b)
+
+    # each of these generates 1000 random expressions with the specified depth, and checks whether their repr 
+    # parses as equal to the original expression
+    def test_repr_parse_0(self): test_repr_parse_abstract(self, 0)
+    def test_repr_parse_1(self): test_repr_parse_abstract(self, 1)
+    def test_repr_parse_2(self): test_repr_parse_abstract(self, 2)
+    def test_repr_parse_3(self): test_repr_parse_abstract(self, 3)
+    def test_repr_parse_4(self): test_repr_parse_abstract(self, 4)
+    def test_repr_parse_5(self): test_repr_parse_abstract(self, 5)
+    def test_repr_parse_6(self): test_repr_parse_abstract(self, 6)
 
 
 # def setup():

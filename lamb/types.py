@@ -326,6 +326,8 @@ class TupleType(AbstractType):
 
     def __eq__(self, other):
         try:
+            if len(self.signature) != len(other.signature):
+                return False
             # just use tuple equality?
             for i in range(len(self.signature)):
                 if not self.signature[i] == other.signature[i]:
