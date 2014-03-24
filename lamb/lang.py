@@ -27,13 +27,43 @@ from lamb.tree_mini import Tree
 
 
 
+# configurable bracketing options.  BRACKET_BARS is always safe.
+global bracket_setting, BRACKET_BARS, BRACKET_FANCY, BRACKET_UNI
+BRACKET_BARS = 1
+BRACKET_FANCY = 2
+BRACKET_UNI = 3
+bracket_setting = BRACKET_BARS
+
+
+def text_inbr(s):
+    if bracket_setting == BRACKET_BARS:
+        return "||" + s + "||"
+    elif bracket_setting == BRACKET_FANCY or bracket_setting == BRACKET_UNI:
+        return "⟦" + s + "⟧"
+    else:
+        return "||" + s + "||"
+
+def inbr_doublebracket_uni(s):
+    return "⟦\\mathbf{\\text{" + s + "}}⟧"
+
+def inbr_doublebar(s):
+    return "||\\mathbf{\\text{" + s + "}}||"
+
+def inbr_doublebracket(s, negspace=False):
+    if negspace:
+        return "[\![\\mathbf{\\text{" + s + "}}]\!]"
+    else:
+        return "[[\\mathbf{\\text{" + s + "}}]]"
 
 def inbr(s):
-    # negative space produces the wrong results sometimes?
-    #return "|\!|\\mathbf{\\text{" + s + "}}|\!|"
-    return "||\\mathbf{\\text{" + s + "}}||"
-    #return "[\![\\mathbf{\\text{" + s + "}}]\!]"
-    #return "[[\\mathbf{\\text{" + s + "}}]]"
+    if bracket_setting == BRACKET_BARS:
+        return inbr_doublebar(s)
+    elif bracket_setting == BRACKET_FANCY:
+        return inbr_doublebracket(s, True)
+    elif bracket_setting == BRACKET_UNI:
+        return inbr_doublebracket_uni(s)
+    else:
+        return inbr_doublebar(s)
 
 def inbrs(s, super):
     return inbr(s) + "^{" + super + "}"
@@ -288,13 +318,14 @@ class SingletonComposable(Composable):
             return "[%s]" % self.name
 
     def __repr__(self):
-        return "||%s||%s = %s" % (self.name, self.assign_controller.render(latex=False), repr(self.content))
+        # TODO: make this parse?
+        return text_inbr(self.name) + "%s = %s" % (self.name, self.assign_controller.render(latex=False), repr(self.content))
 
     def short_str(self, latex=False):
         if latex:
             return ensuremath(inbrs(self.name, self.assign_controller.render(latex=True)) + self.type_str_latex())
         else:
-            return "||%s||" % self.name
+            return text_inbr(self.name)
 
     def type_str_latex(self):
         if self.type is None:
@@ -1233,7 +1264,8 @@ class PlaceholderTerm(meta.TypedTerm):
         return ensuremath(inbrs(self.placeholder_name(), self.assign_controller.render(latex=True)) + "_{" + self.type.latex_str() + "}")
 
     def __repr__(self):
-        return "||%s||%s" % (self.placeholder_name(), self.assign_controller.render(latex=False))
+        # TODO: make this parse?
+        return text_inbr(self.placeholder_name()) + self.assign_controller.render(latex=False)
 
     def expand(self):
         if isinstance(self.placeholder_for, str):
