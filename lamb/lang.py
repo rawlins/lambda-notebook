@@ -319,7 +319,7 @@ class SingletonComposable(Composable):
 
     def __repr__(self):
         # TODO: make this parse?
-        return text_inbr(self.name) + "%s = %s" % (self.name, self.assign_controller.render(latex=False), repr(self.content))
+        return text_inbr(self.name) + "%s = %s" % (self.assign_controller.render(latex=False), repr(self.content))
 
     def short_str(self, latex=False):
         if latex:
@@ -1309,9 +1309,9 @@ class CompositionSystem(object):
             self.assign_controller = VacuousAssignmentController()
         else:
             self.assign_controller = a_controller
-
         self.typecache = set()
         self.lexicon = dict()
+        self.update_typeshifts()
 
     def copy(self):
         new_sys = CompositionSystem(rules=self.rules, basictypes=self.basictypes, name=(self.name + " (copy)"), a_controller=self.assign_controller)
@@ -1325,6 +1325,7 @@ class CompositionSystem(object):
                 meta.logger.warning("Composition rule named '%s' already present in system" % r.name)
             self.ruledict[r.name] = r
         self.rules.append(r)
+        self.update_typeshifts()
 
     def remove_rule(self, r):
         """Remove a composition rule by name."""
@@ -1337,6 +1338,8 @@ class CompositionSystem(object):
             return
         del self.ruledict[name]
         self.rules = [r for r in self.rules if r.name != name]
+        self.update_typeshifts()
+
 
     def hastype(self, t):
         if t in self.basictypes:
@@ -1407,6 +1410,16 @@ class CompositionSystem(object):
     def add_items(self, *items):
         for i in items:
             self.add_item(i)
+
+    def update_typeshifts(self):
+        typeshifts = list()
+        for r in self.rules:
+            try:
+                if r.typeshift:
+                    typeshifts.append(r)
+            except AttributeError:
+                pass
+        self.typeshifts = typeshifts
 
     def compose(self, *items, assignment=None):
         """Compose the items according to the system.  Each item may be a container object."""
