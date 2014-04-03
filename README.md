@@ -9,9 +9,10 @@ If you are interested in discussing this project, you can join the following mai
 ## Installation
 
 Prerequisites: python 3.3.x, and IPython 1.0+, set up to work with that version of python.  If you are using macports, skip to the directions below.
+  * Everything should work with IPython 2.0, still under testing.
   * Unfortunately this is not yet easy to install.  
   * For python 3, see [http://www.python.org/](http://www.python.org/).  We do not recommend using OS installed versions, for example, on OS X; installing an up-to-date version of python 3 is however very easy.
-  * The complications lie in getting IPython to work with python 3.
+  * The complications lie in getting IPython to work with python 3.  _Note_: this should be drastically simplified in IPython 2.0, but this hasn't yet been tested.  (Reports welcome!)
   * For general installation instructions for IPython, see [http://ipython.org/install.html](http://ipython.org/install.html).  A slightly outdated, but more useful document, is at [http://ipython.org/ipython-doc/rel-1.1.0/install/index.html](http://ipython.org/ipython-doc/rel-1.1.0/install/index.html).  
   For IPython notebook, you will need to make sure you have installed the packages pyzmq, Jinja2, nose, Tornado, readline.  To install several of these on a mac, you will need an XCode installation first, this can be downloaded for free from the app store.  Then you should install them using easy_install (part of setup_tools) or pip.  Currently, there may be difficulties with python on Maverick.  (_These notes need to be expanded, and adapted for windows..._)
 
@@ -35,6 +36,7 @@ To run the notebook:
   * On a mac, double click `lambda_notebook.command`.
   * Or, from a shell, run `lambda_notebook.py`.  On windows you may need to explicitly call something like `python3 lambda_notebook.py`.  (Untested.)
   * To user a notebook directory other than the default `notebooks`, you can call something like `./lambda_notebook.py --notebook-dir=./local_notebooks/`.  Note that `local_notebooks` is untracked by git, so is a safe place to put testing notebooks etc.
+  * IPython 2 includes a directory browser, and `notebooks/local_notebooks` is also untracked.
 
 This will start a server in the terminal and open your web browser to the notebook directory.  Then, look through the various notebooks to see examples of what can be done.  I recommend starting (for now) with:
   * LSA Poster examples
