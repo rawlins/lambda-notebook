@@ -6,6 +6,11 @@ The project is in an alpha state.  While code is publicly up on github, expect b
 
 If you are interested in discussing this project, you can join the following mailing list, which currently very low traffic: [http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com](http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com).  You can also ask questions directly to Kyle Rawlins, [kgr@jhu.edu](mailto:kgr@jhu.edu).
 
+**Note for upgrading to IPython 2.0**: IPython 2.0 includes some drastic improvements and overall makes the lambda notebook easier to use.  However, it is highly recommended that you look at the UI changes, and in particular run through the UI tour (from the help menu of any notebook).
+  * The biggest change, which may take some getting used to, is that the UI is now modal; you are either in edit mode (for editing cells) or command mode (for running cells).  Use Enter/esc (or mouse click inside/outside of an edit area) to switch between those.  There will be a little pen marker in the upper right corner if you are in edit mode, and the selected cell border will be green.  If something isn't doing what you expect, check if you are in the correct mode.
+  * Also, cells executed in notebooks saved in previous versions may need to be rerun for the new security model.
+
+
 ## Installation
 
 Prerequisites: python 3.3.x, and IPython 1.0+, set up to work with that version of python.  If you are using macports, skip to the directions below.
