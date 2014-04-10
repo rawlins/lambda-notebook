@@ -816,6 +816,11 @@ class TreeComposite(Composite, Tree):
             else:
                 return self.source
 
+    def reduce_all(self):
+        """Replace contents with versions that have been reduced as much as possible."""
+        self.content = self.content.reduce_all()
+        return self
+
     def _repr_latex_(self):
         # since this inherits from Tree, need to ensure that we don't inherit a monkey-patched _repr_latex_ from there.
         return self.latex_str()
@@ -866,9 +871,11 @@ class CompositionResult(Composable):
                 s += "1 composition path.  Result:"
             else:
                 s += "%i composition paths. Results:" % len(self.results)
+            n = 0
             for composite in self.results:
                 #TODO: newlines in mathjax??
-                s += "\n<br />" + latex_indent() + composite.latex_str()
+                s += "\n<br />" + latex_indent() + "[%i]: " % n + composite.latex_str()
+                n += 1
                 #s += latex_indent() + "`%s' $*$ `%s' leads to `%s'\n" % (composite.p1.short_str_latex(), composite.p2.short_str_latex(), ensuremath(composite.latex_str()))
         return s
 
@@ -932,10 +939,10 @@ class CompositionResult(Composable):
             s += "1 composition path:<br />"
         else:
             s += "%i composition paths:<br />\n" % len(self.results)
-        i = 1
+        i = 0
         for r in self.results:
             if len(self.results) > 1:
-                s += "Path %i:<br />\n" % i
+                s += "Path [%i]:<br />\n" % i
             # this will return a MiniLatex-packaged string.
             rst = r.latex_step_tree(derivations=derivations)
             s += rst._repr_latex_() + "<br /><br />"
@@ -1057,7 +1064,7 @@ class Item(TreeComposite):
 
 
 class BinaryCompositionOp(object):
-    def __init__(self, name, operation, commutative=False, composite_name=None, allow_none=False, system=None):
+    def __init__(self, name, operation, commutative=False, composite_name=None, allow_none=False, reduce=False, system=None):
         self.operation = operation
         self.__name__ = name
         self.commutative = commutative
@@ -1066,6 +1073,8 @@ class BinaryCompositionOp(object):
             self.composite_name = composite_name
         if system is not None:
             self.system = system
+        self.typeshift = False
+        self.reduce = reduce # shadows built in function
 
     @property
     def name(self):
@@ -1084,10 +1093,12 @@ class BinaryCompositionOp(object):
             raise TypeMismatch(i1, i2, self.name)
         result = self.operation(i1, i2, assignment=assignment)
         result.mode = self
+        if self.reduce:
+            result = result.reduce_all()
         return result
 
 class UnaryCompositionOp(object):
-    def __init__(self, name, operation, composite_name=None, allow_none=False, system=None,typeshift=False):
+    def __init__(self, name, operation, composite_name=None, allow_none=False, reduce=False, system=None,typeshift=False):
         self.operation = operation
         self.__name__ = name
         self.allow_none = allow_none
@@ -1096,6 +1107,7 @@ class UnaryCompositionOp(object):
         if system is not None:
             self.system = system
         self.typeshift = typeshift
+        self.reduce = reduce # shadows builtin
 
     @property
     def name(self):
@@ -1114,6 +1126,8 @@ class UnaryCompositionOp(object):
             raise TypeMismatch(i1, None, self.name)
         result = self.operation(i1, assignment=assignment)
         result.mode = self
+        if self.reduce:
+            result = result.reduce_all()
         return result
 
 
@@ -1142,6 +1156,7 @@ class TreeCompositionOp(object):
         #     self.system = system
         # else:
         #     self.system = get_system()
+        self.typeshift = False
 
     @property
     def name(self):
@@ -1312,6 +1327,8 @@ class CompositionSystem(object):
         self.typecache = set()
         self.lexicon = dict()
         self.update_typeshifts()
+        self.typeshift_depth = 3
+        self.typeshift = False
 
     def copy(self):
         new_sys = CompositionSystem(rules=self.rules, basictypes=self.basictypes, name=(self.name + " (copy)"), a_controller=self.assign_controller)
@@ -1421,13 +1438,34 @@ class CompositionSystem(object):
                 pass
         self.typeshifts = typeshifts
 
-    def compose(self, *items, assignment=None):
+    def compose(self, *items, assignment=None, block_typeshift=False):
         """Compose the items according to the system.  Each item may be a container object."""
         #return self.compose_raw(*items, assignment=assignment)
         #TODO __big change__ (?) make sure this works generally...
-        return self.compose_iterables(*items, assignment=assignment)
+        return self.compose_iterables(*items, assignment=assignment, block_typeshift=block_typeshift)
 
-    def compose_raw(self, *items, assignment=None):
+    def do_typeshifts(self, item, depth=1, include_base=True, assignment=None):
+        l = list([item])
+        new_l = list()
+        for d in range(0, depth):
+            new_l = list()
+            for i in l:
+                for mode in self.typeshifts:
+                    try:
+                        result = mode(i, assignment=assignment)
+                        new_l.append(result)
+                    except TypeMismatch as e:
+                        #TODO: record this?
+                        continue
+            l = new_l
+        l = new_l
+        if include_base:
+            l.append(item)
+        return CompositionResult([item], l, list())
+
+
+
+    def compose_raw_old(self, *items, assignment=None):
         """Attempts to compose the provided items.  This is the 'raw' version not intended to be called directly, and 
         assumes that non-determinism is already taken care of.
 
@@ -1442,6 +1480,8 @@ class CompositionSystem(object):
                 #TODO: put something in failure list?
                 continue
             if arity == 1:
+                if self.typeshift and mode.typeshift:
+                    continue
                 orders = ((items[0],),)
             elif arity == 2:
                 if mode.commutative:
@@ -1459,7 +1499,7 @@ class CompositionSystem(object):
                             result.c_name = order[0].node
                         else:
                             #print(order[0])
-                            print(mode)
+                            #print(mode)
                             result.c_name = order[0].name
                     else:
                         result.c_name = mode.composite_name(items[0], items[1])
@@ -1473,23 +1513,92 @@ class CompositionSystem(object):
                     continue
         return CompositionResult(items, results, failures)
 
+    def compose_raw(self, *items, assignment=None, block_typeshift=False):
+        """Attempts to compose the provided items.  This is the 'raw' version not intended to be called directly, and 
+        assumes that non-determinism is already taken care of.
+
+        Brute force tries every composition rule and order of items.  Note that currently this not handle arities > 2.
+        """
+        results = list()
+        failures = list()
+        items = self.lookup(*items)
+        arity = len(items)
+        for mode in self.rules:
+            if arity != mode.arity:
+                #TODO: put something in failure list?
+                continue
+            if arity == 1:
+                if mode.typeshift:
+                    continue
+                orders = ((items[0],),)
+            elif arity == 2:
+                if mode.commutative:
+                    orders = ((items[0], items[1]),)
+                else:
+                    orders = ((items[0], items[1]), (items[1], items[0]))
+            else:
+                raise NotImplementedError
+            for order in orders:
+                try:
+                    #print(order)
+                    result = mode(*order, assignment=assignment)
+                    if arity == 1:
+                        if isinstance(order[0], Tree):
+                            result.c_name = order[0].node
+                        else:
+                            #print(order[0])
+                            #print(mode)
+                            result.c_name = order[0].name
+                    else:
+                        result.c_name = mode.composite_name(items[0], items[1])
+                    results.append(result)
+                except TypeMismatch as e:
+                    #print(e)
+                    if arity == 1:
+                        failures.append(Composite(order[0], e, mode=mode))
+                    else:
+                        failures.append(BinaryComposite(order[0], order[1], e, mode=mode))
+                    continue
+        # typeshift as a last resort
+        if len(results) == 0 and self.typeshift and not block_typeshift:
+            shift_result = self.last_resort_shift(*items, assignment=assignment)
+            if shift_result is not None and len(shift_result.results) > 0:
+                return shift_result
+        return CompositionResult(items, results, failures)
+
+    def last_resort_shift(self, *items, assignment=None):
+        for i in range(1, self.typeshift_depth):
+            new_items = list(items)
+            typeshifts_changed = False
+            for n in range(len(new_items)):
+                new_i_n = self.do_typeshifts(new_items[n], depth=i, assignment=assignment)
+                new_items[n] = new_i_n
+                if len(new_i_n.results) > 1:
+                    typeshifts_changed = True
+            if typeshifts_changed:
+                result = self.compose(*new_items, assignment=assignment, block_typeshift=True)
+                if len(result.results) > 0:
+                    return result
+        return None
+
+
     #def compose(self, i1, i2):
     #    return self.compose_long(i1, i2).result_items()
 
-    def compose_iterables(self, t1, t2=None, assignment=None):
+    def compose_iterables(self, t1, t2=None, assignment=None, block_typeshift=False):
         iter1 = t1.content_iter()
         if t2 is None:
             iter2 = None
         else:
             iter2 = t2.content_iter()
-        r = self.compose_iterators(iter1, iter2, assignment=assignment)
+        r = self.compose_iterators(iter1, iter2, assignment=assignment, block_typeshift=block_typeshift)
         return r
 
-    def compose_iterators(self, iter1, iter2=None, assignment=None):
+    def compose_iterators(self, iter1, iter2=None, assignment=None, block_typeshift=False):
         r = CompositionResult(None, [],[])
         if iter2 is None:
             for i1 in iter1:
-                r.extend(self.compose_raw(i1, assignment=assignment))
+                r.extend(self.compose_raw(i1, assignment=assignment, block_typeshift=block_typeshift))
         else:
             # this seems like not the best way to do this...but can't use iter2 directly because there's no
             # way to reset it.  I considered itertools.tee, but the docs suggested that lists are more efficient
@@ -1497,11 +1606,11 @@ class CompositionSystem(object):
             list_i2 = list(iter2)
             for i1 in iter1:
                 for i2 in list_i2:
-                    r.extend(self.compose_raw(i1, i2, assignment=assignment))
+                    r.extend(self.compose_raw(i1, i2, assignment=assignment, block_typeshift=block_typeshift))
         return r
 
-    def compose_container(self, c, assignment=None):
-        r = self.compose_iterators(c.locally_flat_iter(), assignment=assignment)
+    def compose_container(self, c, assignment=None, block_typeshift=False):
+        r = self.compose_iterators(c.locally_flat_iter(), assignment=assignment, block_typeshift=block_typeshift)
         #print("hi %s" % repr(r.failures))
         if r.empty() and len(r.failures) == 0:
             r.failures.extend(c.find_empty_results()) # find any errors inherited from subtrees.
@@ -1512,6 +1621,7 @@ class CompositionSystem(object):
         cret = self.compose(i1,i2)
         cret.print_details()
         return cret
+
 
 
 class TreeCompositionSystem(CompositionSystem):
@@ -1851,13 +1961,28 @@ def pm_fun(fun1, fun2, assignment=None):
     return BinaryComposite(fun1, fun2, result)
 
 
+
+def unary_factory(meta_fun, name, typeshift=False, reduce=True):
+    def op_fun(arg, assignment=None):
+        result = meta_fun(arg.content.under_assignment(assignment))
+        return UnaryComposite(arg, result)
+    return UnaryCompositionOp(name, op_fun, typeshift=typeshift, reduce=reduce)
+
+def binary_factory(meta_fun, name, reduce=True):
+    def op_fun(arg1, arg2, assignment=None):
+        result = meta_fun(arg1.content.under_assignment(assignment), arg2.content.under_assignment(assignment))
+        return BinaryComposite(arg1, arg2, result)
+    return BinaryCompositionOp(name, op_fun, reduce=reduce)
+
+
+
 def setup_type_driven():
     global td_system, cat, gray, john, pm, fa, pa, inP, texas, isV, julius
     # note that PM is only commutative if the underlying logic has commutative conjunction...
     oldlevel = meta.logger.level
     meta.logger.setLevel(logging.WARNING)
-    pm = BinaryCompositionOp("PM", pm_fun, commutative=True)
-    fa = BinaryCompositionOp("FA", fa_fun)
+    pm = BinaryCompositionOp("PM", pm_fun, commutative=True, reduce=True)
+    fa = BinaryCompositionOp("FA", fa_fun, reduce=True)
     pa = BinaryCompositionOp("PA", pa_fun, allow_none=True)
     td_system = CompositionSystem(rules=[fa, pm, pa], basictypes={type_e, type_t}, name="H&K simple")
     cat = Item("cat", "L x_e: Cat(x)")

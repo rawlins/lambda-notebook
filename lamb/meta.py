@@ -2146,6 +2146,27 @@ class LFun(BindingOp):
         call + reduce is equivalent to apply, for an LFun"""
         return TypedExpr.factory(self, *args)
 
+    def compose(self, other):
+        return fun_compose(self, other)
+
+    def __mul__(self, other):
+        return self.compose(other)
+
+def geach_combinator(gtype, ftype):
+    body = term("g", gtype)(term("f", ftype)(term("x", ftype.left)))
+    combinator = LFun(gtype, LFun(ftype, LFun(ftype.left, body,varname="x"),varname="f"), varname="g")
+    return combinator
+
+def fun_compose(g, f):
+    if (not (g.type.functional() and f.type.functional()
+             and g.type.left == f.type.right)):
+        raise types.TypeMismatch(g, f, "Function composition")
+    combinator = geach_combinator(g.type, f.type)
+    result = (combinator(g)(f)).reduce_all()
+    return result
+
+
+
 BindingOp.add_op(LFun)
 
 def unsafe_variables(fun, arg):
