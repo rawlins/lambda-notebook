@@ -6,7 +6,7 @@ from lamb.utils import *
 #    pass
 
 class ParseError(Exception):
-    def __init__(self, msg, s, i=None, met_preconditions=True, e=None):
+    def __init__(self, msg, s=None, i=None, met_preconditions=True, e=None):
         self.s = s
         self.i = i
         self.e = e
@@ -119,7 +119,7 @@ def parse_equality_line(s, env=None):
         # don't pass assignment here, to allow for redefinition.  TODO: revisit
         term = meta.TypedExpr.term_factory(left_s)
         if not term.variable():
-            raise ParseError("Assignment to non-variable term")
+            raise ParseError("Assignment to non-variable term '%s'" % term)
         ts = meta.get_type_system()
         (unify_l, unify_r) = ts.local_unify(term.type, right_side.type)
         # there are two ways in which unify could fail.  One is the built-in ad hoc type_guessed flag, and one is a genuine type mismatch.

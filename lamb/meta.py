@@ -1803,8 +1803,8 @@ class ConditionSet(BindingOp):
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None):
         body = self.ensure_typed_expr(body, assignment=assignment)
-        super().__init__(var_or_vtype=var_or_vtype, typ=types.SetType(vtype), body=body, varname=varname, body_type=types.type_t, assignment=assignment)
-        #self.type = types.SetType(vtype)
+        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment)
+        self.type = types.SetType(self.vartype)
 
     def copy(self):
         return ConditionSet(self.vartype, self.body, self.varname)
