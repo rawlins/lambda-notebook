@@ -1443,10 +1443,18 @@ class SetContains(BinaryOpExpr):
         arg1 = self.ensure_typed_expr(arg1)
         arg2 = self.ensure_typed_expr(arg2, types.SetType(arg1.type))
         arg1 = self.ensure_typed_expr(arg1, arg2.type.content_type)
-        super().__init__(type_t, "in", arg1, arg2, "∈", "\\in{}", tcheck_args=False)
+        super().__init__(type_t, "<<", arg1, arg2, "∈", "\\in{}", tcheck_args=False)
 
     def copy(self):
         return SetContains(self.args[0], self.args[1])
+
+    def reduce(self):
+        if isinstance(self.args[1], ConditionSet):
+            return derived((self.args[1].to_characteristic()(self.args[0])).reduce(), self, "∈ reduction")
+        else:
+            # leave ListedSets as-is for now
+            return self
+
 
 
 class UnaryNegativeExpr(UnaryOpExpr):
@@ -1852,56 +1860,11 @@ class ConditionSet(BindingOp):
 
 BindingOp.add_op(ConditionSet)
 
-class SingletonSet(TypedExpr):
-    def __init__(self, body, assignment=None):
-        self.args = [self.ensure_typed_expr(body, assignment=assignment)]
-        self.op = "Set"
-        self.type = types.SetType(body.type)
-        self.derivation = None
-
-    def copy(self):
-        return SingletonSet(self.args[0])
-
-    @property
-    def body(self):
-        return self.args[0]
-
-    def term(self):
-        return False
-
-    def __repr__(self):
-        return "{" + repr(self.args[0]) + "}"
-
-    def latex_str(self, parens=True):
-        return ensuremath("\{" + self.args[0].latex_str() + "\}")
-
-    def to_condition_set(self):
-        return ConditionSet(self.type, BinaryGenericEqExpr(self.ensure_typed_expr("x", self.args[0].type), self.args[0]))
-
-    #def __contains__(self, i):
-    #    return SetContains(i, self)
-
-    def try_adjust_type(self, new_type, derivation_reason=None):
-        """Attempts to adjust the type of self to be compatible with new_type.  
-        If the types already match, it return self.
-        If it succeeds, it returns a modified _copy_ of self.  
-        If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
-        If it fails completely, it returns None."""
-        ts = get_type_system()
-        unify_a, unify_b = ts.local_unify(new_type, self.type)
-        if unify_a is None:
-            #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
-            return None
-        if self.type == unify_b:
-            return self
-        else: # either input or output type can be strengthened
-            if derivation_reason is None:
-                derivation_reason = "Type adjustment"
-            inner_type = unify_b.content_type
-            content = self.args[0].try_adjust_type(inner_type, derivation_reason)
-            return derived(SingletonSet(content), self, derivation_reason)
-
 class ListedSet(TypedExpr):
+    canonical_name = "ListedSet"
+    op_name_uni="ListedSet"
+    op_name_latex="ListedSet"
+
     def __init__(self, iterable, typ=None, assignment=None):
         s = set(iterable) # just make it a set first, remove duplicates, flatten order
         self.args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
@@ -1938,7 +1901,7 @@ class ListedSet(TypedExpr):
 
 
     def __repr__(self):
-        return "{" + ", ".join([repr(a) for a in self.args]) + "}"
+        return "ListedSet : " + repr(tuple(self.args))
 
     def latex_str(self):
         inner = ", ".join([a.latex_str() for a in self.args])
@@ -1963,6 +1926,8 @@ class ListedSet(TypedExpr):
             inner_type = unify_b.content_type
             content = [a.try_adjust_type(inner_type, derivation_reason) for a in self.args]
             return derived(ListedSet(content), self, derivation_reason)
+
+#BindingOp.add_op(ListedSet)
 
 class ForallUnary(BindingOp):
 
