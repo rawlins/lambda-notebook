@@ -1357,6 +1357,16 @@ class CompositionSystem(object):
         self.rules = [r for r in self.rules if r.name != name]
         self.update_typeshifts()
 
+    def get_rule(self, r):
+        """return a composition rule by name.  Note that some properties are cached, in particular typeshifting.
+
+        In general it may be safest to re-add a rule after modifying it."""
+        if isinstance(r, str):
+            name = r
+        else:
+            name = r.name
+        return self.ruledict[name]
+
 
     def hastype(self, t):
         if t in self.basictypes:
