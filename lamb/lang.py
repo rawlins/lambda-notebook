@@ -1911,6 +1911,10 @@ class Trace(Item):
         # Item constructor will set self.index
         Item.__init__(self, name, meta.TypedTerm(name, typ), index=index)        
 
+class Binder(Item):
+    def __init__(self, index):
+        Item.__init__(self, "%i" % index, None, index=index)
+
 def pa_fun(binder, content, assignment=None):
     if (binder.content is not None) or not binder.name.strip().isnumeric():
         raise TypeMismatch(binder, content, "Predicate Abstraction")

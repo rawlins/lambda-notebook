@@ -976,6 +976,11 @@ class UnderTypeSystem(TypeSystem):
         else:
             return False
 
+    def fun_arg_check_types_bool(self, ftype, atype):
+        if ftype.functional():
+            return flexible_equal(ftype.left, atype)
+        else:
+            return False
 
     # a, a   -> a, a
     # a, ?a  -> a, a
