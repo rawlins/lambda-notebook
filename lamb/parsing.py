@@ -5,11 +5,20 @@ from lamb.utils import *
 #class ParseError(Exception):
 #    pass
 
+global eq_transforms
+eq_transforms = dict()
+
 class ParseError(Exception):
     def __init__(self, msg, s=None, i=None, met_preconditions=True, e=None):
         self.s = s
         self.i = i
-        self.e = e
+        if e:
+            if isinstance(e, ParseError) and e.e:
+                self.e = e.e
+            else:
+                self.e = e
+        else:
+            self.e = None
         self.msg = msg
         self.met_preconditions = met_preconditions # set to False to indicate that a try_parse function did not find preconditions for what it is supposed to consume
 
@@ -81,7 +90,7 @@ def vars_only(env):
     env2 = {key: env[key] for key in env.keys() if isinstance(env[key], meta.TypedExpr)}
     return env2
 
-def parse_equality_line(s, env=None):
+def parse_equality_line(s, env=None, transforms=None):
     from lamb import meta, lang, types
     # TODO should this go by lines....
     if env is None:
@@ -92,6 +101,21 @@ def parse_equality_line(s, env=None):
     l = s.split("=", 1)
     if len(l) != 2:
         raise ParseError("Missing =") # TODO expand
+    transform = None
+    right_str = l[1]
+    if right_str[0] == "<":
+        trans_match = re.match(r'^\<([a-zA-Z0-9_]*)\>', right_str)
+        if trans_match:
+            trans_name = trans_match.group(1)
+            if transforms and trans_name in transforms:
+                transform = transforms[trans_name]
+                right_str = right_str[trans_match.end(0):]
+            else:
+                raise ParseError("Unknown transform '<%s>'" % (trans_name))
+    if transform is None and "default" in transforms:
+        transform = transforms["default"]
+
+
     # right side should be typed expr no matter what
 
     left_s = l[0].strip()
@@ -99,7 +123,7 @@ def parse_equality_line(s, env=None):
     if match:
         default = a_ctl.default()
         db_env = default.modify(var_env)
-        right_side = meta.TypedExpr.factory(l[1].strip(), assignment=db_env)
+        right_side = meta.TypedExpr.factory(right_str.strip(), assignment=db_env)
         right_side = right_side.under_assignment(db_env)
         #print("assignment is " + str(db_env))
         #print("default is " + str(db_env))
@@ -107,12 +131,15 @@ def parse_equality_line(s, env=None):
 
         # lexical assignment
         lex_name = match.group(1)
+        if transform:
+            right_side = transform(right_side)
+
         item = lang.Item(lex_name, right_side)
         # TODO: add to composition system's lexicon?  Different way of tracking lexicons?
         env[lex_name] = item
         return ({lex_name: item}, env)
     else:
-        right_side = meta.TypedExpr.factory(l[1].strip(), assignment=var_env)
+        right_side = meta.TypedExpr.factory(right_str.strip(), assignment=var_env)
         right_side = right_side.under_assignment(var_env)
 
         # variable assignment case
@@ -132,6 +159,8 @@ def parse_equality_line(s, env=None):
         else:
             # brute force
             term.type = unify_r
+        if transform:
+            right_side = transform(right_side)
         # NOTE side-effect here
         env[term.op] = right_side
         return ({term.op : right_side}, env)
@@ -141,13 +170,13 @@ def remove_comments(s):
     r = s.split("#")
     return r[0]
 
-def parse_line(s, env=None):
+def parse_line(s, env=None, transforms=None):
     if env is None:
         env = dict()
     try:
         s = remove_comments(s)
         if len(s.strip()) > 0:
-            (accum, env) = parse_equality_line(s, env)
+            (accum, env) = parse_equality_line(s, transforms=transforms, env=env)
             return (accum, env)
         else:
             return (dict(), env)
@@ -164,18 +193,24 @@ def parse_line(s, env=None):
         return (dict(), env)
 
 
-def parse_lines(s, env=None):
+def parse_lines(s, env=None, transforms=None):
     if env is None:
         env = collections.OrderedDict()
+    global eq_transforms
+    if transforms is None:
+        transforms = eq_transforms
     accum = collections.OrderedDict()
     lines = s.splitlines()
     for l in lines:
-        (a, env) = parse_line(l, env)
+        (a, env) = parse_line(l, transforms=transforms, env=env)
         accum.update(a)
     return (accum, env)
 
-def parse(s, state=None):
-    return parse_lines(s, state)
+def parse(s, state=None, transforms=None):
+    global eq_transforms
+    if transforms is None:
+        transforms = eq_transforms
+    return parse_lines(s, transforms=transforms, env=state)
 
 def fullvar(d, s):
     from lamb import meta

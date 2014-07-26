@@ -997,9 +997,39 @@ class CompositionResult(Composable):
         self.results.extend(other.results)
         self.failures.extend(other.failures)
 
+    def prune(self, i, reason=None):
+        result = self.results[i]
+        del self.results[i]
+        self.failures.append(result)
+        #TODO: do something with reason
 
+    def eliminate_dups(cr):
+        i = 0
+        while i < len(cr.content):
+            j = i + 1
+            while j < len(cr.content):
+                if cr.content[i].content == cr.content[j].content:
+                    cr.prune(j, reason="duplicate meaning")
+                else:
+                    j += 1
+            i += 1
+        return cr
 
+class CRFilter(object):
+    def __init__(self, name, filter_fun):
+        self.filter_fun = filter_fun
+        self.name = name
 
+    def __call__(self, cresult):
+        #cresult = cresult.copy() #TODO: implement
+        i = 0
+        while i < len(cresult.content):
+            passes = self.filter_fun(cresult.content[i].content)
+            if passes:
+                i += 1
+            else:
+                cresult.prune(i, reason=self.name)
+        return cresult
 
 class Item(TreeComposite):
     """This class represents a lexical item.  It is implemented as a TreeComposite without a daughter."""
@@ -1474,61 +1504,13 @@ class CompositionSystem(object):
         return CompositionResult([item], l, list())
 
 
-
-    def compose_raw_old(self, *items, assignment=None):
-        """Attempts to compose the provided items.  This is the 'raw' version not intended to be called directly, and 
-        assumes that non-determinism is already taken care of.
-
-        Brute force tries every composition rule and order of items.  Note that currently this not handle arities > 2.
-        """
-        results = list()
-        failures = list()
-        items = self.lookup(*items)
-        arity = len(items)
-        for mode in self.rules:
-            if arity != mode.arity:
-                #TODO: put something in failure list?
-                continue
-            if arity == 1:
-                if self.typeshift and mode.typeshift:
-                    continue
-                orders = ((items[0],),)
-            elif arity == 2:
-                if mode.commutative:
-                    orders = ((items[0], items[1]),)
-                else:
-                    orders = ((items[0], items[1]), (items[1], items[0]))
-            else:
-                raise NotImplementedError
-            for order in orders:
-                try:
-                    #print(order)
-                    result = mode(*order, assignment=assignment)
-                    if arity == 1:
-                        if isinstance(order[0], Tree):
-                            result.c_name = order[0].node
-                        else:
-                            #print(order[0])
-                            #print(mode)
-                            result.c_name = order[0].name
-                    else:
-                        result.c_name = mode.composite_name(items[0], items[1])
-                    results.append(result)
-                except TypeMismatch as e:
-                    #print(e)
-                    if arity == 1:
-                        failures.append(Composite(order[0], e, mode=mode))
-                    else:
-                        failures.append(BinaryComposite(order[0], order[1], e, mode=mode))
-                    continue
-        return CompositionResult(items, results, failures)
-
     def compose_raw(self, *items, assignment=None, block_typeshift=False):
         """Attempts to compose the provided items.  This is the 'raw' version not intended to be called directly, and 
         assumes that non-determinism is already taken care of.
 
         Brute force tries every composition rule and order of items.  Note that currently this not handle arities > 2.
         """
+        from lamb import parsing
         results = list()
         failures = list()
         items = self.lookup(*items)
@@ -1562,7 +1544,15 @@ class CompositionSystem(object):
                     else:
                         result.c_name = mode.composite_name(items[0], items[1])
                     results.append(result)
-                except TypeMismatch as e:
+                except (TypeMismatch, parsing.ParseError) as e:
+                    if isinstance(e, parsing.ParseError):
+                        if e.e and isinstance(e.e, TypeMismatch):
+                            # extract TypeMismatches that lead to ParseErrors somewhere in the composition operation.
+                            # this is coming up when building combinators using te
+                            e = e.e
+                        else:
+                            print("test ", e.e, ", ", isinstance(e.e, TypeMismatch), ", ", e)
+                            raise e
                     #print(e)
                     if arity == 1:
                         failures.append(Composite(order[0], e, mode=mode))
@@ -1985,6 +1975,12 @@ def unary_factory(meta_fun, name, typeshift=False, reduce=True):
 def binary_factory(meta_fun, name, reduce=True):
     def op_fun(arg1, arg2, assignment=None):
         result = meta_fun(arg1.content.under_assignment(assignment), arg2.content.under_assignment(assignment))
+        return BinaryComposite(arg1, arg2, result)
+    return BinaryCompositionOp(name, op_fun, reduce=reduce)
+
+def binary_factory_curried(meta_fun, name, reduce=True):
+    def op_fun(arg1, arg2, assignment=None):
+        result = meta_fun(arg1.content.under_assignment(assignment))(arg2.content.under_assignment(assignment))
         return BinaryComposite(arg1, arg2, result)
     return BinaryCompositionOp(name, op_fun, reduce=reduce)
 

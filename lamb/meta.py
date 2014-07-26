@@ -816,11 +816,15 @@ class TypedExpr(object):
                 return False
         return True
 
+    def reducible(self):
+        if len(self.args) == 1 and isinstance(self.op, LFun):
+            return True
+
     def reduce(self):
         """if there are arguments to op, see if a single reduction is possible."""
-        if len(self.args) == 0:
+        if not self.reducible():
             return self
-        elif isinstance(self.op, LFun):
+        if isinstance(self.op, LFun):
             return derived(self.op.apply(self.args[0]), self, desc="F-A reduction")
         else:
             # functional op but don't know what to do
@@ -862,10 +866,13 @@ class TypedExpr(object):
                 next_step = result.copy()
                 next_step.op = new_op
                 result = derived(next_step, result, desc="Recursive reduction of op")
-        new_result = result.reduce()
-        if new_result is not result:
-            dirty = True
-            result = new_result # no need to add a derivation here, reduce will do that already
+        while result.reducible():
+            new_result = result.reduce()
+            if new_result is not result:
+                dirty = True
+                result = new_result # no need to add a derivation here, reduce will do that already
+            else:
+                break # should never happen...but prevent loops in case of error
         # do this twice in case reduce did something
         if isinstance(result.op, TypedExpr):
             new_op = result.op.reduce_all()
@@ -1754,8 +1761,10 @@ class BindingOp(TypedExpr):
                 #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
                 body = TypedExpr.parse_expr_string(remainder, assignment=assignment, locals=locals)
             except Exception as e:
-                #print(e)
-                raise parsing.ParseError("Binding operator expression has unparsable body", s, None,e=e)
+                if isinstance(e, parsing.ParseError):
+                    raise e
+                else:
+                    raise parsing.ParseError("Binding operator expression has unparsable body", s, None,e=e)
 
         if body is None:
             raise parsing.ParseError("Can't create body-less binding operator expression", s, None)
@@ -1795,7 +1804,10 @@ class BindingOp(TypedExpr):
         try:
             body = TypedExpr.try_parse_paren_struc_r(new_struc, assignment=assignment, locals=locals, vprefix=vprefix)
         except Exception as e:
-            raise parsing.ParseError("Binding operator expression has unparsable body", parsing.flatten_paren_struc(struc), None, e=e)
+            if isinstance(e, parsing.ParseError):
+                raise e
+            else:
+                raise parsing.ParseError("Binding operator expression has unparsable body", parsing.flatten_paren_struc(struc), None, e=e)
         if body is None:
             raise parsing.ParseError("Can't create body-less binding operator expression", parsing.flatten_paren_struc(struc), None)
         return op_class(var_or_vtype=t, varname=v, body=body)
