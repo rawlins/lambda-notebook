@@ -6,34 +6,29 @@ The project is in an alpha state.  While code is publicly up on github, expect b
 
 If you are interested in discussing this project, you can join the following mailing list, which currently very low traffic: [http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com](http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com).  You can also ask questions directly to Kyle Rawlins, [kgr@jhu.edu](mailto:kgr@jhu.edu).
 
-**Note for upgrading to IPython 2.0**: IPython 2.0 includes some drastic improvements and overall makes the lambda notebook easier to use.  However, it is highly recommended that you look at the UI changes, and in particular run through the UI tour (from the help menu of any notebook).
-  * The biggest change, which may take some getting used to, is that the UI is now modal; you are either in edit mode (for editing cells) or command mode (for running cells).  Use Enter/esc (or mouse click inside/outside of an edit area) to switch between those.  There will be a little pen marker in the upper right corner if you are in edit mode, and the selected cell border will be green.  If something isn't doing what you expect, check if you are in the correct mode.
-  * Also, cells executed in notebooks saved in previous versions may need to be rerun for the new security model.
-
-
 ## Installation
 
-Prerequisites: python 3.3.x, and IPython 1.0+, set up to work with that version of python.  If you are using macports, skip to the directions below.
-  * Everything should work with IPython 2.0, still under testing.
-  * Unfortunately this is not yet easy to install.  
+Prerequisites: python 3.3.x, and IPython 2.0+.  
+
+The easiest way to install is probably via [macports](http://www.macports.org/).  If you are using Macports, the following installation steps should get it running from scratch: (thanks to Robert Adesam for these)
+
+  1. sudo port install python33 py33-ipython py33-zmq py33-jinja2 py33-tornado
+  2. sudo ln -s /opt/local/bin/python3.3 /opt/local/bin/python3
+  3. curl -O https://codeload.github.com/rawlins/lambda-notebook/zip/master
+  4. unzip master
+  5. cd lambda-notebook-master
+  6. ./lambda_notebook.py
+
+Manual installation is possible if you are familiar with python package management.  Here are some notes:
+
   * For python 3, see [http://www.python.org/](http://www.python.org/).  We do not recommend using OS installed versions, for example, on OS X; installing an up-to-date version of python 3 is however very easy.
   * The complications lie in getting IPython to work with python 3.  _Note_: this should be drastically simplified in IPython 2.0, but this hasn't yet been tested.  (Reports welcome!)
   * For general installation instructions for IPython, see [http://ipython.org/install.html](http://ipython.org/install.html).  A slightly outdated, but more useful document, is at [http://ipython.org/ipython-doc/rel-1.1.0/install/index.html](http://ipython.org/ipython-doc/rel-1.1.0/install/index.html).  
-  For IPython notebook, you will need to make sure you have installed the packages pyzmq, Jinja2, nose, Tornado, readline.  To install several of these on a mac, you will need an XCode installation first, this can be downloaded for free from the app store.  Then you should install them using easy_install (part of setup_tools) or pip.  Currently, there may be difficulties with python on Maverick.  (_These notes need to be expanded, and adapted for windows..._)
-
-
+  For IPython notebook, you will need to make sure you have installed the packages pyzmq, Jinja2, nose, Tornado, readline.  To install several of these on a mac, you will need an XCode installation first; this can be downloaded for free from the app store.  Once xcode is installed, you will need to install the xcode command line tools.  Then you should install them using easy_install (part of setup_tools) or pip.  (_These notes need to be expanded, and adapted for windows..._)
   * To run ipython with python 3, you can either install IPython by using 'python3 setup.py' or easy_install-3.3 or whatever, or run 'python3 ipython.py'.  
   * Suggestions for improving these instructions are welcome!  The long term goal is to provide the lambda notebook as a standalone app.
 
-The easiest way to install is probably via [macports](http://www.macports.org/).  If you are using Macports, the following installation instructions (thanks to Robert Adesam for these) should get it running from scratch:
 
-  1. port install python33 py33-ipython py33-zmq py33-jinja2 py33-tornado
-  2. curl -O https://codeload.github.com/rawlins/lambda-notebook/zip/master
-  3. unzip master
-  4. cd lambda-notebook-master
-  5. ipython3-3.3 notebook
-
-You may need to run these as root, e.g. via doing _sudo -s_ and typing your user password.
 
 ## Getting started
 
@@ -59,6 +54,12 @@ To stop the server, hit Ctrl-C twice in the terminal window.
 It is also possible to load most of the facilities of the lambda notebook directly into a regularly-started notebook, or into an arbitrary (i)python 3 instance, by adding the base directory of the lambda notebook to the modules path, and then importing `lamb_setup` (or directly importing the relevant modules).
 
 _Important note: notebooks that are part of this project assume that the lambda notebook modules (and other facilities) are part of the namespace already, and will not work without modification when loaded into a regular lambda notebook.  This typically just means importing things; see `lamb_setup.py` for an idea._
+
+
+### A note on the lambda notebook UI
+
+  * As of IPython 2.0, the UI is now modal; this can take some getting used to if you aren't familiar with modal editors such as VI.  Basically, you are either in edit mode (for editing cells) or command mode (for running cells).  Use Enter/esc (or mouse click inside/outside of an edit area) to switch between those.  There will be a little pen marker in the upper right corner if you are in edit mode, and the selected cell border will be green.  If something isn't doing what you expect, check if you are in the correct mode.
+  * Try running through the UI tour (from the help menu of any notebook) to get a sense of the IPython UI.
 
 ## Code overview
 
