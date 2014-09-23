@@ -336,6 +336,9 @@ class TupleType(AbstractType):
         except AttributeError:
             return False
 
+    def __len__(self):
+        return len(self.signature)
+
     def equal(self, other):
         #if self.undetermined or other.undetermined:
         #    return self.left.equal(other.left) and self.right.equal(other.right)
