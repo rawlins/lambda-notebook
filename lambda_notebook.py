@@ -20,7 +20,9 @@ def launch_lambda_notebook(args):
 	base_path = os.path.abspath(os.path.dirname(__file__))
 	#sys.path.append(base_path)
 	#os.chdir(base_path)
-	lamb.lnsetup.launch_lambda_notebook(args, nb_path=os.path.join(base_path, "notebooks"), lib_dir=base_path)
+	#lamb.lnsetup.launch_lambda_notebook(args, nb_path=os.path.join(base_path, "notebooks"), lib_dir=base_path)
+	#lamb.lnsetup.launch_lambda_notebook(args, nb_path=None, package_nb_path=os.path.join(base_path, "notebooks"))
+	lamb.lnsetup.launch_lambda_notebook(args)
 
 if __name__ == "__main__":
 	launch_lambda_notebook(sys.argv)

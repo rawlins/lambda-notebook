@@ -1,4 +1,4 @@
-import os, os.path
+import os, os.path, shutil
 
 try:
     import IPython
@@ -50,7 +50,39 @@ def ipython_setup():
     lamb.reload_all = reload_lamb
     inject_into_ipython()
 
-def launch_lambda_notebook(args, nb_path=None, lib_dir=None):
+def install_notebooks(nb_path, package_nb_path, force=False):
+    copy_nbs = False
+    if not os.path.exists(nb_path):
+        os.makedirs(nb_path)
+        copy_nbs = True
+    if copy_nbs and not os.path.exists(package_nb_path):
+        print("Path not found for notebooks to install: '%s'" % package_nb_path)
+        copy_nbs = False
+    if package_nb_path and (copy_nbs or force):
+        errors = []
+        names = os.listdir(package_nb_path)
+        for name in names:
+            srcname = os.path.join(package_nb_path, name)
+            destname = os.path.join(nb_path, name)
+            if os.path.exists(destname):
+                pass # never overwrite anything
+            try:
+                if os.path.islink(srcname):
+                    pass # ignore symlinks
+                elif os.path.isdir(srcname):
+                    shutil.copytree(srcname, destname)
+                else:
+                    shutil.copy2(srcname, destname)
+            except OSError as why:
+                errors.append((srcname, destname, str(why)))
+            # catch the Error from the recursive copytree so that we can
+            # continue with other files
+            except shutil.Error as err:
+                errors.extend(err.args[0])
+        if errors:
+            raise shutil.Error(errors)
+
+def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=None):
     # see branded notebook recipe here: https://gist.github.com/timo/1497850
     #base_path = os.path.abspath(os.path.dirname(__file__))
     #sys.path.append(base_path) # perhaps not needed here
@@ -66,7 +98,11 @@ def launch_lambda_notebook(args, nb_path=None, lib_dir=None):
             raise Error("Unable to locate home directory")
         #TODO: need something more general here
     if not os.path.exists(nb_path):
-        os.makedirs(nb_path)
+        try:
+            install_notebooks(nb_path, package_nb_path, force=False)
+        except shutil.Error as err:
+            print(err)
+        #os.makedirs(nb_path)
     nb_path_opt = '--NotebookManager.notebook_dir="%s"' % nb_path
     # this option calls a setup script that injects some environment variables
     # exec_lines needs to be passed as a command line option so that it gets correctly passed on to the kernel.
@@ -74,6 +110,7 @@ def launch_lambda_notebook(args, nb_path=None, lib_dir=None):
     # TODO: this may cause some user specific configuration to get ignored? test
     # note: bad things happen here if lib_dir is problematic...
     if lib_dir:
+        # TODO: won't override an installed copy of lamb in site-packages (e.g. in the app), fix this
         injection_path_opt = '--IPKernelApp.exec_lines=["import sys; sys.path.append(\'%s\'); import lamb.lnsetup; lamb.lnsetup.ipython_setup()"]' % lib_dir
     else:
         injection_path_opt = '--IPKernelApp.exec_lines=["import lamb.lnsetup; lamb.lnsetup.ipython_setup()"]'

@@ -11,8 +11,9 @@ clean_env:
 	rm -rf lambda_notebook_venv
 
 # build a self-contained packaged version of the lambda notebook.  Note that this app is _not_ straightforwardly runnable by clicking, as it will have no GUI and appear frozen to the OS.
-dist/start_notebook.app: lambda_notebook_venv setup.py
+dist/start_notebook.app: lambda_notebook_venv setup.py start_notebook.py
 	. lambda_notebook_venv/bin/activate; python setup.py py2app --packages IPython,lamb
+	cp -R ./lambda_notebook_venv/lambda-notebook-master/notebooks ./dist/start_notebook.app/Contents/Resources/package_notebooks
 
 #build a platypus-based app wrapped around start_notebook.app
 Lambda\ Notebook.app: /usr/local/bin/platypus dist/start_notebook.app start_notebook_simple.sh lambdax_alpha.icns
