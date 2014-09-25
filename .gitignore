@@ -6,6 +6,11 @@ __pycache__/
 .ipynb_checkpoints/
 local_notebooks/
 notebooks/local_notebooks/
+build_support/build-python-lib/
+build_support/build_tmp/
+build_support/lambda_notebook_venv/
+build_support/build/
+build_support/dist/
 
 # Sphinx documentation
 docs/_build/
