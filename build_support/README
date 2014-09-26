@@ -1,0 +1,38 @@
+This directory provides support for building the lambda notebook as a
+standalone app.  Currently, this can only be done completely for OS X.
+
+Here is what it does right now:
+
+1. Bootstrap a self-contained virtualenv containing the lambda notebook and the
+necessary infrastructure to run it.  This requires only python3 and
+easy-install (you may need to fiddle with names/paths to get this to run).
+    * Currently this doesn't install most of the scipy stack.
+    * It doesn't install matplotlib
+    * It doesn't use the local version of the lambda notebook, but gets the
+      current master from git.
+    * While it is occasionally (mis-)used this way, virtualenv is not a good
+      packaging solution.  In my testing, even with things like --relocatable,
+      this virtualenv does not reliably run on computers other than the one it
+      was built on, because of low-level library dependencies.
+
+2. Use py2app relative to this virtualenv to build an app bundle that contains
+everything needed to run the notebook.  This (because of the way apps work)
+cannot be double-clicked.
+
+3. Use platypus to wrap another app bundle around this that starts the
+notebook, displays the output in a window, and opens a browser window to the
+notebook browser.
+    * You will need the command-line tool for platypus installed; you can do
+      this in the platypus preferences window.
+
+Step 1 should be applicable to any platform.  Step 2 should be transferrable to
+py2exe but I haven't gotten anywhere near this now.  Step 3 is OS X specific.
+To work on OS X version n, the app needs to be built on that version or an
+earlier one.
+
+Future packaging work may involve:
+    * a more sophisticated wrapper, potentially up to a native app using
+      webkit.
+    * packaging for windows (use py2exe?).  Contributions welcome.
+    * better support for customization; right now it is hard to change the
+      notebook directory in a good way.

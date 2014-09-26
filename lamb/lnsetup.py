@@ -52,6 +52,9 @@ def ipython_setup():
 
 def install_notebooks(nb_path, package_nb_path, force=False):
     copy_nbs = False
+    #TODO: this is kind of hacky
+    if nb_path[0] == "~":
+        nb_path = os.path.expanduser(nb_path)
     if not os.path.exists(nb_path):
         os.makedirs(nb_path)
         copy_nbs = True
@@ -60,6 +63,7 @@ def install_notebooks(nb_path, package_nb_path, force=False):
         copy_nbs = False
     if package_nb_path and (copy_nbs or force):
         errors = []
+        print("Attempting to copy installation notebooks from '%s' to '%s'" % (package_nb_path, nb_path))
         names = os.listdir(package_nb_path)
         for name in names:
             srcname = os.path.join(package_nb_path, name)
