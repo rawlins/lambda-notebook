@@ -52,3 +52,5 @@ Future packaging work may involve:
     * packaging for windows (use py2exe?).  Contributions welcome.
     * better support for customization; right now it is hard to change the
       notebook directory in a good way.
+    * integration with nbopen: https://github.com/takluyver/nbopen
+    * integration with nbmanager (IPython 3): https://github.com/takluyver/nbmanager
