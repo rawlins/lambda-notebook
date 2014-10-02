@@ -819,6 +819,7 @@ class TypedExpr(object):
     def reducible(self):
         if len(self.args) == 1 and isinstance(self.op, LFun):
             return True
+        return False
 
     def reduce(self):
         """if there are arguments to op, see if a single reduction is possible."""
@@ -894,6 +895,15 @@ class TypedExpr(object):
                 else:
                     reason = "Recursive reduction of operand %s" % (i+1)
                 result = derived(next_step, result, desc=reason)
+        # .....
+        while result.reducible():
+            new_result = result.reduce()
+            if new_result is not result:
+                dirty = True
+                result = new_result # no need to add a derivation here, reduce will do that already
+            else:
+                break # should never happen...but prevent loops in case of error
+
         return result # could instead just do all the derivedness in one jump here
 
 
@@ -1457,10 +1467,18 @@ class SetContains(BinaryOpExpr):
 
     def reduce(self):
         if isinstance(self.args[1], ConditionSet):
-            return derived((self.args[1].to_characteristic()(self.args[0])).reduce(), self, "∈ reduction")
+            derivation = self.derivation
+            step = (self.args[1].to_characteristic()(self.args[0])).reduce()
+            step.derivation = derivation # suppress the intermediate parts of this derivation, if any
+            return derived(step, self, "∈ reduction")
         else:
             # leave ListedSets as-is for now
             return self
+
+    def reducible(self):
+        if isinstance(self.args[1], ConditionSet):
+            return True
+        return False
 
 
 
