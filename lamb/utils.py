@@ -1,4 +1,4 @@
-import sys, re
+import sys, re, cgi
 from numbers import Number
 
 class MiniLatex(object):
@@ -25,9 +25,9 @@ def ltx_print(*args):
             s += x._repr_latex_()
         except:
             if isinstance(x, str):
-                s += x
+                s += cgi.escape(x)
             else:
-                s += repr(x)
+                s += cgi.escape(repr(x))
         s += "<br />"
     return MiniLatex(s)
 

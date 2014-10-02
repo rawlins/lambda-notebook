@@ -3,8 +3,8 @@
 
 ### Standalone app
 
- * Lots of ways to go.
- * For mac, build off of [https://github.com/liyanage/ipython-notebook](https://github.com/liyanage/ipython-notebook), looks great.
+ * Lots of ways to go.  Current state of things in build_support.
+ * For mac, develop better native wrapping.
  * PC: will take a while.
 
 ### Interface ideas
@@ -38,10 +38,14 @@
  * Free indexing or similar mechanism.
  * Extract type-shifting into a library, document it.
 
+### Documentation
+
+ * intro to lambda calculus
+ * metalanguage documentation
+
 ### Notebooks
 
  * More examples!
-   - continuations
    - continue vF&H notebook
    - continue Hamblin semantics notebook
    - more CG/CCG-type examples

@@ -1420,7 +1420,8 @@ class BinaryGenericEqExpr(BinaryOpExpr):
         arg1 = self.ensure_typed_expr(arg1)
         # maybe raise the exception directly?
         arg2 = self.ensure_typed_expr(arg2, arg1.type)
-        super().__init__(type_t, "==", arg1, arg2, "==", "=", tcheck_args = False)
+        # some problems with equality using '==', TODO recheck, but for now just use "<=>" in the normalized form
+        super().__init__(type_t, "<=>", arg1, arg2, op_name_uni = "<=>", op_name_latex = "=", tcheck_args = False)
 
 def eq_factory(arg1, arg2):
     """If type is type t, return a biconditional.  Otherwise, build an equality statement."""
@@ -1460,7 +1461,9 @@ class SetContains(BinaryOpExpr):
         arg1 = self.ensure_typed_expr(arg1)
         arg2 = self.ensure_typed_expr(arg2, types.SetType(arg1.type))
         arg1 = self.ensure_typed_expr(arg1, arg2.type.content_type)
-        super().__init__(type_t, "<<", arg1, arg2, "∈", "\\in{}", tcheck_args=False)
+        #super().__init__(type_t, "<<", arg1, arg2, "∈", "\\in{}", tcheck_args=False)
+        # was having some trouble with the ∈ symbol, not sure what the problem is but disabled for now.
+        super().__init__(type_t, "<<", arg1, arg2, "<<", "\\in{}", tcheck_args=False)
 
     def copy(self):
         return SetContains(self.args[0], self.args[1])
