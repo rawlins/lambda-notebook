@@ -675,16 +675,20 @@ class TypeMismatch(Exception):
     def description(self, latex=False):
         is_1 = self.item_str(self.i1, self.type1, latex=latex)
         is_2 = self.item_str(self.i2, self.type2, latex=latex)
+        if latex:
+            tm_str = '<span style="color:red">Type mismatch</span>'
+        else:
+            tm_str = "Type mismatch"
         if is_1 is None:
             if is_2 is None:
-                return "Type mismatch, unknown context (mode: %s)" % self.mode
+                return "%s, unknown context (mode: %s)" % (tm_str, self.mode)
             else:
-                return "Type mismatch on %s (mode: %s)" % (is_2, self.mode)
+                return "%s on %s (mode: %s)" % (tm_str, is_2, self.mode)
         else:
             if is_2 is None:
-                return "Type mismatch on %s (mode: %s)" % (is_1, self.mode)
+                return "%s on %s (mode: %s)" % (tm_str, is_1, self.mode)
             else:
-                return "Type mismatch: %s and %s conflict (mode: %s)" % (is_1, is_2, self.mode)
+                return "%s: %s and %s conflict (mode: %s)" % (tm_str, is_1, is_2, self.mode)
 
 
     # def latex_str(self):
