@@ -140,6 +140,9 @@ class Composable(object):
     def latex_str(self):
         raise NotImplementedError
 
+    def tree(self, derivations=False):
+        return self.latex_step_tree(derivations)
+
     def latex_step_tree(self, derivations=False):
         """Show the step-by-step derivation(s) as a proof tree."""
         return meta.MiniLatex(self.latex_step_tree_r(derivations=derivations))
@@ -906,6 +909,8 @@ class CompositionResult(Composable):
     def failures_trace_latex(self):
         raise NotImplementedError
 
+    def trace(self):
+        return self.full_trace_latex()
 
     def full_trace_latex(self):
         """Trace all derivation paths in detail"""
