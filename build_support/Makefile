@@ -28,5 +28,18 @@ clean_support:
 # this is the main target for the platypus app
 app: Lambda\ Notebook.app
 
-clean: clean_apps clean_support clean_env
+Lambda\ Notebook.dmg: build_tmp Lambda\ Notebook.app README_packaged.txt
+	mkdir -p build_tmp/dmg_tmp/
+	cp README_packaged.txt build_tmp/dmg_tmp/README.txt
+	ditto Lambda\ Notebook.app build_tmp/dmg_tmp/Lambda\ Notebook.app
+	hdiutil create -fs HFSX -layout SPUD -size 100m "build_tmp/ln_tmp.dmg" -srcfolder build_tmp/dmg_tmp/ -format UDRW -volname "Lambda Notebook"
+	hdiutil convert "build_tmp/ln_tmp.dmg" -format UDZO -imagekey zlib-level=9 -o "Lambda Notebook.dmg"
+
+dmg: Lambda\ Notebook.dmg
+
+clean_dmg:
+	rm -rf build_tmp/dmg_tmp/
+	rm -f "Lambda Notebook.dmg"
+
+clean: clean_apps clean_support clean_env clean_dmg
 
