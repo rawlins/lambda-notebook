@@ -115,11 +115,12 @@ pip install ipython[all]
 # install_mathjax(tag="2.4.0", dest="$VIRTUALENV_DIR/lib/python3.3/site-packages/IPython/html/static/mathjax")
 # EOF
 
-curl -L -o "$DERIVED_FILE_DIR"/lambdanb-distribution.zip https://github.com/rawlins/lambda-notebook/archive/master.zip
-unzip -d "$VIRTUALENV_DIR" "$DERIVED_FILE_DIR"/lambdanb-distribution.zip
-ln -s "$VIRTUALENV_DIR"/lambda-notebook-master/lamb/ "$VIRTUALENV_DIR"/lib/python3.3/site-packages/lamb
-ln -s "$VIRTUALENV_DIR"/lambda-notebook-master/lambda_notebook.py "$VIRTUALENV_DIR"/bin
-#rm lambdanb-distribution.zip
+# done in makefile now
+# curl -L -o "$DERIVED_FILE_DIR"/lambdanb-distribution.zip https://github.com/rawlins/lambda-notebook/archive/master.zip
+# unzip -d "$VIRTUALENV_DIR" "$DERIVED_FILE_DIR"/lambdanb-distribution.zip
+# ln -s "$VIRTUALENV_DIR"/lambda-notebook-master/lamb/ "$VIRTUALENV_DIR"/lib/python3.3/site-packages/lamb
+# ln -s "$VIRTUALENV_DIR"/lambda-notebook-master/lambda_notebook.py "$VIRTUALENV_DIR"/bin
+# #rm lambdanb-distribution.zip
 
 pip install py2app
 #TODO: need to not do this if this bug (in py2app) is fixed

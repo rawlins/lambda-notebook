@@ -59,11 +59,11 @@ def install_notebooks(nb_path, package_nb_path, force=False):
         os.makedirs(nb_path)
         copy_nbs = True
     if copy_nbs and not os.path.exists(package_nb_path):
-        print("Path not found for notebooks to install: '%s'" % package_nb_path)
+        print("Path not found for notebooks to install: '%s'" % package_nb_path, flush=True)
         copy_nbs = False
     if package_nb_path and (copy_nbs or force):
         errors = []
-        print("Attempting to copy installation notebooks from '%s' to '%s'" % (package_nb_path, nb_path))
+        print("Attempting to copy installation notebooks from '%s' to '%s'" % (package_nb_path, nb_path), flush=True)
         names = os.listdir(package_nb_path)
         for name in names:
             srcname = os.path.join(package_nb_path, name)

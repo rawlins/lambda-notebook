@@ -12,6 +12,7 @@ build_support/lambda_notebook_venv/
 build_support/build/
 build_support/dist/
 build_support/Lambda Notebook.app
+Lambda Notebook.app
 build_support/Lambda Notebook.dmg
 
 # Sphinx documentation
