@@ -117,8 +117,9 @@ class LambMagics(Magics):
 def setup_magics():
     try:
         ip = get_ipython()
-        ip.register_magics(LambMagics)
-    except:
-        print("Unable to register IPython magics")
-
+    except: # fail silently if there's no ipython kernel
+        return
+    ip.register_magics(LambMagics)
+    
 setup_magics()
+
