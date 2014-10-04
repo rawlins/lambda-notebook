@@ -80,6 +80,7 @@ $(APP_NAME).dmg: build_tmp $(APP_NAME).app README_packaged.txt
 dmg: $(APP_NAME).dmg
 
 clean_dmg:
+	rm -f "build_tmp/ln_tmp.dmg"
 	rm -rf build_tmp/dmg_tmp/
 	rm -f $(APP_NAME).dmg
 
