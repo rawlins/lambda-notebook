@@ -247,6 +247,7 @@ class FunType(AbstractType):
 
 
 class SetType(AbstractType):
+    """Type for sets.  See `lang.ConditionSet` and `lang.ListedSet`."""
     def __init__(self, ctype):
         self.content_type = ctype
         self.undetermined = False
@@ -306,6 +307,7 @@ class SetType(AbstractType):
 
 
 class TupleType(AbstractType):
+    """Type for tuples.  See `lang.Tuple`."""
     def __init__(self, *signature):
         if len(signature) == 0:
             raise ValueError("Tuple type can't be 0 length")
@@ -608,19 +610,20 @@ def flexible_equal(t1, t2):
 
 
 # TODO: finish implementing this...hard
-class VariableType(OntoType):
-    def __init__(self, symbol):
-        self.symbol = symbol
-        self.name = "variable-type"
-        self.values = set()
-        self.left = self
-        self.right = self
+# class VariableType(OntoType):
+#     def __init__(self, symbol):
+#         self.symbol = symbol
+#         self.name = "variable-type"
+#         self.values = set()
+#         self.left = self
+#         self.right = self
 
-    def type_compare(self, other, assignment=None):
-        pass
+#     def type_compare(self, other, assignment=None):
+#         pass
 
 
 class TypeMismatch(Exception):
+    """Exception for type mismatches of all sorts."""
     def __init__(self, i1, i2, mode=None):
         #print("type mismatch '%s', '%s'" % (fun, arg))
         self.i1 = i1

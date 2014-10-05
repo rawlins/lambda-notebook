@@ -9,6 +9,7 @@ from lamb.utils import *
 
 global logger
 def setup_logger():
+    """Set up a module-level logger called `logger` for use across `lamb` modules."""
     global logger
     logger = logging.getLogger("lambda")
     logger.handlers = list() # otherwise, will get double output on reload (since this just keeps adding handlers)
@@ -26,23 +27,29 @@ global _constants_use_custom, _type_system
 _constants_use_custom = False
 
 def constants_use_custom(v):
+    """Set whether constants use custom display routines."""
     global _constants_use_custom
     _constants_use_custom = v
 
 # TODO: could consider associating TypedExpr with a type system rather than using the global variable.
 # advantages: generality.  Disadvantages: may be a little pointless in practice?
 def set_type_system(ts):
+    """Sets the current type system for the metalanguage.  This is a global setting."""
     global _type_system
     _type_system = ts
 
 def get_type_system():
+    """Gets the current (global) type system for the metalanguage."""
     return _type_system
 
 def ts_unify(a, b):
+    """Calls the current type system's `unify` function on types `a` and `b`.  This returns a pair of the closest 
+    matching types according to the type system, or `None` if the two can't be unified."""
     ts = get_type_system()
     return ts.unify(a, b)
 
 def ts_compatible(a, b):
+    """Returns `True` or `False` depending on whether `a` and `b` are compatible types."""
     ts = get_type_system()
     r = ts.unify(a,b)
     if r[0] is None:
@@ -51,14 +58,19 @@ def ts_compatible(a, b):
         return True
 
 def tp(s):
+    """Convenience wrapper for the current type system's type parser."""
     ts = get_type_system()
     result = ts.type_parser(s)
     return result
 
 def te(s, assignment=None):
+    """Convenience wrapper for `lang.TypedExpr.factory`."""
     return TypedExpr.factory(s, assignment=assignment)
 
 def term(s, typ=None, assignment=None):
+    """Convenience wrapper for building terms.
+    `s`: the term's name.
+    `typ`: the term's type, if specified."""
     return TypedTerm.term_factory(s, typ=typ, assignment=assignment)
 
 #_type_system = types.UnderTypeSystem()
@@ -105,7 +117,7 @@ class TypedExpr(object):
       * May be a term name, treating this case as either a 0-ary operator or an unsaturated term.  
         Note that right now, this _only_ occurs in subclasses.  (TypedTerm)
 
-    based on logic.Expr (from aima python).
+    originally based on logic.Expr (from aima python), now long diverged.
     """
     def __init__(self, op, *args, defer=False):
         """
@@ -149,33 +161,8 @@ class TypedExpr(object):
             if uncertain:
                 self.type = types.UndeterminedType(self.type)
             self.op = op
-        # elif isinstance(op, LFun):
-        #     if len(args) > 1:
-        #         pass #TODO error handling
-        #     arg = self.ensure_typed_expr(args[0])
-        #     arg.type_not_guessed()
-        #     unify_f, unify_b, unify_r = type_sys.unify_fa(op.type, arg.type)
-        #     #if arg.type != op.argtype and not arg.type.undetermined:
-        #     if unify_f is None:
-        #         raise TypeMismatch(op, arg, "Lambda term+arg expression") #TODO: do I always want to check types here?
-        #     self.type = unify_r #op.returntype
-        #     #TODO is unification here the right thing?
-        #     # TODO: it does not seem that I want to apply the results of unification to the LFun?
-        #     if op.type == unify_f:
-        #         self.op = op
-        #     else:
-        #         self.op = op.try_adjust_type(unify_f, "Function argument combination")
-        #     if unify_b != arg.type:
-        #         arg = arg.try_adjust_type(unify_b, "Function argument combination")                
-        #         # if isinstance(arg, TypedTerm):
-        #         #     arg = arg.copy()
-        #         #     arg.type = unify_b
-        #         # else:
-        #         #     print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (arg.type, unify_a))
-        #     self.args = [arg]
         elif isinstance(op, TypedExpr):
             if (len(args) > 1):
-                # TODO: n-ary predicates
                 raise TypeMismatch(op, args, "Function argument combination (too many arguments)")
             elif (len(args) == 0):
                 logger.warning("Vacuous container TypedExpr")
@@ -223,6 +210,9 @@ class TypedExpr(object):
 
     # TODO: not comfortable with replicating this logic separately.  Need a better way.
     def recalc_type(self):
+        """Use the current type system to recalculate the type of `self` based on its component types.
+
+        NOTE: this function is currently not used, and not well tested."""
         type_sys = get_type_system()
         if (self.op in basic_ops):
             uncertain = False
@@ -255,7 +245,7 @@ class TypedExpr(object):
             raise NotImplementedError("Unhandled case in type recalculation")
 
     def try_adjust_type(self, new_type, derivation_reason=None):
-        """Attempts to adjust the type of self to be compatible with new_type.  
+        """Attempts to adjust the type of `self` to be compatible with `new_type`.  
         If the types already match, it return self.
         If it succeeds, it returns a modified _copy_ of self.  
         If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
@@ -297,9 +287,14 @@ class TypedExpr(object):
                     logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
                     return self
 
-    def __getitem__(self, key):
-        a = [self.op] + self.args
-        return a[key]
+    # def __getitem__(self, key):
+    #     """Return a part of `self` by index.  
+    #     index 0 always gives the operator.
+    #     index >=1 gives whatever arguments there are.
+
+    #     Note that this is shifted from the indexing of `self.args`."""
+    #     a = [self.op] + self.args
+    #     return a[key]
 
     def subst(self, i, s):
         """ Tries to consistently (relative to types) substitute s for element i of the TypedExpr.
@@ -366,61 +361,66 @@ class TypedExpr(object):
 
     @classmethod
     def parse(cls, s, assignment=None, locals=None):
+        """Attempt to parse a string `s` into a TypedExpr
+        `assignment`: a variable assignment to use when parsing.
+        `locals`: a dict to use as the local variables when parsing.
+        """
+
         ts = get_type_system()
         (struc, i) = parsing.parse_paren_str(s, 0, ts)
         return cls.try_parse_paren_struc_r(struc, assignment=assignment, locals=locals)
 
-    @classmethod
-    def parse_expr_string(cls, s, assignment=None, locals=None):
-        """Attempt to parse a string into a TypedExpr
-        assignment: a variable assignment to use when parsing.
+    # @classmethod
+    # def parse_expr_string_old(cls, s, assignment=None, locals=None):
+    #     """Attempt to parse a string into a TypedExpr
+    #     assignment: a variable assignment to use when parsing.
 
-        First, try to see if the string is a binding operator expression.  (See try_parse_op_expr)
-        Otherwise, do some regular expression magic, and then call eval.
+    #     First, try to see if the string is a binding operator expression.  (See try_parse_op_expr)
+    #     Otherwise, do some regular expression magic, and then call eval.
 
-        The gist of the magic:
-          * replace some special cases with less reasonable operator names.  (This comes from AIMA logic)
-          * find things that look like term names, and surround them with calls to the term factory function.
-        """
-        # test = cls.try_parse_lambda(s, assignment=assignment)
-        # # see if we can succesfully get a lambda expression out of s
-        # if test != None:
-        #     vname, vtype, body = test
-        #     if body is None:
-        #         raise ValueError("Can't create body-less lambda expression from '%s'" % s)
-        #     return LFun(vtype, body, vname)
-        if locals is None:
-            locals = dict()
-        test = cls.try_parse_op_expr(s, assignment=assignment, locals=locals)
-        if test != None:
-            return test
-        ## Replace the alternative spellings of operators with canonical spellings
-        s = s.replace('==>', '>>').replace('<==', '<<')
-        s = s.replace('<=>', '%').replace('=/=', '^')
-        ## Replace a symbol or number, such as 'P' with 'Expr("P")'
-        # TODO: handle numbers in strings, right now they end up as terms
-        # TODO: handle greek letters
-        # TODO: test this more
-        # somewhat counterintuitively, this will match some incorrect strings, because error checking is done at the factory level
-        #s = re.sub(r'([a-zA-Z0-9_]*[a-zA-Z0-9]+(_[a-zA-Z0-9\?\<\>,]*)?)', r'TypedExpr.term_factory("\1", assignment=assignment)', s)
-        s = cls.expand_terms(s, assignment=assignment, ignore=locals.keys())
-        ## Now eval the string.  (A security hole; do not use with an adversary.)
-        # TODO: this won't necessarily do the right thing with assignment, can still result in inconsistent types
-        #print(s)
-        lcopy = locals.copy()
-        lcopy.update({'TypedExpr':TypedExpr,'TypedTerm':TypedTerm, 'assignment': assignment, 'type_e': type_e})
-        result = eval(s, dict(), lcopy)
-        if isinstance(result, tuple):
-            return Tuple(result)
-        elif isinstance(result, set):
-            return ListedSet(result)
-        elif isinstance(result, dict) and len(result) == 0:
-            return ListedSet(set())
-        elif isinstance(result, TypedExpr):
-            return result
-        else:
-            logger.warning("parse_expr_string returning non-TypedExpr")
-            return result
+    #     The gist of the magic:
+    #       * replace some special cases with less reasonable operator names.  (This comes from AIMA logic)
+    #       * find things that look like term names, and surround them with calls to the term factory function.
+    #     """
+    #     # test = cls.try_parse_lambda(s, assignment=assignment)
+    #     # # see if we can succesfully get a lambda expression out of s
+    #     # if test != None:
+    #     #     vname, vtype, body = test
+    #     #     if body is None:
+    #     #         raise ValueError("Can't create body-less lambda expression from '%s'" % s)
+    #     #     return LFun(vtype, body, vname)
+    #     if locals is None:
+    #         locals = dict()
+    #     test = cls.try_parse_op_expr_old(s, assignment=assignment, locals=locals)
+    #     if test != None:
+    #         return test
+    #     ## Replace the alternative spellings of operators with canonical spellings
+    #     s = s.replace('==>', '>>').replace('<==', '<<')
+    #     s = s.replace('<=>', '%').replace('=/=', '^')
+    #     ## Replace a symbol or number, such as 'P' with 'Expr("P")'
+    #     # TODO: handle numbers in strings, right now they end up as terms
+    #     # TODO: handle greek letters
+    #     # TODO: test this more
+    #     # somewhat counterintuitively, this will match some incorrect strings, because error checking is done at the factory level
+    #     #s = re.sub(r'([a-zA-Z0-9_]*[a-zA-Z0-9]+(_[a-zA-Z0-9\?\<\>,]*)?)', r'TypedExpr.term_factory("\1", assignment=assignment)', s)
+    #     s = cls.expand_terms(s, assignment=assignment, ignore=locals.keys())
+    #     ## Now eval the string.  (A security hole; do not use with an adversary.)
+    #     # TODO: this won't necessarily do the right thing with assignment, can still result in inconsistent types
+    #     #print(s)
+    #     lcopy = locals.copy()
+    #     lcopy.update({'TypedExpr':TypedExpr,'TypedTerm':TypedTerm, 'assignment': assignment, 'type_e': type_e})
+    #     result = eval(s, dict(), lcopy)
+    #     if isinstance(result, tuple):
+    #         return Tuple(result)
+    #     elif isinstance(result, set):
+    #         return ListedSet(result)
+    #     elif isinstance(result, dict) and len(result) == 0:
+    #         return ListedSet(set())
+    #     elif isinstance(result, TypedExpr):
+    #         return result
+    #     else:
+    #         logger.warning("parse_expr_string returning non-TypedExpr")
+    #         return result
 
     @classmethod
     def try_parse_flattened(cls, s, assignment=None, locals=None):
@@ -465,18 +465,22 @@ class TypedExpr(object):
 
 
 
-    @classmethod
-    def try_parse_op_expr(cls, s, assignment=None, locals=None):
-        try:
-            return BindingOp.try_parse_binding_expr(s, assignment=assignment, locals=locals)
-        except parsing.ParseError as e:
-            if not e.met_preconditions:
-                return None
-            else:
-                raise e
+    # @classmethod
+    # def try_parse_op_expr_old(cls, s, assignment=None, locals=None):
+    #     try:
+    #         return BindingOp.try_parse_binding_expr_old(s, assignment=assignment, locals=locals)
+    #     except parsing.ParseError as e:
+    #         if not e.met_preconditions:
+    #             return None
+    #         else:
+    #             raise e
 
     @classmethod
     def try_parse_binding_struc(cls, s, assignment=None, locals=None, vprefix="ilnb"):
+        """Try to parse `s` as a binding operator expression.  Will return a subclass of BindingOp, None, or raise a `parsing.ParseError`.
+
+        the variable on the exception `met_preconditions` is used to attempt to figure out whether this was a plausible attempt at a 
+        binding operator expression, so as to get the error message right."""
         try:
             return BindingOp.try_parse_binding_struc_r(s, assignment=assignment, locals=locals, vprefix=vprefix)
         except parsing.ParseError as e:
@@ -487,6 +491,7 @@ class TypedExpr(object):
 
     @classmethod
     def try_parse_paren_struc_r(cls, struc, assignment=None, locals=None, vprefix="ilnb"):
+        """Recursively try to parse a semi-AST with parenthetical structures matched."""
         #print("test: " + repr(struc))
         expr = cls.try_parse_binding_struc(struc, assignment=assignment, locals=locals, vprefix=vprefix)
         if expr is not None:
@@ -542,6 +547,7 @@ class TypedExpr(object):
 
     @classmethod
     def find_term_locations(cls, s, i=0):
+        """Find locations in a string `s` that are term names."""
         term_re = re.compile(r'([a-zA-Z0-9]+)(_)?')
         unfiltered_result = parsing.find_pattern_locations(term_re, s, i=i, end=None)
         result = list()
@@ -586,6 +592,10 @@ class TypedExpr(object):
 
     @classmethod
     def parse_term(cls, s, i=0, return_obj=True, assignment=None):
+        """Parse position `i` in `s` as a term expression.  A term expression is some alphanumeric sequence
+        followed optionally by an underscore and a type.  If a type is not specified locally, but is present in 
+        `assignment`, use that.  If a type is specified and is present in `assignment`, check type compatibility 
+        immediately."""
         ts = get_type_system()
         term_name, next = parsing.consume_pattern(s, i, r'([a-zA-Z0-9]+)(_)?', return_match=True)
         if not term_name:
@@ -664,6 +674,7 @@ class TypedExpr(object):
           * single arg, complex expression: will parse it using python syntax. (Happens in parser magic.)
           * multiple args: call the standard constructor.
         """
+        ### NOTE: do not edit this function lightly...
         #print("    factory: args %s" % repr(args))
         #if assignment is None:
         #    assignment = {}
@@ -748,6 +759,8 @@ class TypedExpr(object):
                 return r_adjusted
 
     def try_coerce_new_argument(self, typ, remove_guessed=False):
+        """For guessed types, see if it is possible to coerce a new argument.  Will recurse to
+        find guessed types."""
         if not self.type_guessed:
             return None
         if not isinstance(self.op, TypedExpr):
@@ -762,6 +775,7 @@ class TypedExpr(object):
             return None
 
     def type_not_guessed(self):
+        """Recursively set that the type of `self` is not a guess."""
         self.type_guessed = False
         if isinstance(self.op, TypedExpr):
             self.op.type_not_guessed()
@@ -781,6 +795,7 @@ class TypedExpr(object):
         return c
 
     def under_assignment(self, assignment):
+        """Use `assignment` to replace any appropriate variables in `self`."""
         # do this first so that any errors show up before the recursive step
         if assignment is None:
             a2 = dict()
@@ -788,7 +803,7 @@ class TypedExpr(object):
             a2 = {key: self.ensure_typed_expr(assignment[key]) for key in assignment}
         return variable_replace_strict(self, a2)
 
-    # the next two functions are clearly inefficient, and could be replaced by memoization (e.g. 'director strings' or 
+    # the next sequence of functions is clearly inefficient, and could be replaced by memoization (e.g. 'director strings' or 
     # whatever).  But I don't think it matters for this application.
     def free_variables(self):
         """Find the set of variables that are free in the typed expression.
@@ -808,6 +823,26 @@ class TypedExpr(object):
             elif is_var_symbol(a):
                 result.add(a)
         return result
+
+    def bound_variables(self):
+        """Find the set of variables that are bound (somewhere) in a typed expression.
+
+        Note that this may be overlapping with the set of free variables.
+        """
+        result = set()
+        if isinstance(self.op, TypedExpr):
+            result.update(self.op.bound_variables())
+
+        for a in self.args:
+            if isinstance(a, TypedExpr):
+                result.update(a.bound_variables())
+        return result
+
+    def find_safe_variable(self, starting="x"):
+        """Find an a safe alpha variant of the starting point (by default: 'x'), that is not used in the expression."""
+        blockset = self.free_variables() | self.bound_variables()
+        varname = alpha_variant(starting, blockset)
+        return varname
 
     def term(self):
         return (isinstance(self.op, str) and len(self.args) == 0)
@@ -861,6 +896,7 @@ class TypedExpr(object):
         return self
 
     def reduce_all(self):
+        """Maximally reduce function-argument combinations in `self`."""
         # this is a dumb strategy: it's either not fully general (but I haven't found the case yet), or it's way
         # overkill, I'm not sure which; probably both.  The potential overkill is the recursive step.
         # TODO: add some kind of memoization?
@@ -875,13 +911,7 @@ class TypedExpr(object):
                 if not dirty:
                     dirty = True
                 next_step = result.copy()
-                try:
-                    next_step.args[i] = new_arg_i
-                except:
-                    print("next_step: " + repr(next_step))
-                    print("result: " + repr(result))
-                    print("i: " + repr(i))
-                    raise
+                next_step.args[i] = new_arg_i
                 if len(result.args) == 1 and isinstance(result, BindingOp):
                     reason = "Recursive reduction of body"
                 else:
@@ -909,28 +939,11 @@ class TypedExpr(object):
         return result # could instead just do all the derivedness in one jump here
 
 
-    def bound_variables(self):
-        """Find the set of variables that are bound (somewhere) in a typed expression.
 
-        Note that this may be overlapping with the set of free variables.
-        """
-        result = set()
-        if isinstance(self.op, TypedExpr):
-            result.update(self.op.bound_variables())
-
-        for a in self.args:
-            if isinstance(a, TypedExpr):
-                result.update(a.bound_variables())
-        return result
-
-    def find_safe_variable(self, starting="x"):
-        """Find an a safe alpha variant of the starting point (by default: 'x'), that is not used in the expression."""
-        blockset = self.free_variables() | self.bound_variables()
-        varname = alpha_variant(starting, blockset)
-        return varname
 
     def __call__(self, *args):
-        """Attempt to construct a saturated version of self."""
+        """Attempt to construct a saturated version of self.  This constructs a composite TypedExpr, with the function (`self`) as
+        the operator and the argument(s) as the arguments.  Type checking happens immediately."""
         # TODO possibly move this to TypedTerm...
         # note: all error checking occurs in the factory.
         
@@ -942,7 +955,10 @@ class TypedExpr(object):
 
 
     def __repr__(self):
-        "Show something like 'P' or 'P(x, y)', or '~P' or '(P | Q | R)'"
+        """Return a string representation of the TypedExpr.
+
+        This is guaranteed (barring bugs) to produce a parsable string that builds the same object.
+        """
         if not self.args:         # Constant or proposition with arity 0
             return repr(self.op)
         elif isinstance(self.op, LFun):
@@ -962,6 +978,9 @@ class TypedExpr(object):
             return '(%s)' % (' '+self.op+' ').join([repr(a) for a in self.args])
 
     def latex_str(self):
+        """Return a representation of the TypedExpr suitable for IPython Notebook display.
+
+        In this case the output should be pure LaTeX."""
         if not self.args:
             return ensuremath(str(self.op))
         elif isinstance(self.op, LFun):
@@ -988,7 +1007,11 @@ class TypedExpr(object):
         return "%s, type %s" % (self.__repr__(), self.type)
 
     def __eq__(self, other):
-        """x and y are equal iff their ops and args are equal."""
+        """x and y are equal iff their ops and args are equal.
+
+        Note that this is a _syntactic_ notion of equality, not a _semantic_ notion -- for example,
+        two expressions would fail this notion of equality if one reduces to the other but that reduction
+        has not been done.  Alphabetic variants will also not come out as equal."""
         # need to explicitly check this in case recursion accidentally descends into a string Op
         # TODO revisit
         if isinstance(other, TypedExpr):
@@ -1001,13 +1024,23 @@ class TypedExpr(object):
         return not self.__eq__(other)
 
     def __hash__(self):
-        "Need a hash method so Exprs can live in dicts."
+        """Need a hash method so TypedExprs can live in dicts.
+
+        Note that there are some special cases to worry about: ListedSets are not guaranteed to hash correctly.
+        """
+        # TODO: deal with ListedSets
         return hash(self.op) ^ hash(tuple(self.args))
 
     def __getitem__(self, i):
+        """Return a part of `self` by index.  
+        index 0 always gives the operator.
+        index >=1 gives whatever arguments there are.
+
+        Note that this is shifted from the indexing of `self.args`."""
         return ([self.op] + self.args).__getitem__(i)
 
     def __len__(self):
+        """Return the number of parts of `self`, including the operator."""
         return len(self.args) + 1
 
     # See http://www.python.org/doc/current/lib/module-operator.html
@@ -1034,6 +1067,10 @@ class TypedExpr(object):
 
 
 class Tuple(TypedExpr):
+    """TypedExpr wrapper on a tuple.
+
+    This works basically as a python tuple would, and is indicated using commas within a parenthetical.
+    `args` is a list containing the elements of the tuple."""
     def __init__(self, args, typ=None):
         self.op = "Tuple"
         self.derivation = None
@@ -1055,6 +1092,7 @@ class Tuple(TypedExpr):
         return False
 
     def tuple(self):
+        """Return a python `tuple` version of the Tuple object."""
         return tuple(self.args)
 
     def __repr__(self):
@@ -1112,15 +1150,21 @@ class TypedTerm(TypedExpr):
         return True
 
     def constant(self):
+        """Return true iff `self` is a constant.
+
+        This follows the prolog convention: a constant is a term with a capitalized first letter."""
         return not is_var_symbol(self.op)
 
     def variable(self):
+        """Return true iff `self` is a variable.
+
+        This follows the prolog convention: a variable is a term with a lowercase first letter."""
         return is_var_symbol(self.op)
 
     def __repr__(self):
         return "%s_%s" % (self.op, repr(self.type))
 
-    def show_type(self):
+    def should_show_type(self):
         if self.suppress_type:
             return False
         if suppress_constant_type and self.constant():
@@ -1148,7 +1192,7 @@ class TypedTerm(TypedExpr):
             op = self.op
         else:
             op = self.latex_op_str
-        if not self.show_type():
+        if not self.should_show_type():
             return ensuremath("{%s}" % op)
         else:
             return ensuremath("{%s}_{%s}" % (op, self.type.latex_str()))
@@ -1157,6 +1201,10 @@ class TypedTerm(TypedExpr):
         return self.latex_str()
 
 class CustomTerm(TypedTerm):
+    """A subclass of TypedTerm used for custom displays of term names.
+
+    The main application is for English-like metalanguage a la Heim and Kratzer.  This isn't
+    fully implemented as that metalanguage is actually extremely difficult to get right computationally..."""
     def __init__(self, varname, custom_english=None, suppress_type=True, small_caps=True, typ=None):
         TypedTerm.__init__(self, varname, typ=typ)
         self.custom = custom_english
@@ -1317,7 +1365,7 @@ class BinaryOpExpr(TypedExpr):
     """This class abstracts over expressions headed by specific binary operators.  It is not necessarily designed to be 
     instantiated directly, but rather subclassed for particular hard-coded operators.
 
-    Because of the way the copy function works, it is currently not suited for direct instantiation."""
+    Because of the way the copy function works, it is currently not suited for direct instantiation at all."""
     def __init__(self, typ, op, arg1, arg2, op_name_uni=None, op_name_latex=None, tcheck_args=True):
         self.derivation = None
         self.op = op
@@ -1418,6 +1466,7 @@ class BinaryNeqExpr(BinaryOpExpr):
         super().__init__(type_t, "^", arg1, arg2, "=/=", "\\not=")
 
 class BinaryGenericEqExpr(BinaryOpExpr):
+    """Type-generic equality.  This places no constraints on the type of `arg1` and `arg2` save that they be equal.  See `eq_factory`."""
     def __init__(self, arg1, arg2):
         arg1 = self.ensure_typed_expr(arg1)
         # maybe raise the exception directly?
@@ -1437,6 +1486,7 @@ def eq_factory(arg1, arg2):
 
 
 def binary_num_op(op, op_uni=None, op_latex=None):
+    """Factory for binary numeric operators."""
     if op_uni is None:
         op_uni = op
     if op_latex is None:
@@ -1447,6 +1497,7 @@ def binary_num_op(op, op_uni=None, op_latex=None):
     return BinOp
 
 def binary_num_rel(op, op_uni=None, op_latex=None):
+    """Factory for binary numeric relations."""
     if op_uni is None:
         op_uni = op
     if op_latex is None:
@@ -1457,7 +1508,28 @@ def binary_num_rel(op, op_uni=None, op_latex=None):
             super().__init__(type_t, op, self.ensure_typed_expr(arg1, types.type_n), self.ensure_typed_expr(arg2, types.type_n), op_uni, op_latex, tcheck_args=False)
     return BinOp
 
+BinaryLExpr = binary_num_rel("<", "<", "<")
+BinaryLeqExpr = binary_num_rel("<=", "<=", "\\leq{}")
+BinaryGeqExpr = binary_num_rel(">=", ">=", "\\geq{}")
+BinaryGExpr = binary_num_rel(">", ">", ">")
+BinaryPlusExpr = binary_num_op("+", "+", "+")
+BinaryMinusExpr = binary_num_op("-", "-", "-")
+BinaryDivExpr = binary_num_op("/", "/", "/")
+BinaryTimesExpr = binary_num_op("*", "*", "*")
+BinaryExpExpr = binary_num_op("**", "**", "**")
+
+
+# There's only one of these, so a factory would be silly
+class UnaryNegativeExpr(UnaryOpExpr):
+    def __init__(self, body):
+        super().__init__(type_n, "-", body, "-", "-")
+
+
 class SetContains(BinaryOpExpr):
+    """Binary relation of set membership.  This uses `<<` as the symbol.
+
+    Note that this _does_ support reduction if the set describes its members by condition, 
+    as set membership is equivalent to saturation of the characteristic function of the set."""
     def __init__(self, arg1, arg2):
         # seems like the best way to do the mutual type checking here?  Something more elegant?
         arg1 = self.ensure_typed_expr(arg1)
@@ -1477,7 +1549,7 @@ class SetContains(BinaryOpExpr):
             step.derivation = derivation # suppress the intermediate parts of this derivation, if any
             return derived(step, self, "∈ reduction")
         else:
-            # leave ListedSets as-is for now
+            # leave ListedSets as-is for now.  TODO could expand this using disjunction.
             return self
 
     def reducible(self):
@@ -1487,28 +1559,14 @@ class SetContains(BinaryOpExpr):
 
 
 
-class UnaryNegativeExpr(UnaryOpExpr):
-    def __init__(self, body):
-        super().__init__(type_n, "-", body, "-", "-")
 
 
-#binary_num_rels = {"<", "<=", ">=", ">"}
-#binary_num_ops = {"+", "-", "/", "*", "**"}
 
-BinaryLExpr = binary_num_rel("<", "<", "<")
-BinaryLeqExpr = binary_num_rel("<=", "<=", "\\leq{}")
-BinaryGeqExpr = binary_num_rel(">=", ">=", "\\geq{}")
-BinaryGExpr = binary_num_rel(">", ">", ">")
-BinaryPlusExpr = binary_num_op("+", "+", "+")
-BinaryMinusExpr = binary_num_op("-", "-", "-")
-BinaryDivExpr = binary_num_op("/", "/", "/")
-BinaryTimesExpr = binary_num_op("*", "*", "*")
-BinaryExpExpr = binary_num_op("**", "**", "**")
 
 unary_symbols_to_op_exprs = {"~" : UnaryNegExpr,
                         "-" : UnaryNegativeExpr}
 
-# not implemented: << (left implication)
+# not implemented: << as left implication.  I am using << for set membership.
 # note that neq is for type t only.
 binary_symbols_to_op_exprs = {
                         "&" : BinaryAndExpr,
@@ -1535,6 +1593,7 @@ op_symbols = set(unary_symbols_to_op_exprs.keys()) | set(binary_symbols_to_op_ex
 
 # TODO raise exceptions
 def op_expr_factory(op, *args):
+    """Given some operator/relation symbol with arguments, construct an appropriate TypedExpr subclass for that operator."""
     # note that this conditional is necessary because the same symbol may involve both a unary and a binary operator
     if len(args) == 0:
         raise ValueError("0-length operator")
@@ -1555,7 +1614,10 @@ def op_expr_factory(op, *args):
 
 
 class BindingOp(TypedExpr):
-    """abstract class for a unary operator that binds a single variable in its body."""
+    """Abstract class for a unary operator with a body that binds a single variable in its body.
+
+    Never instantiated directly.  To see how to use this, it may be helpful to look at the definite
+    description tutorial, which shows how to build an iota operator."""
 
     binding_operators = dict()
     canonicalize_names = dict()
@@ -1574,16 +1636,6 @@ class BindingOp(TypedExpr):
         # to this function.  Subclass is responsible for doing this properly...
         if body_type is None:
             body_type = typ
-        # maybe add way to block body type checking in init altogether?
-        #self.op = op
-        # if op_name_uni is None:
-        #     self.op_name = op
-        # else:
-        #     self.op_name = op_name_uni
-        # if op_name_latex is None:
-        #     self.op_name_latex = op_name_uni
-        # else:
-        #     self.op_name_latex = op_name_latex
         if isinstance(var_or_vtype, str): # TODO: support type strings
             var_or_vtype = TypedExpr.term_factory(var_or_vtype)
         if isinstance(var_or_vtype, TypedTerm):
@@ -1619,6 +1671,7 @@ class BindingOp(TypedExpr):
 
     @classmethod
     def add_op(cls, op):
+        """Register an operator to be parsed."""
         if op.canonical_name is None:
             BindingOp.unparsed_operators.add(op)
         else:
@@ -1632,6 +1685,7 @@ class BindingOp(TypedExpr):
 
     @classmethod
     def remove_op(cls, op):
+        """Remove an operator from the parsing registry."""
         for alias in BindingOp.binding_operators[op.canonical_name].secondary_names:
             del BindingOp.canonicalize_names[alias]
         if op.canonical_name is None:
@@ -1642,9 +1696,10 @@ class BindingOp(TypedExpr):
 
     @classmethod
     def compile_ops_re(cls):
+        """Recompile the regex for detecting operators."""
         op_names = BindingOp.binding_operators.keys() | BindingOp.canonicalize_names
         # sort with longer strings first, to avoid matching subsets of long names
-        # i.e. | is not greedy
+        # i.e. | is not greedy, need to work around that.
         op_names = list(op_names)
         op_names.sort(reverse=True)
         if len(op_names) == 0:
@@ -1660,7 +1715,7 @@ class BindingOp(TypedExpr):
         return self.args[0]
 
     def copy(self):
-        #return BindingOp(var_or_vtype=self.vartype, typ=self.type, varname=self.var_name, body=self.body)
+        # implement in subclass
         raise NotImplementedError
 
     def alpha_convert(self, new_varname):
@@ -1714,6 +1769,7 @@ class BindingOp(TypedExpr):
         return super().bound_variables() | {self.varname}
 
     def vacuous(self):
+        """Return true just in case the operator's variable is not free in the body expression."""
         return self.varname in super().free_variables()
 
     def term(self):
@@ -1756,49 +1812,64 @@ class BindingOp(TypedExpr):
             t = default_variable_type(v)
         return (op_class, v, t, remainder)
 
+    # @classmethod
+    # def try_parse_binding_expr_old(cls, s, assignment=None, locals=None):
+    #     """Attempt to parse s as a unary operator expression.  Used by the factory function.
+    #     assignment: a variable assignment to use when parsing.
+
+    #     Format: 'Op v : b'
+    #       * 'L' is one of 'lambda', 'L', 'λ', 'Forall', 'Exists', 'Iota'.  (Subclasses can register themselves to be parsed.)
+    #       * 'v' is a variable name expression (see try_parse_typed_term), e.g. 'x_e'
+    #       * 'b' is a function body, i.e. something parseable into a TypedExpr.
+
+    #     If 'v' does not provide a type, it will attempt to guess one based on the variable name.
+    #     The body will be parsed using an initial call to factory, with a shifted assignment using the new variable 'v'.
+
+    #     Returns a subclass of BindingOp.
+    #     """
+    #     result = cls.try_parse_header(s, assignment=assignment, locals=locals)
+    #     if not result:
+    #         return None
+    #     (op_class, v, t, remainder) = result # unpack results of parsing the header
+    #     body = None
+    #     remainder = remainder.strip()
+    #     if len(remainder) != 0:
+    #         try:
+    #             if assignment is None: 
+    #                 assignment = dict()
+    #             else:
+    #                 # create a new one to avoid side effects
+    #                 assignment = dict(assignment)
+    #             assignment[v] = TypedTerm(v, t)
+    #             #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
+    #             body = TypedExpr.parse_expr_string_old(remainder, assignment=assignment, locals=locals)
+    #         except Exception as e:
+    #             if isinstance(e, parsing.ParseError):
+    #                 raise e
+    #             else:
+    #                 raise parsing.ParseError("Binding operator expression has unparsable body", s, None,e=e)
+
+    #     if body is None:
+    #         raise parsing.ParseError("Can't create body-less binding operator expression", s, None)
+    #     return op_class(varname=v, var_or_vtype=t, body=body)
+
     @classmethod
-    def try_parse_binding_expr(cls, s, assignment=None, locals=None):
-        """Attempt to parse s as a unary operator expression.  Used by the factory function.
+    def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None, vprefix="ilnb"):
+        """Attempt to parse structure `s` as a binding structure.  Used by the factory function.
         assignment: a variable assignment to use when parsing.
 
+        `struc` is a semi-AST with all parenthetical structures parsed.  (See `parsing.parse_paren_str`.)
+
         Format: 'Op v : b'
-          * 'L' is one of 'lambda', 'L', 'λ', 'Forall', 'Exists', 'Iota'.  (Subclasses can register themselves to be parsed.)
+          * 'Op' is one of 'lambda', 'L', 'λ', 'Forall', 'Exists', 'Iota'.  (Subclasses can register themselves to be parsed.)
           * 'v' is a variable name expression (see try_parse_typed_term), e.g. 'x_e'
           * 'b' is a function body, i.e. something parseable into a TypedExpr.
 
         If 'v' does not provide a type, it will attempt to guess one based on the variable name.
-        The body will be parsed using an initial call to factory, with a shifted assignment using the new variable 'v'.
+        The body will be parsed using a call to the recursive `TypedExpr.try_parse_paren_struc_r`, with a shifted assignment using the new variable 'v'.
 
         Returns a subclass of BindingOp.
         """
-        result = cls.try_parse_header(s, assignment=assignment, locals=locals)
-        if not result:
-            return None
-        (op_class, v, t, remainder) = result # unpack results of parsing the header
-        body = None
-        remainder = remainder.strip()
-        if len(remainder) != 0:
-            try:
-                if assignment is None: 
-                    assignment = dict()
-                else:
-                    # create a new one to avoid side effects
-                    assignment = dict(assignment)
-                assignment[v] = TypedTerm(v, t)
-                #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
-                body = TypedExpr.parse_expr_string(remainder, assignment=assignment, locals=locals)
-            except Exception as e:
-                if isinstance(e, parsing.ParseError):
-                    raise e
-                else:
-                    raise parsing.ParseError("Binding operator expression has unparsable body", s, None,e=e)
-
-        if body is None:
-            raise parsing.ParseError("Can't create body-less binding operator expression", s, None)
-        return op_class(varname=v, var_or_vtype=t, body=body)
-
-    @classmethod
-    def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None, vprefix="ilnb"):
         #print(struc)
 
         if isinstance(struc[0], str) and struc[0] in parsing.brackets:
@@ -1900,6 +1971,9 @@ class ConditionSet(BindingOp):
 BindingOp.add_op(ConditionSet)
 
 class ListedSet(TypedExpr):
+    """A listed set is a set that simply lists members.
+
+    _NOTE_: order is not guaranteed to be stable in a ListedSet, which may create all sorts of issues."""
     canonical_name = "ListedSet"
     op_name_uni="ListedSet"
     op_name_latex="ListedSet"
@@ -1917,6 +1991,14 @@ class ListedSet(TypedExpr):
         self.type = types.SetType(typ)
         self.derivation = None
 
+    def subst(self, i, s):
+        if len(self.args) < 2:
+            return super().subst(i, s)
+        else:
+            raise NotImplementedError("Beta reduction into a set of size > 1 not currently supported.") # TODO deal with this
+            # the problem is the same as usual -- set order isn't stable so we need to do this all at once rather than 
+            # member-by-member.
+
     def copy(self):
         return ListedSet(self.args)
 
@@ -1924,15 +2006,20 @@ class ListedSet(TypedExpr):
         return False
 
     def __lshift__(self, i):
+        """Use the `<<` operator for set membership."""
         return SetContains(i, self)
 
     def set(self):
+        """Return a python `set` version of the ListedSet.
+
+        Note that this isn't guaranteed to be defined for anything with a set type."""
         return set(self.args)
 
     def cardinality(self):
         return len(self.args)
 
     def to_condition_set(self):
+        """Convert to a condition set by disjoining members."""
         # ensure that we build a condition set from a variable that is not free in any of the members
         varname = self.find_safe_variable(starting="x")
         conditions = [BinaryGenericEqExpr(TypedTerm(varname, a.type), a) for a in self.args]
@@ -1967,7 +2054,8 @@ class ListedSet(TypedExpr):
 
 
     def __repr__(self):
-        return "ListedSet : " + repr(tuple(self.args))
+        #return "ListedSet : " + repr(tuple(self.args))
+        return repr(set(self.args))
 
     def latex_str(self):
         inner = ", ".join([a.latex_str() for a in self.args])
@@ -1996,7 +2084,7 @@ class ListedSet(TypedExpr):
 #BindingOp.add_op(ListedSet)
 
 class ForallUnary(BindingOp):
-
+    """Universal unary quantifier"""
     canonical_name = "Forall"
     op_name_uni = "∀"
     op_name_latex = "\\forall{}"
@@ -2008,39 +2096,16 @@ class ForallUnary(BindingOp):
     def copy(self):
         return ForallUnary(self.vartype, self.body, self.varname)
 
-    # def __str__(self):
-    #     return "∀%s. %s\nType: t" % (self.varname, repr(self.body))
-
-    # def latex_str_long(self):
-    #     return "$\\forall %s_{%s} \\m. %s $\\\\ Type: $t$" % (self.varname, 
-    #                                                                                 self.vartype.latex_str(),  
-    #                                                                                 self.body.latex_str())
-    # def latex_str(self):
-    #     return ensuremath("\\forall %s_{%s} \\: . \\: %s" % (self.varname, 
-    #                                             self.vartype.latex_str(),  
-    #                                             self.body.latex_str()))
-    # # TODO: if this is uncommented, it blocks inheritence of __hash__
-    # # will need to remember to fix hashing as well once I implement the TODO below.  (What are the rules?)
-    # #def __eq__(self, other):
-    # #    # TODO: implement equality up to alphabetic variants.
-    # #    # as is, alphabetic variants will not be equal.
-    # #    return super().__eq__(other)
-
-    # def __repr__(self):
-    #     return "∀%s. %s" % (self.varname, repr(self.body))
-
 BindingOp.add_op(ForallUnary)
 
 class ExistsUnary(BindingOp):
-
+    """Existential unary quantifier"""
     canonical_name = "Exists"
     op_name_uni="∃"
     op_name_latex="\\exists{}"
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None):
         body = self.ensure_typed_expr(body, assignment=assignment)
-        #if body.type != types.type_t:
-        #    raise TypeMismatch
         super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment)
 
     def copy(self):
@@ -2049,6 +2114,7 @@ class ExistsUnary(BindingOp):
 BindingOp.add_op(ExistsUnary)
 
 class IotaUnary(BindingOp):
+    """Iota operator.  Note that this is purely syntactic, no presuppositions or model constraints implemented."""
     canonical_name = "Iota"
     op_name_uni = "ι"
     op_name_latex="\\iota{}"
@@ -2076,7 +2142,6 @@ class LFun(BindingOp):
     op_name_latex="\\lambda{}"
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None):
-        #print("LFun constructor: %s, '%s', %s" % (argtype, repr(body), var))
         body = self.ensure_typed_expr(body, assignment=assignment)
         # Use placeholder typ argument of None.  This is because the input type won't be known until
         # the var_or_vtype argument is parsed, which is done in the superclass constructor.
@@ -2084,10 +2149,6 @@ class LFun(BindingOp):
         # taking this into account.
         super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=body.type, assignment=assignment)
         self.type = FunType(self.vartype, body.type)
-        #self.argtype = argtype
-        #self.returntype = body.type
-
-        #self.op = "λ%s. " % var
 
     @property
     def argtype(self):
@@ -2099,32 +2160,6 @@ class LFun(BindingOp):
 
     def copy(self):
         return LFun(self.argtype, self.body, self.varname)
-
-    # def __str__(self):
-    #     return "λ%s. %s\nType: <%s,%s>" % (self.varname, repr(self.body), self.argtype, self.returntype)
-
-    # def latex_str_long(self):
-    #     return "$\\lambda %s_{%s} \\m. %s $\\\\ Type: $\\stype{\\stype{%s,%s}}$" % (self.varname, 
-    #                                                                                 self.argtype.latex_str(),  
-    #                                                                                 self.body.latex_str(),
-    #                                                                                 self.argtype.latex_str(),
-    #                                                                                 self.returntype.latex_str())
-    # def latex_str(self):
-    #     return ensuremath("\\lambda %s_{%s} \\: . \\: %s" % (self.varname, 
-    #                                             self.argtype.latex_str(),  
-    #                                             self.body.latex_str()))
-    # # TODO: if this is uncommented, it blocks inheritence of __hash__
-    # # will need to remember to fix hashing as well once I implement the TODO below.  (What are the rules?)
-    # #def __eq__(self, other):
-    # #    # TODO: implement equality up to alphabetic variants.
-    # #    # as is, alphabetic variants will not be equal.
-    # #    return super().__eq__(other)
-
-    # def _repr_latex_(self):
-    #     return self.latex_str()
-
-    # def __repr__(self):
-    #     return "λ%s. %s" % (self.varname, repr(self.body))
 
     def try_adjust_type(self, new_type, derivation_reason=None):
         """Attempts to adjust the type of self to be compatible with new_type.  
@@ -2157,6 +2192,9 @@ class LFun(BindingOp):
         
 
     def apply(self,arg):
+        """Apply an argument directly to the function.
+
+        `__call__` plus `reduce` is (almost) equivalent to `apply`, but using `apply` directly will not generate a derivations."""
         # do I really want flexible equality here??
         # TODO: return to this.  Right now a type mismatch still gets raised during beta reduction.
         ts = get_type_system()
@@ -2174,13 +2212,15 @@ class LFun(BindingOp):
     def __call__(self, *args):
         """Create a new expression that is the result of applying arg to the function
 
-        call + reduce is equivalent to apply, for an LFun"""
+        call + reduce is (almost) equivalent to apply; the difference is that `apply` will not generate a derivation."""
         return TypedExpr.factory(self, *args)
 
     def compose(self, other):
+        """Function composition."""
         return fun_compose(self, other)
 
     def __mul__(self, other):
+        """Override `*` as function composition for LFuns.  Note that this _only_ works for LFuns currently, not functional constants/variables."""
         return self.compose(other)
 
 def geach_combinator(gtype, ftype):
@@ -2189,6 +2229,7 @@ def geach_combinator(gtype, ftype):
     return combinator
 
 def fun_compose(g, f):
+    """Function composition using the geach combinator for the appropriate type, defined above."""
     if (not (g.type.functional() and f.type.functional()
              and g.type.left == f.type.right)):
         raise types.TypeMismatch(g, f, "Function composition")
@@ -2201,45 +2242,46 @@ def fun_compose(g, f):
 BindingOp.add_op(LFun)
 
 def unsafe_variables(fun, arg):
+    """For a function and an argument, return the set of variables that are not safe to use in application."""
     return arg.free_variables() & fun.body.bound_variables()
 
-def beta_reduce(t, varname, s):
-    """Do beta reduction on t, substituting in s.  Will not affect t itself.
+# def beta_reduce_old(t, varname, s):
+#     """Do beta reduction on t, substituting in s.  Will not affect t itself.
 
-    t: a TypedExpr of some kind.
-    varname: the name of the variable we are substituting for in t.
-    s: an expression to replace the variable with.  (Can be a parseable string or a TypedExpr.)
+#     t: a TypedExpr of some kind.
+#     varname: the name of the variable we are substituting for in t.
+#     s: an expression to replace the variable with.  (Can be a parseable string or a TypedExpr.)
 
-    If t is a variable, will return the substitute itself.  Otherwise, will recurse into t.  While the 
-    return value may share sub-structure with `t`, this function will return copies above any point that is changed.
-    """
-    if not is_var_symbol(varname):
-        raise ValueError("Beta reduction passed non-variable '%s'" % varname)
-    subst = TypedExpr.ensure_typed_expr(s)            
-    if varname in t.free_variables():
-        #print("asdf %s, %s" % (varname, repr(t)))
-        if (t.term() and t.op == varname):
-            if t.type != subst.type:
-                raise TypeMismatch(t, subst, "Beta reduction") # TODO make less cryptic
-            #print("substituting with %s" % subst)
-            return subst # TODO copy??
-        # we will be changing something in this expression, but not at this level of recursion, so make a copy.
-        t = t.copy()
-        if isinstance(t.op, TypedExpr):
-            # operator is a possibly complex TypedExpr
-            t.op = beta_reduce(t.op, varname, subst)
-        # TODO: check string ops?
-        # TODO: check assumption: all variables are TypedExprs.
+#     If t is a variable, will return the substitute itself.  Otherwise, will recurse into t.  While the 
+#     return value may share sub-structure with `t`, this function will return copies above any point that is changed.
+#     """
+#     if not is_var_symbol(varname):
+#         raise ValueError("Beta reduction passed non-variable '%s'" % varname)
+#     subst = TypedExpr.ensure_typed_expr(s)            
+#     if varname in t.free_variables():
+#         #print("asdf %s, %s" % (varname, repr(t)))
+#         if (t.term() and t.op == varname):
+#             if t.type != subst.type:
+#                 raise TypeMismatch(t, subst, "Beta reduction") # TODO make less cryptic
+#             #print("substituting with %s" % subst)
+#             return subst # TODO copy??
+#         # we will be changing something in this expression, but not at this level of recursion, so make a copy.
+#         t = t.copy()
+#         if isinstance(t.op, TypedExpr):
+#             # operator is a possibly complex TypedExpr
+#             t.op = beta_reduce_old(t.op, varname, subst)
+#         # TODO: check string ops?
+#         # TODO: check assumption: all variables are TypedExprs.
 
-        for i in range(len(t.args)):
-            if isinstance(t.args[i], TypedExpr):
-                t.args[i] = beta_reduce(t.args[i], varname, subst)
-                #print("beta reduce returning %s" % t.args[i])
-            else:
-                # ???
-                raise ValueError("problem during beta reduction...") # TODO: make less cryptic
-        #print("beta reduce returning %s" % t.args)
-    return t
+#         for i in range(len(t.args)):
+#             if isinstance(t.args[i], TypedExpr):
+#                 t.args[i] = beta_reduce_old(t.args[i], varname, subst)
+#                 #print("beta reduce returning %s" % t.args[i])
+#             else:
+#                 # ???
+#                 raise ValueError("problem during beta reduction...") # TODO: make less cryptic
+#         #print("beta reduce returning %s" % t.args)
+#     return t
 
 def beta_reduce_ts(t, varname, s):
     if not is_var_symbol(varname):
@@ -2259,68 +2301,12 @@ def beta_reduce_ts(t, varname, s):
             # operator is a possibly complex TypedExpr
             new_op = beta_reduce_ts(t.op, varname, subst)
             t = t.subst(0, new_op)
-        # TODO: check string ops?
-        # TODO: check assumption: all variables are TypedExprs.
-
         for i in range(len(t.args)):
-            if not isinstance(t.args[i], TypedExpr):
-                # ???
-                raise ValueError("problem during beta reduction...") # TODO: make less cryptic
+            assert(isinstance(t.args[i], TypedExpr))
             new_arg_i = beta_reduce_ts(t.args[i], varname, subst)
             t = t.subst(i+1, new_arg_i)
         #print("beta reduce returning %s" % t.args)
     return t
-
-
-def old_variable_convert(expr, m):
-    """Rename free instances of variables in expr, as determined by the map m.
-
-    Operates on a copy.
-    expr: a TypedExpr
-    m: a map from strings to strings."""
-    # TODO: replace this with a call to variable_replace?  Don't think this would work,
-    #   as the two have fundamentally different behavior -- this only renames.
-    # TODO: check for properly named variables?
-    # TODO: double check -- what if I recurse into a region where a variable becomes free again??  I think this goes wrong
-    targets = m.keys() & expr.free_variables()
-    if targets:
-        if expr.term() and expr.op in targets:
-            # expr itself is a term to be replaced.
-            return TypedTerm(m[expr.op], expr.type)
-        expr = expr.copy()
-        if isinstance(expr.op, TypedExpr):
-            expr.op = variable_convert(expr.op, m)
-        for i in range(len(expr.args)):
-            if isinstance(expr.args[i], TypedExpr):
-                expr.args[i] = variable_convert(expr.args[i], m)
-            else:
-                # ???
-                raise ValueError("problem during variable conversion...") # TODO: make less cryptic
-    return expr
-
-def old_variable_replace(expr, m):
-    """Replace free instances of variables in expr, as determined by the map m.
-
-    Operates on a copy.
-    expr: a TypedExpr
-    m: a map from strings to TypedExprs (or objects that will survive factory)."""
-    # TODO: check for properly named variables?
-    # TODO: double check -- what if I recurse into a region where a variable becomes free again??  I think this goes wrong
-    targets = m.keys() & expr.free_variables()
-    if targets:
-        if expr.term() and expr.op in targets:
-            # expr itself is a term to be replaced.
-            return TypedExpr.factory(m[expr.op])
-        expr = expr.copy()
-        if isinstance(expr.op, TypedExpr):
-            expr.op = variable_convert(expr.op, m)
-        for i in range(len(expr.args)):
-            if isinstance(expr.args[i], TypedExpr):
-                expr.args[i] = variable_convert(expr.args[i], m)
-            else:
-                # ???
-                raise ValueError("problem during variable conversion...") # TODO: make less cryptic
-    return expr
 
 def variable_replace(expr, m):
     def transform(e):
@@ -2390,15 +2376,6 @@ def alpha_variant(x, blockset):
     blockset.add(t) # note: fails for non-sets
     return t
 
-
-def alpha_convert_old(t, blocklist):
-    """left here for posterity -- does not work."""
-    overlap = t.free_variables() & blocklist
-    full_bl = blocklist | t.free_variables() | t.bound_variables()
-    # note that this relies on the side effect of alpha_variant...
-    conversions = {x : alpha_variant(x, full_bl) for x in overlap}
-    return variable_convert(t, conversions)
-
 def alpha_convert(t, blocklist):
     """ produce an alphabetic variant of t that is guaranteed not to have any variables in blocklist.  
 
@@ -2408,9 +2385,6 @@ def alpha_convert(t, blocklist):
     # note that this relies on the side effect of alpha_variant...
     conversions = {x : alpha_variant(x, full_bl) for x in overlap}
     return alpha_convert_r(t, overlap, conversions)
-
-def alpha_convert_new(t, blocklist):
-    return alpha_convert(t, blocklist)
 
 def alpha_convert_r(t, overlap, conversions):
     overlap = overlap & t.bound_variables()
@@ -2488,31 +2462,6 @@ def typed_expr(s):
     # slightly different semantics -- factory will make a copy if handed a TypedExpr.
     return TypedExpr.ensure_typed_expr(s)
 
-def typed_expr_old(s):
-    """Create an Expr representing a logic expression by parsing the input
-    string. Symbols and numbers are automatically converted to Exprs.
-    In addition you can use alternative spellings of these operators:
-      'x ==> y'   parses as   (x >> y)    # Implication
-      'x <== y'   parses as   (x << y)    # Reverse implication
-      'x <=> y'   parses as   (x % y)     # Logical equivalence
-      'x =/= y'   parses as   (x ^ y)     # Logical disequality (xor)
-    But BE CAREFUL; precedence of implication is wrong. expr('P & Q ==> R & S')
-    is ((P & (Q >> R)) & S); so you must use expr('(P & Q) ==> (R & S)').
-    >>> expr('P <=> Q(1)')
-    (P <=> Q(1))
-    >>> expr('P & Q | ~R(x, F(x))')
-    ((P & Q) | ~R(x, F(x)))
-    """
-    if isinstance(s, TypedExpr): 
-        return s
-    elif isinstance(s, Number): 
-        return TypedExpr(s)
-    elif isinstance(s, str):
-        return TypedExpr.parse_expr_string(s)
-    else:
-        raise NotImplementedError
-
-
 def is_symbol(s):
     "A string s is a symbol if it starts with an alphabetic char."
     return isinstance(s, str) and len(s) > 0 and s[:1].isalpha() and not is_multiword(s)
@@ -2551,6 +2500,7 @@ def variables(s):
     return result
 
 class DerivationStep(object):
+    """A single step of a derivation."""
     def __init__(self, result,  desc=None, origin=None, latex_desc=None, subexpression=None, trivial=False):
         self.result = result
         self.subexpression = subexpression
@@ -2584,6 +2534,7 @@ class DerivationStep(object):
                 return "(" + (" + ".join([repr(o) for o in self.origin])) + ")"
 
 class Derivation(object):
+    """A derivation sequence, consisting of DerivationSteps."""
     def __init__(self, steps):
         self.steps = list()
         self.steps_hash = dict()
@@ -2671,6 +2622,7 @@ class Derivation(object):
 
 
 def derivation_factory(result, desc=None, latex_desc=None, origin=None, steps=None, subexpression=None, trivial=False):
+    """Factory function for `Derivation`s.  See `derived`."""
     if origin is None:
         if steps is not None and len(steps) > 0:
             origin = steps[-1].result
