@@ -370,58 +370,6 @@ class TypedExpr(object):
         (struc, i) = parsing.parse_paren_str(s, 0, ts)
         return cls.try_parse_paren_struc_r(struc, assignment=assignment, locals=locals)
 
-    # @classmethod
-    # def parse_expr_string_old(cls, s, assignment=None, locals=None):
-    #     """Attempt to parse a string into a TypedExpr
-    #     assignment: a variable assignment to use when parsing.
-
-    #     First, try to see if the string is a binding operator expression.  (See try_parse_op_expr)
-    #     Otherwise, do some regular expression magic, and then call eval.
-
-    #     The gist of the magic:
-    #       * replace some special cases with less reasonable operator names.  (This comes from AIMA logic)
-    #       * find things that look like term names, and surround them with calls to the term factory function.
-    #     """
-    #     # test = cls.try_parse_lambda(s, assignment=assignment)
-    #     # # see if we can succesfully get a lambda expression out of s
-    #     # if test != None:
-    #     #     vname, vtype, body = test
-    #     #     if body is None:
-    #     #         raise ValueError("Can't create body-less lambda expression from '%s'" % s)
-    #     #     return LFun(vtype, body, vname)
-    #     if locals is None:
-    #         locals = dict()
-    #     test = cls.try_parse_op_expr_old(s, assignment=assignment, locals=locals)
-    #     if test != None:
-    #         return test
-    #     ## Replace the alternative spellings of operators with canonical spellings
-    #     s = s.replace('==>', '>>').replace('<==', '<<')
-    #     s = s.replace('<=>', '%').replace('=/=', '^')
-    #     ## Replace a symbol or number, such as 'P' with 'Expr("P")'
-    #     # TODO: handle numbers in strings, right now they end up as terms
-    #     # TODO: handle greek letters
-    #     # TODO: test this more
-    #     # somewhat counterintuitively, this will match some incorrect strings, because error checking is done at the factory level
-    #     #s = re.sub(r'([a-zA-Z0-9_]*[a-zA-Z0-9]+(_[a-zA-Z0-9\?\<\>,]*)?)', r'TypedExpr.term_factory("\1", assignment=assignment)', s)
-    #     s = cls.expand_terms(s, assignment=assignment, ignore=locals.keys())
-    #     ## Now eval the string.  (A security hole; do not use with an adversary.)
-    #     # TODO: this won't necessarily do the right thing with assignment, can still result in inconsistent types
-    #     #print(s)
-    #     lcopy = locals.copy()
-    #     lcopy.update({'TypedExpr':TypedExpr,'TypedTerm':TypedTerm, 'assignment': assignment, 'type_e': type_e})
-    #     result = eval(s, dict(), lcopy)
-    #     if isinstance(result, tuple):
-    #         return Tuple(result)
-    #     elif isinstance(result, set):
-    #         return ListedSet(result)
-    #     elif isinstance(result, dict) and len(result) == 0:
-    #         return ListedSet(set())
-    #     elif isinstance(result, TypedExpr):
-    #         return result
-    #     else:
-    #         logger.warning("parse_expr_string returning non-TypedExpr")
-    #         return result
-
     @classmethod
     def try_parse_flattened(cls, s, assignment=None, locals=None):
         """Attempt to parse a flat, simplified string into a TypedExpr.  Binding expressions should be already handled.
@@ -462,18 +410,6 @@ class TypedExpr(object):
         else:
             logger.warning("parse_flattened returning non-TypedExpr")
             return result
-
-
-
-    # @classmethod
-    # def try_parse_op_expr_old(cls, s, assignment=None, locals=None):
-    #     try:
-    #         return BindingOp.try_parse_binding_expr_old(s, assignment=assignment, locals=locals)
-    #     except parsing.ParseError as e:
-    #         if not e.met_preconditions:
-    #             return None
-    #         else:
-    #             raise e
 
     @classmethod
     def try_parse_binding_struc(cls, s, assignment=None, locals=None, vprefix="ilnb"):
@@ -1812,47 +1748,6 @@ class BindingOp(TypedExpr):
             t = default_variable_type(v)
         return (op_class, v, t, remainder)
 
-    # @classmethod
-    # def try_parse_binding_expr_old(cls, s, assignment=None, locals=None):
-    #     """Attempt to parse s as a unary operator expression.  Used by the factory function.
-    #     assignment: a variable assignment to use when parsing.
-
-    #     Format: 'Op v : b'
-    #       * 'L' is one of 'lambda', 'L', 'λ', 'Forall', 'Exists', 'Iota'.  (Subclasses can register themselves to be parsed.)
-    #       * 'v' is a variable name expression (see try_parse_typed_term), e.g. 'x_e'
-    #       * 'b' is a function body, i.e. something parseable into a TypedExpr.
-
-    #     If 'v' does not provide a type, it will attempt to guess one based on the variable name.
-    #     The body will be parsed using an initial call to factory, with a shifted assignment using the new variable 'v'.
-
-    #     Returns a subclass of BindingOp.
-    #     """
-    #     result = cls.try_parse_header(s, assignment=assignment, locals=locals)
-    #     if not result:
-    #         return None
-    #     (op_class, v, t, remainder) = result # unpack results of parsing the header
-    #     body = None
-    #     remainder = remainder.strip()
-    #     if len(remainder) != 0:
-    #         try:
-    #             if assignment is None: 
-    #                 assignment = dict()
-    #             else:
-    #                 # create a new one to avoid side effects
-    #                 assignment = dict(assignment)
-    #             assignment[v] = TypedTerm(v, t)
-    #             #print("calling factory on '%s' with assignment %s" % (l[1], repr(assignment)))
-    #             body = TypedExpr.parse_expr_string_old(remainder, assignment=assignment, locals=locals)
-    #         except Exception as e:
-    #             if isinstance(e, parsing.ParseError):
-    #                 raise e
-    #             else:
-    #                 raise parsing.ParseError("Binding operator expression has unparsable body", s, None,e=e)
-
-    #     if body is None:
-    #         raise parsing.ParseError("Can't create body-less binding operator expression", s, None)
-    #     return op_class(varname=v, var_or_vtype=t, body=body)
-
     @classmethod
     def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None, vprefix="ilnb"):
         """Attempt to parse structure `s` as a binding structure.  Used by the factory function.
@@ -2244,44 +2139,6 @@ BindingOp.add_op(LFun)
 def unsafe_variables(fun, arg):
     """For a function and an argument, return the set of variables that are not safe to use in application."""
     return arg.free_variables() & fun.body.bound_variables()
-
-# def beta_reduce_old(t, varname, s):
-#     """Do beta reduction on t, substituting in s.  Will not affect t itself.
-
-#     t: a TypedExpr of some kind.
-#     varname: the name of the variable we are substituting for in t.
-#     s: an expression to replace the variable with.  (Can be a parseable string or a TypedExpr.)
-
-#     If t is a variable, will return the substitute itself.  Otherwise, will recurse into t.  While the 
-#     return value may share sub-structure with `t`, this function will return copies above any point that is changed.
-#     """
-#     if not is_var_symbol(varname):
-#         raise ValueError("Beta reduction passed non-variable '%s'" % varname)
-#     subst = TypedExpr.ensure_typed_expr(s)            
-#     if varname in t.free_variables():
-#         #print("asdf %s, %s" % (varname, repr(t)))
-#         if (t.term() and t.op == varname):
-#             if t.type != subst.type:
-#                 raise TypeMismatch(t, subst, "Beta reduction") # TODO make less cryptic
-#             #print("substituting with %s" % subst)
-#             return subst # TODO copy??
-#         # we will be changing something in this expression, but not at this level of recursion, so make a copy.
-#         t = t.copy()
-#         if isinstance(t.op, TypedExpr):
-#             # operator is a possibly complex TypedExpr
-#             t.op = beta_reduce_old(t.op, varname, subst)
-#         # TODO: check string ops?
-#         # TODO: check assumption: all variables are TypedExprs.
-
-#         for i in range(len(t.args)):
-#             if isinstance(t.args[i], TypedExpr):
-#                 t.args[i] = beta_reduce_old(t.args[i], varname, subst)
-#                 #print("beta reduce returning %s" % t.args[i])
-#             else:
-#                 # ???
-#                 raise ValueError("problem during beta reduction...") # TODO: make less cryptic
-#         #print("beta reduce returning %s" % t.args)
-#     return t
 
 def beta_reduce_ts(t, varname, s):
     if not is_var_symbol(varname):
