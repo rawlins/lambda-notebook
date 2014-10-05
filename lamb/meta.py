@@ -2633,16 +2633,17 @@ class Derivation(object):
         bare_tr = "<tr>"
         uline_tr = "<tr style=\"border-bottom:1px solid #848482\">"
         for (expr, reason, subexpression) in l:
-            if recurse and subexpression and subexpression.derivation:
-                current_tr = bare_tr
-            else:
-                current_tr = uline_tr
             if reason is None:
-                s += "%s<td style=\"padding-right:5px\">%2i. </td><td style=\"padding-right:5px\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482\"></td></tr>" % (current_tr, i, expr)
+                reason_str = ""
             else:
-                s += "%s<td style=\"padding-right:5px\">%2i. </td><td style=\"padding-right:5px\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482\"><span style=\"color:blue\">%s</span></td></tr>" % (current_tr, i, expr, reason)
+                reason_str = "<span style=\"color:blue\">%s</span>" % reason
+
             if recurse and subexpression and subexpression.derivation:
-                s += "%s<td style=\"padding-right:5px\"></td><td style=\"padding-right:5px\"></td><td style=\"padding-left:10px;border-left:1px solid #848482\">%s</td></tr>" % (uline_tr, subexpression.derivation.latex_steps_str(recurse=True))
+                s += "%s<td style=\"padding-right:5px;vertical-align:bottom\"></td><td style=\"padding-right:5px;vertical-align:bottom\"></td><td style=\"padding-left:10px;border-left:1px solid #848482\">%s</td></tr>" % (bare_tr, reason_str)
+                s += "%s<td style=\"padding-right:5px;vertical-align:bottom\">%2i. </td><td style=\"padding-right:5px;vertical-align:bottom\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482;padding-bottom:3px\">%s</td></tr>" % (uline_tr, i, expr, subexpression.derivation.latex_steps_str(recurse=True))
+
+            else:
+                s += "%s<td style=\"padding-right:5px;vertical-align:bottom\">%2i. </td><td style=\"padding-right:5px;vertical-align:bottom\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482\">%s</td></tr>" % (uline_tr, i, expr, reason_str)
             i += 1
         s += "</table>"
         return s
