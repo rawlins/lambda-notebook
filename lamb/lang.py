@@ -737,9 +737,9 @@ class TreeComposite(Composite, Tree):
     def derivs_for_tree(self):
         if self.content.derivation is None:
             return None
-        l = self.content.derivation.steps_sequence(latex=True)
+        l = self.content.derivation.steps_sequence(latex=True, ignore_trivial=True)
         s = "<table>"
-        for (step, reason) in l:
+        for (step, reason, subexpression) in l:
             s += "<tr><td style=\"padding-right:5px\"> $=$ </td><td style=\"align:center\">%s</td></tr>" % step
         s += "</table>"
         return s

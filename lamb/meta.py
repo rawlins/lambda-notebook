@@ -520,7 +520,7 @@ class TypedExpr(object):
         return result
 
     @classmethod
-    def try_parse_typed_term(cls, s, assignment=None):
+    def try_parse_typed_term(cls, s, assignment=None, strict=False):
         """Try to parse string 's' as a typed term.
         assignment: a variable assignment to parse s with.
 
@@ -534,6 +534,10 @@ class TypedExpr(object):
         Raises: TypeMismatch if the assignment supplies a type inconsistent with the specified one.
         """
         v, typ, end = cls.parse_term(s, i=0, return_obj=False, assignment=assignment)
+        if strict and end < len(s):
+            remainder = s[end:].strip()
+            if len(remainder) > 0:
+                raise parsing.ParseError("Extra characters ('%s') in binding operator term following variable" % remainder, s, i=end, met_preconditions=True)
         return (v, typ)
 
     @classmethod
@@ -639,7 +643,7 @@ class TypedExpr(object):
             return result
         elif (isinstance(s, str)):
             if typ is None and not preparsed:
-                v, typ = cls.try_parse_typed_term(s, assignment=assignment)
+                v, typ = cls.try_parse_typed_term(s, assignment=assignment, strict=True)
             else:
                 v = s
             if _constants_use_custom and not is_var_symbol(v):
@@ -857,53 +861,51 @@ class TypedExpr(object):
         return self
 
     def reduce_all(self):
-        # this is a dumb strategy, probably not fully general
+        # this is a dumb strategy: it's either not fully general (but I haven't found the case yet), or it's way
+        # overkill, I'm not sure which; probably both.  The potential overkill is the recursive step.
+        # TODO: add some kind of memoization?
+
+        # uncomment this to see just how bad this function is...
+        #print("reduce_all on '%s'" % repr(self))
         result = self
         dirty = False
-        if isinstance(result.op, TypedExpr):
-            new_op = result.op.reduce_all()
-            if new_op is not result.op:
-                dirty = True
-                next_step = result.copy()
-                next_step.op = new_op
-                result = derived(next_step, result, desc="Recursive reduction of op")
-        while result.reducible():
-            new_result = result.reduce()
-            if new_result is not result:
-                dirty = True
-                result = new_result # no need to add a derivation here, reduce will do that already
-            else:
-                break # should never happen...but prevent loops in case of error
-        # do this twice in case reduce did something
-        if isinstance(result.op, TypedExpr):
-            new_op = result.op.reduce_all()
-            if new_op is not result.op:
-                if not dirty:
-                    dirty = True
-                next_step = result.copy()
-                next_step.op = new_op
-                result = derived(next_step, result, desc="Recursive reduction of op")
         for i in range(len(result.args)):
             new_arg_i = result.args[i].reduce_all()
             if new_arg_i is not result.args[i]:
                 if not dirty:
                     dirty = True
                 next_step = result.copy()
-                next_step.args[i] = new_arg_i
+                try:
+                    next_step.args[i] = new_arg_i
+                except:
+                    print("next_step: " + repr(next_step))
+                    print("result: " + repr(result))
+                    print("i: " + repr(i))
+                    raise
                 if len(result.args) == 1 and isinstance(result, BindingOp):
                     reason = "Recursive reduction of body"
                 else:
                     reason = "Recursive reduction of operand %s" % (i+1)
-                result = derived(next_step, result, desc=reason)
-        # .....
+                result = derived(next_step, result, desc=reason, subexpression=new_arg_i)
+        if isinstance(result.op, TypedExpr):
+            new_op = result.op.reduce_all()
+            if new_op is not result.op:
+                dirty = True
+                next_step = result.copy()
+                next_step.op = new_op
+                result = derived(next_step, result, desc="Recursive reduction of operator", subexpression=new_op)
+        self_dirty = False
         while result.reducible():
             new_result = result.reduce()
             if new_result is not result:
                 dirty = True
+                self_dirty = True
                 result = new_result # no need to add a derivation here, reduce will do that already
             else:
                 break # should never happen...but prevent loops in case of error
-
+        if self_dirty:
+            new_result = result.reduce_all() # TODO: is this overkill?
+            result = new_result
         return result # could instead just do all the derivedness in one jump here
 
 
@@ -1641,6 +1643,10 @@ class BindingOp(TypedExpr):
     @classmethod
     def compile_ops_re(cls):
         op_names = BindingOp.binding_operators.keys() | BindingOp.canonicalize_names
+        # sort with longer strings first, to avoid matching subsets of long names
+        # i.e. | is not greedy
+        op_names = list(op_names)
+        op_names.sort(reverse=True)
         if len(op_names) == 0:
             BindingOp.op_regex = None
             BindingOp.init_op_regex = None
@@ -1742,7 +1748,7 @@ class BindingOp(TypedExpr):
             raise parsing.ParseError("Missing ':' in binding operator expression", s, None, met_preconditions=False)
         header, remainder = split
         vname = header[i:].strip() # should remove everything but a variable name
-        (v, t) = cls.try_parse_typed_term(vname)
+        (v, t) = cls.try_parse_typed_term(vname, strict=True)
         if not is_var_symbol(v):
             raise parsing.ParseError("Need variable name in binding operator expression (received '%s')" % v, s, None)
         if t is None:
@@ -1931,6 +1937,33 @@ class ListedSet(TypedExpr):
         varname = self.find_safe_variable(starting="x")
         conditions = [BinaryGenericEqExpr(TypedTerm(varname, a.type), a) for a in self.args]
         return ConditionSet(self.type.content_type, BinaryOrExpr.join(*conditions), varname=varname)
+
+    def reduce_all(self):
+        """Special-cased reduce_all for listed sets.  There are two problems.  First, the reduction 
+        may actually result in a change in the size of the set, something generally not true of 
+        reduction elsewhere.  Second, because the constructor calls `set`, `copy` is not guaranteed
+        to return an object with a stable order.  Therefore we must batch the reductions (where the 
+        TypedExpr version doesn't).
+
+        Note that currently this produces non-ideal derivation sequences."""
+        dirty = False
+        accum = list()
+        result = self
+        for i in range(len(result.args)):
+            new_arg_i = result.args[i].reduce_all()
+            if new_arg_i is not result.args[i]:
+                dirty = True
+                reason = "Recursive reduction of set member %s" % (i+1)
+                # TODO: this isn't quite right but I can't see what else to do right now
+                result = derived(result, result, desc=reason, subexpression=new_arg_i, allow_trivial=True)
+                accum.append(new_arg_i)
+            else:
+                accum.append(new_arg_i)
+        if dirty:
+            new_result = ListedSet(accum)
+            new_result = derived(new_result, result, desc="Construction of set from reduced set members")
+            result = new_result
+        return result
 
 
     def __repr__(self):
@@ -2518,8 +2551,9 @@ def variables(s):
     return result
 
 class DerivationStep(object):
-    def __init__(self, result,  desc=None, origin=None, latex_desc=None):
+    def __init__(self, result,  desc=None, origin=None, latex_desc=None, subexpression=None, trivial=False):
         self.result = result
+        self.subexpression = subexpression
         if desc is None:
             if latex_desc is None:
                 self.desc = self.latex_desc = ""
@@ -2535,6 +2569,7 @@ class DerivationStep(object):
             self.origin = (origin,)
         else:
             self.origin = tuple(origin)
+        self.trivial = trivial
 
     def origin_str(self, latex=False):
         if len(self.origin) == 1:
@@ -2575,29 +2610,45 @@ class Derivation(object):
     def __getitem__(self, i):
         return self.steps[i]
 
-    def steps_sequence(self, latex=False):
+    def steps_sequence(self, latex=False, ignore_trivial=False):
         l = list()
         if len(self.steps) > 0:
-            l.append((self.steps[0].origin_str(latex), None))
+            l.append((self.steps[0].origin_str(latex), None, None))
             for i in range(len(self.steps)): # assume that origin matches previous result.  Could check this.
+                if self.steps[i].trivial and ignore_trivial:
+                    continue
                 if latex:
-                    l.append((self.steps[i].result.latex_str(), self.steps[i].latex_desc))
+                    if self.steps[i].trivial:
+                        l.append(("...", self.steps[i].latex_desc, self.steps[i].subexpression))
+                    else:
+                        l.append((self.steps[i].result.latex_str(), self.steps[i].latex_desc, self.steps[i].subexpression))
                 else:
-                    l.append((repr(self.steps[i].result), self.steps[i].desc))
+                    l.append((repr(self.steps[i].result), self.steps[i].desc, self.steps[i].subexpression))
         return l
 
-    def latex_steps_str(self):
+    def latex_steps_str(self, recurse=False):
         l = self.steps_sequence(latex=True)
         s = "<table>"
         i = 1
-        for (expr, reason) in l:
-            if reason is None:
-                s += "<tr><td style=\"padding-right:5px\">%2i. </td><td style=\"padding-right:5px\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482\"></td></tr>" % (i, expr)
+        bare_tr = "<tr>"
+        uline_tr = "<tr style=\"border-bottom:1px solid #848482\">"
+        for (expr, reason, subexpression) in l:
+            if recurse and subexpression and subexpression.derivation:
+                current_tr = bare_tr
             else:
-                s += "<tr><td style=\"padding-right:5px\">%2i. </td><td style=\"padding-right:5px\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482\">%s</td></tr>" % (i, expr, reason)
+                current_tr = uline_tr
+            if reason is None:
+                s += "%s<td style=\"padding-right:5px\">%2i. </td><td style=\"padding-right:5px\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482\"></td></tr>" % (current_tr, i, expr)
+            else:
+                s += "%s<td style=\"padding-right:5px\">%2i. </td><td style=\"padding-right:5px\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482\"><span style=\"color:blue\">%s</span></td></tr>" % (current_tr, i, expr, reason)
+            if recurse and subexpression and subexpression.derivation:
+                s += "%s<td style=\"padding-right:5px\"></td><td style=\"padding-right:5px\"></td><td style=\"padding-left:10px;border-left:1px solid #848482\">%s</td></tr>" % (uline_tr, subexpression.derivation.latex_steps_str(recurse=True))
             i += 1
         s += "</table>"
         return s
+
+    def trace(self, recurse=True):
+        return MiniLatex(self.latex_steps_str(recurse=recurse))
 
     def _repr_latex_(self):
         return self.latex_steps_str()
@@ -2606,7 +2657,7 @@ class Derivation(object):
         l = self.steps_sequence(latex=False)
         s = ""
         i = 1
-        for (expr, reason) in l:
+        for (expr, reason, subexpression) in l:
             if reason is None:
                 s += "%2i. %s\n" % (i, expr)
             else:
@@ -2618,25 +2669,29 @@ class Derivation(object):
         return self.steps_str()
 
 
-def derivation_factory(result, desc=None, latex_desc=None, origin=None, steps=None):
+def derivation_factory(result, desc=None, latex_desc=None, origin=None, steps=None, subexpression=None, trivial=False):
     if origin is None:
         if steps is not None and len(steps) > 0:
             origin = steps[-1].result
     drv = Derivation(steps)
     # note: will make a copy of the derivation if steps is one; may be better to have something more efficient in the long run
-    drv.add_step(DerivationStep(result, desc=desc, origin=origin, latex_desc=latex_desc))
+    drv.add_step(DerivationStep(result, desc=desc, origin=origin, latex_desc=latex_desc, subexpression=subexpression, trivial=trivial))
     return drv
 
-def derived(result, origin, desc=None, latex_desc=None):
+def derived(result, origin, desc=None, latex_desc=None, subexpression=None, allow_trivial=False):
     """Convenience function to return a derived TypedExpr while adding a derivational step.
     Always return result, adds or updates its derivational history as a side effect."""
+    trivial = False
     if result == origin: # may be inefficient?
-        return result
+        if allow_trivial:
+            trivial = True
+        else:
+            return result
     if result.derivation is None:
         d = origin.derivation
     else:
         d = result.derivation
-    result.derivation = derivation_factory(result, desc=desc, latex_desc=latex_desc, origin=origin, steps=d)
+    result.derivation = derivation_factory(result, desc=desc, latex_desc=latex_desc, origin=origin, steps=d, subexpression=subexpression, trivial=trivial)
     return result
 
 
