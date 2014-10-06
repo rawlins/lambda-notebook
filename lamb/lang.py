@@ -28,6 +28,7 @@ from lamb.tree_mini import Tree
 
 
 # configurable bracketing options.  BRACKET_BARS is always safe.
+# This is configurable because the nicer looking options are _much_ slower than the uglier ones.
 global bracket_setting, BRACKET_BARS, BRACKET_FANCY, BRACKET_UNI
 BRACKET_BARS = 1
 BRACKET_FANCY = 2
@@ -36,6 +37,7 @@ bracket_setting = BRACKET_BARS
 
 
 def text_inbr(s):
+    """Convenience function to wrap something in double brackets, for strings."""
     if bracket_setting == BRACKET_BARS:
         return "||" + s + "||"
     elif bracket_setting == BRACKET_FANCY or bracket_setting == BRACKET_UNI:
@@ -56,6 +58,7 @@ def inbr_doublebracket(s, negspace=False):
         return "[[\\mathbf{\\text{" + s + "}}]]"
 
 def inbr(s):
+    """Convenience function to wrap something in double brackets, for MathJax output."""
     if bracket_setting == BRACKET_BARS:
         return inbr_doublebar(s)
     elif bracket_setting == BRACKET_FANCY:
@@ -66,24 +69,22 @@ def inbr(s):
         return inbr_doublebar(s)
 
 def inbrs(s, super):
+    """Wrap a string in brackets with a superscript, for MathJax output."""
     return inbr(s) + "^{" + super + "}"
 
 def mathjax_indent():
+    """Indentation suitable for MathJax output."""
     return "&nbsp;&nbsp;&nbsp;&nbsp;"
 
 latex_indent = mathjax_indent
 
-class Lexicon(object):
-    def __init__(self):
-        self.items = dict()
-
-#composition_system = None
-
 def set_system(s):
+    """Set the (module-level) current composition system."""
     global composition_system
     composition_system = s
 
 def get_system():
+    """Get the (module-level) current composition system."""
     global composition_system
     return composition_system
 
@@ -226,7 +227,8 @@ class AssignmentController(object):
     """This class is for managing the rendering and maintenance of specialized variables in the assignment function.
 
     For example, in many systems, index variables are notated as superscripts to the interpretation function.
-    TODO: expand
+
+    See the notebook on adding composition operations for an example.
     """
     def __init__(self, specials=[], reserved=None):
         self.specials = list(specials)
@@ -284,6 +286,12 @@ class VacuousAssignmentController(object):
 
     def default(self):
         return Assignment()
+
+# TODO: this is not complete
+class Lexicon(object):
+    def __init__(self):
+        self.items = dict()
+
 
 class SingletonComposable(Composable):
     """A SingletonComposable stores one denotation ('content') in some form."""
@@ -557,6 +565,9 @@ class CompositionTree(Tree, Composable):
     def print_ipython_mathjax(self):
         return self.latex_step_tree()
 
+    def tree(self, derivations=False):
+        return self.latex_step_tree(derivations=derivations)
+
     def latex_step_tree(self,derivations=False):
         """Show the step-by-step derivation(s) as a proof tree."""
         if self.content is None:
@@ -568,18 +579,21 @@ class CompositionTree(Tree, Composable):
         else:
             raise NotImplementedError()
 
-    def __mul__(self, other):
-        Composable.__mul__(self, other)
-
-    @classmethod
-    def from_tree(cls, t, system=None):
-        return CompositionTree(t.node, t, system=system)
-
     def latex_step_tree_r(self, derivations=False):
         if len(self.content) == 1:
             return self.content[0].latex_step_tree_r(derivations=derivations)
         else:
             raise NotImplementedError(repr(self))
+
+    def __mul__(self, other):
+        Composable.__mul__(self, other)
+
+    @classmethod
+    def from_tree(cls, t, system=None):
+        """Factory method to construct a CompositionTree from an nltk.Tree.
+
+        Note that this doesn't convert the whole tree, just the top node."""
+        return CompositionTree(t.node, t, system=system)
 
     @classmethod
     def tree_factory(cls, composable, system=None):
@@ -837,14 +851,24 @@ class UnaryComposite(TreeComposite):
         TreeComposite.__init__(self, p1, content=content, mode=mode, source=source)
 
 class CompositionResult(Composable):
+    """Container class for a stage of a composition.  Can represent multiple composition paths, and tracks
+    failures."""
     def __init__(self, items, results, failures, source=None):
+        """Construct a CompositionResult given the output of the things that can happen while doing composition.
+
+        `items`: a list of Composables that were the input to the CompositionStep.  These might themselves be CompositionResults.
+        `results`: a list of results from composition.  These should not be (?) themselves list-like objects.
+        `failures`: a list of failed composition paths, usually in the form of information-rich TypeMismatch objects.
+        `source`: some representation of a natural language structure that led to this composition step.
+
+        """
         self.items = items
         self.results = results
         self.failures = failures
         self.source = source
 
     def __repr__(self):
-        return "CompositionResult(results=%s, failures=%s)" % (self.results, self.failures)
+        return "CompositionResult(results=%s, failures=%s)" % (repr(self.results), repr(self.failures))
         if len(self.results) == 0:
             return repr(self.failures)
         else:
@@ -910,6 +934,7 @@ class CompositionResult(Composable):
         raise NotImplementedError
 
     def trace(self):
+        """Trace all derivation paths in detail"""
         return self.full_trace_latex()
 
     def full_trace_latex(self):
@@ -997,18 +1022,23 @@ class CompositionResult(Composable):
         return self.results[i]
 
     def extend(self, other):
+        """Extend this with another CompositionResult."""
         if not isinstance(other, CompositionResult):
             raise ValueError
         self.results.extend(other.results)
         self.failures.extend(other.failures)
 
     def prune(self, i, reason=None):
+        """Remmove result `i` with some specified `reason`.
+
+        Will move the derivation into the `failures` list."""
         result = self.results[i]
         del self.results[i]
         self.failures.append(result)
         #TODO: do something with reason
 
     def eliminate_dups(cr):
+        """Eliminate any duplicates, at least by syntactic equality criteria."""
         i = 0
         while i < len(cr.content):
             j = i + 1
@@ -1021,7 +1051,14 @@ class CompositionResult(Composable):
         return cr
 
 class CRFilter(object):
+    """A filter on CompositionResults that enforces some specified meta-language criteria."""
     def __init__(self, name, filter_fun):
+        """Construct a filter on CompositionResults.
+
+        `name`: the name of the filter.
+        `filter_fun`: a function that implements the filter on a single TypedExpr.
+
+        The simplest case would be e.g. to check that a derivation has a specific type."""
         self.filter_fun = filter_fun
         self.name = name
 
@@ -1038,10 +1075,17 @@ class CRFilter(object):
 
 class Item(TreeComposite):
     """This class represents a lexical item.  It is implemented as a TreeComposite without a daughter."""
-    def __init__(self, ol_name, content, index=None, mode=None):
+    def __init__(self, nl_name, content, index=None, mode=None):
+        """Construct an Item.
+
+        `nl_name`: the natural language name of the Item.
+        `content`: a TypedExpr content for the item.
+        `index`: the index, if any.  (For traces, etc)
+        `mode`: passed to superclass (not currently used).
+        """
         TreeComposite.__init__(self, content=content, mode=mode)
         #self.content = TypedExpr.ensure_typed_expr(content)
-        self.__node_name__ = ol_name
+        self.__node_name__ = nl_name
         if index is None:
             self.index = None
         else:
@@ -1049,18 +1093,6 @@ class Item(TreeComposite):
                 self.index = index
             else:
                 self.index = 0
-
-    # def __init__(self, ol_name, content, index=None):
-    #     SingletonComposable.__init__(self, content)
-    #     #self.content = TypedExpr.ensure_typed_expr(content)
-    #     self.name = ol_name
-    #     if index is None:
-    #         self.index = None
-    #     else:
-    #         if index > 0:
-    #             self.index = index
-    #         else:
-    #             self.index = 0
 
     @property
     def constant(self):
@@ -1099,7 +1131,18 @@ class Item(TreeComposite):
 
 
 class BinaryCompositionOp(object):
+    """A composition operation on two Composables."""
     def __init__(self, name, operation, commutative=False, composite_name=None, allow_none=False, reduce=False, system=None):
+        """Build a composition operation given some function.  See also `binary_factory` and `binary_factory_curried`.
+
+        `name`: the name of the operation, e.g. "FA".
+        `operation`: a function implementing the operation.  Must take two Composables and an optional assignment.
+        `commutative`: should the operation be tried in both orders?
+        `composite_name`: an optional function to determine the node name from the operands.
+        `allow_none`: can either of the arguments to `operation` have content None?  (See e.g. the PA rule.)
+        `reduce`:  should `reduce_all` be called on the result?
+        `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
+        """
         self.operation = operation
         self.__name__ = name
         self.commutative = commutative
@@ -1133,7 +1176,18 @@ class BinaryCompositionOp(object):
         return result
 
 class UnaryCompositionOp(object):
+    """A unary composition operation."""
     def __init__(self, name, operation, composite_name=None, allow_none=False, reduce=False, system=None,typeshift=False):
+        """Build a composition operation given some function.  See also `unary_factory`.
+
+        `name`: the name of the operation, e.g. "FA".
+        `operation`: a function implementing the operation.  Must take one Composables and an optional assignment.
+        `commutative`: should the operation be tried in both orders?
+        `composite_name`: an optional function to determine the node name from the operands.
+        `allow_none`: can the argument to `operation` have content None?
+        `reduce`:  should `reduce_all` be called on the result?
+        `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
+        """
         self.operation = operation
         self.__name__ = name
         self.allow_none = allow_none
@@ -1167,17 +1221,30 @@ class UnaryCompositionOp(object):
 
 
 def tree_binary(t):
+    """Returns true just in case `t` is locally binary branching."""
     return (len(t) == 2)
 
 def tree_unary(t):
+    """Returns true just in case `t` is locally unary branching."""
     return (len(t) == 1)
 
 def tree_leaf(t):
+    """Returns true just in case `t` is a leaf node."""
     return (len(t) == 0)
 
 
 class TreeCompositionOp(object):
+    """A composition operation on a local tree segment."""
     def __init__(self, name, operation, preconditions=None, commutative=False, allow_none=False, system=None):
+        """Build a composition operation on trees given some function.
+
+        `name`: the name of the operation, e.g. "FA".
+        `operation`: a function implementing the operation.  Must take a tree structure and an optional assignment.
+        `preconditions`: a function that checks some preconditions on a tree structure, returning a binary.  Defaults to checking binarity.
+        `commutative`: should the operation be tried in both orders?  NOTE: currently not used.
+        `allow_none`: can some node have content None?
+        `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
+        """
         self.operation = operation
         self.__name__ = name
         self.commutative = commutative
@@ -1207,45 +1274,15 @@ class TreeCompositionOp(object):
     def __str__(self):
         return "Tree composition op '%s'" % self.name
 
-    # seems like this can't be a class method because of reference to the composition system
-    # classmethod
 
-    def build_local_old(self, tree):
+    # this could be a classmethod, as it doesn't reference anything on an instance.  Old version
+    # did reference the composition system, however, and this may need to be revisited.  (See CompositionTree.build_local_tree)
+    def build_local(self, tree):
         """Convert an arbitrary Tree into a local tree where all children are Composables.
 
         Uses PlaceholderTerm for subtrees which are not yet composed.
 
         This function is idempotent."""
-        children = list()
-        for ch in tree:
-            if isinstance(ch, SingletonComposable):
-                children.append(ch)
-            elif isinstance(ch, Tree):
-                if isinstance(ch.node, str):
-                    nodename = ch.node
-                else:
-                    nodename = ch.node.name # handle the case where the node is something complex
-                print(nodename)
-                placeholder = Item(nodename, PlaceholderTerm(ch.node.lower(), ch,system=self.system))
-                children.append(placeholder)
-            elif isinstance(ch, str):
-                # try to look up in the lexicon
-                # TOOD: make this more sophisticated
-                if self.system is not None:
-                    i = self.system.lookup(ch)
-                    if len(i) == 1 and isinstance(i[0], Item):
-                        placeholder = i[0]
-                    else:
-                        placeholder = Item(ch, PlaceholderTerm(ch.lower(), ch,system=self.system))
-                else:
-                    placeholder = Item(ch, PlaceholderTerm(ch.lower(), ch,system=self.system))
-                children.append(placeholder)
-            else:
-                print("Odd child: %s" % ch)
-                raise NotImplementedError
-        return Tree(tree.node, children)
-
-    def build_local(self, tree):
         if not isinstance(tree, CompositionTree):
             #tree = CompositionTree.from_tree(tree)
             tree = CompositionTree.tree_factory(tree)
@@ -1263,11 +1300,13 @@ class TreeCompositionOp(object):
                     raise TypeMismatch(tree, None, mode="None not allowed for %s" % self.name) 
         #result = self.operation(self.build_local(tree), assignment=assignment)
         result = self.operation(tree, assignment=assignment)
+        # TODO: add a reduce_all stage?
         result.mode = self
         return result
 
 
 class LexiconOp(TreeCompositionOp):
+    """A composition operation that looks up a lexical entry in the composition system's lexicon."""
     def __init__(self, system=None):
         TreeCompositionOp.__init__(self, "Lexicon", self.lookup, preconditions=tree_leaf, system=system)
 
@@ -1318,6 +1357,9 @@ class PlaceholderTerm(meta.TypedTerm):
         return text_inbr(self.placeholder_name()) + self.assign_controller.render(latex=False)
 
     def expand(self):
+        """Attempt to expand the node by composing whatever `self` is a placeholder for.
+
+        If this composition is already done, just return the result.  (E.g. this is memoized.)"""
         if isinstance(self.placeholder_for, str):
             raise NotImplementedError
         else:
@@ -1366,11 +1408,13 @@ class CompositionSystem(object):
         self.typeshift = False
 
     def copy(self):
+        """Make a copy of the composition system."""
         new_sys = CompositionSystem(rules=self.rules, basictypes=self.basictypes, name=(self.name + " (copy)"), a_controller=self.assign_controller)
         new_sys.lexicon = self.lexicon
         return new_sys
 
     def add_rule(self, r):
+        """Add a composition rule.  `r` should be a CompositionOp of some kind."""
         r.system = self
         if r.name is not None:
             if r.name in self.ruledict.keys():
@@ -1402,22 +1446,22 @@ class CompositionSystem(object):
             name = r.name
         return self.ruledict[name]
 
+    # this is very obsolete, but something like it is desireable.  (TODO)
+    # def hastype(self, t):
+    #     if t in self.basictypes:
+    #         return 1
+    #     elif t in self.typecache:
+    #         return 1
 
-    def hastype(self, t):
-        if t in self.basictypes:
-            return 1
-        elif t in self.typecache:
-            return 1
-
-        try:
-            if self.hastype(t.left) and self.hastype(t.right):
-                self.typecache.add(t)
-                return 1
-            else:
-                return 0
-        except:
-            #print "Unexpected error:", sys.exc_info()[0]
-            return 0
+    #     try:
+    #         if self.hastype(t.left) and self.hastype(t.right):
+    #             self.typecache.add(t)
+    #             return 1
+    #         else:
+    #             return 0
+    #     except:
+    #         #print "Unexpected error:", sys.exc_info()[0]
+    #         return 0
 
     def __repr__(self):
         if self.name is None:
@@ -1446,6 +1490,7 @@ class CompositionSystem(object):
         return self.description(latex=True)
 
     def lookup(self, *items):
+        """Look up a sequence of potential lexical items, replacing any that have one with their lexical entry."""
         r = list()
         for i in items:
             try: # this is to catch the case where i is unhashable...couldn't find a better way of doing it.  Comes up because of Tree.
@@ -1458,6 +1503,7 @@ class CompositionSystem(object):
         return r
 
     def lookup_item(self, i):
+        """Look up a single lexical item `i`.  Currently, `i` should be a string."""
         try:
             if i in self.lexicon:
                 return self.lexicon[i]
@@ -1467,13 +1513,16 @@ class CompositionSystem(object):
             return None
 
     def add_item(self, i):
+        """Add a lexical item `i`, where `i` should be an Item."""
         self.lexicon[i.name] = i
 
     def add_items(self, *items):
+        """Add a sequence of lexical items."""
         for i in items:
             self.add_item(i)
 
     def update_typeshifts(self):
+        """Recache the typeshifts.  Called automatically when adding one."""
         typeshifts = list()
         for r in self.rules:
             try:
@@ -1490,6 +1539,15 @@ class CompositionSystem(object):
         return self.compose_iterables(*items, assignment=assignment, block_typeshift=block_typeshift)
 
     def do_typeshifts(self, item, depth=1, include_base=True, assignment=None):
+        """Given some Composable `item`, try type-shifting it.
+
+        `item`: a Composable to manipulate.
+        `depth`: a max depth to search.  (Defaults to 1.  Loops are possible.)
+        `include_base`: should the resulting list include the starting `item`?
+        `assignment`: an optional assignment to pass to composition operations.
+
+        Returns a composition result containing any type-shifted denotations, plus the base `item` depending on `include_base`.
+        """
         l = list([item])
         new_l = list()
         for d in range(0, depth):
@@ -1572,6 +1630,15 @@ class CompositionSystem(object):
         return CompositionResult(items, results, failures)
 
     def last_resort_shift(self, *items, assignment=None):
+        """Do last-resort style typeshifting (up to a constant depth).  That is, while (non-type-shifting) composition fails, try typeshifting
+        deeper and deeper until finding some things that compose succesfully.
+
+        The depth is determined by `self.typeshift_depth`.  Depending on the shifts, setting this high may result in exponential blowup.
+
+        `items`: the Composable(s) that would be passed to a CompositionOp.
+        `assignment`: an optional assignment to pass to composition operations.
+
+        Returns a composition result or None."""
         for i in range(1, self.typeshift_depth):
             new_items = list(items)
             typeshifts_changed = False
@@ -1591,6 +1658,7 @@ class CompositionSystem(object):
     #    return self.compose_long(i1, i2).result_items()
 
     def compose_iterables(self, t1, t2=None, assignment=None, block_typeshift=False):
+        """Compose one or two iterables `t1` and `t2` (optional).  Don't call directly."""
         iter1 = t1.content_iter()
         if t2 is None:
             iter2 = None
@@ -1600,6 +1668,7 @@ class CompositionSystem(object):
         return r
 
     def compose_iterators(self, iter1, iter2=None, assignment=None, block_typeshift=False):
+        """Compose one or two iterators.  Do not call directly."""
         r = CompositionResult(None, [],[])
         if iter2 is None:
             for i1 in iter1:
@@ -1615,6 +1684,7 @@ class CompositionSystem(object):
         return r
 
     def compose_container(self, c, assignment=None, block_typeshift=False):
+        """Compose a container `c`.  Intended for use with a CompositionTree."""
         r = self.compose_iterators(c.locally_flat_iter(), assignment=assignment, block_typeshift=block_typeshift)
         #print("hi %s" % repr(r.failures))
         if r.empty() and len(r.failures) == 0:
@@ -1630,6 +1700,7 @@ class CompositionSystem(object):
 
 
 class TreeCompositionSystem(CompositionSystem):
+    """A composition system for doing composition in tree structures."""
     def __init__(self, rules=None, basictypes = None, name=None, a_controller=None):
         CompositionSystem.__init__(self, rules, basictypes, name, a_controller)
         self.add_rule(LexiconOp(system=self))
@@ -1657,6 +1728,18 @@ class TreeCompositionSystem(CompositionSystem):
     # Crucial issue for 2,3: relationship of source tree with CompositionResult.
 
     def td_df_lr_gen(self, tree, parent, path_from_par, len_fun, full_path=None):
+        """A generator function that expands a tree in depth-first left-to-right order.  See `search_for_unexpanded` for a use-case.
+
+        Not really intended to be called directly.
+
+        `tree`: the tree to expand.
+        `parent`: the immediate parent of the tree, if any.
+        `path_from_par`: the index of this node relative to the parent, if any.
+        `len_fun`: a function that provides a length operation on a tree node.
+        `full_path`: the path from the starting point in the tree, if any.  Call with `None` initially (used in recursion).
+
+        yields a 4-tuple, consisting of a tree node, the parent (if any), the immediate path from the parent, if any, and the full path from the top of the tree.
+        """
         # TODO: rethink this
         if full_path is None:
             full_path = tuple()
@@ -1732,6 +1815,8 @@ class TreeCompositionSystem(CompositionSystem):
             return 0
 
     def qsfu(self, tree):
+        """Convenience wrapper around expansion functions.  Uses top-down left-to-right expansion order to find a node that has not been expanded.
+        (stands for 'quick search for unexpanded')"""
         return self.search_for_unexpanded(tree, self.td_df_lr_gen, self.is_expanded, self.len_fun)
 
     def compose_path(self, root, path, assignment=None):
@@ -1741,6 +1826,7 @@ class TreeCompositionSystem(CompositionSystem):
         return root.compose(override=True, assignment=assignment)
 
     def expand_next(self, tree):
+        """Convenience wrapper around expansion functions.  Expands whatever `qsfu` finds in tree."""
         (subtree, parent, path_from_parent, full_path) = self.qsfu(tree)
         if subtree is None:
             return None
@@ -1752,6 +1838,7 @@ class TreeCompositionSystem(CompositionSystem):
         return self.compose_path(tree, full_path)
 
     def expand_all(self, tree):
+        """Expand everything in the tree that can be expanded."""
         # TODO: less of a hack
         last = None
         while True:
@@ -1762,22 +1849,22 @@ class TreeCompositionSystem(CompositionSystem):
                 return tree
             self.compose_path(tree, full_path)
 
-
-    def search_td_bf(self, node, expanded_fun, len_fun):
-        if len_fun(node) == 0:
-            return (None, )
-        if len_fun(node) == 1:
-            if expanded_fun(node):
-                return (0,) + self.search_td_bf(self, node[0], expanded_fun, len_fun)
-            else:
-                return (None, )
-        elif len_fun(node) == 2:
-            if expanded_fun(node):
-                if expanded_fun(node[0]):
-                    if expanded_fun(node[1]):
-                        return (0,) + self.search_td_bf(self, node[0], expanded_fun, len_fun)
-            else:
-                return (None, )
+    # TODO: this is obsolete given the current setup, but I need to return to implementing it
+    # def search_td_bf(self, node, expanded_fun, len_fun):
+    #     if len_fun(node) == 0:
+    #         return (None, )
+    #     if len_fun(node) == 1:
+    #         if expanded_fun(node):
+    #             return (0,) + self.search_td_bf(self, node[0], expanded_fun, len_fun)
+    #         else:
+    #             return (None, )
+    #     elif len_fun(node) == 2:
+    #         if expanded_fun(node):
+    #             if expanded_fun(node[0]):
+    #                 if expanded_fun(node[1]):
+    #                     return (0,) + self.search_td_bf(self, node[0], expanded_fun, len_fun)
+    #         else:
+    #             return (None, )
 
 
 
@@ -1791,15 +1878,18 @@ class TreeCompositionSystem(CompositionSystem):
 
 
 def te(s, assignment=None):
+    """Convenience wrapper around the meta-language parser."""
     return meta.TypedExpr.factory(s, assignment=assignment)
 
 def tp(s):
+    """Convenience wrapper around the type parser."""
     ts = meta.get_type_system()
     result = ts.type_parser(s)
     return result
 
 
 def tree_fa_fun_abstract(f, a, assignment=None):
+    """Do function application in a fixed function, argument order."""
     ts = meta.get_type_system()
     if not ts.fun_arg_check_bool(f, a):
         return None
@@ -1809,32 +1899,26 @@ def tree_fa_fun_abstract(f, a, assignment=None):
     return result
 
 def tree_left_fa_fun(t, assignment=None):
+    """Given some tree node `t`, do FA assuming the left branch is the function."""
     result = tree_fa_fun_abstract(t[0], t[1], assignment)
     if result is None:
         raise TypeMismatch(t[0], t[1], "FA/left")
     return BinaryComposite(t[0], t[1], result, source=t)
 
 def tree_right_fa_fun(t, assignment=None):
+    """Given some tree node `t`, do FA assuming the right branch is the function."""
     result = tree_fa_fun_abstract(t[1], t[0], assignment)
     if result is None:
         raise TypeMismatch(t[0], t[1], "FA/right")
     return BinaryComposite(t[0], t[1], result, source=t)
 
-    
-#def tree_right_fa_fun(t, assignment=None):
-#    if not types.UndeterminedType.fun_arg_ok(t[1], t[0]):
-#        raise TypeMismatch(t[1], t[0], "FA/right")
-#    result = (t[1].content.under_assignment(assignment)(t[0].content.under_assignment(assignment)))
-#    if not t[0].type.undetermined:
-#        result = result.reduce()
-#    return BinaryComposite(t[1], t[0], result, source=t)
-
+# combinator for predicate modification
 pm_op = te("L f_<e,t> : L g_<e,t> : L x_e : f(x) & g(x)")
 
 def tree_pm_fun(t, assignment=None):
     """H&K predicate modification -- restricted to type <et>.
 
-    This implementation uses the above function to perform PM via function application.
+    This implementation uses the combinator `pm_op` to perform PM via function application.
     """
     ts = meta.get_type_system()
     if not (ts.eq_check(t[0].type, type_property) and 
@@ -1849,6 +1933,7 @@ def tree_pm_fun(t, assignment=None):
     result = ((pm_op(c1))(c2)).reduce_all()
     return BinaryComposite(t[0], t[1], result, source=t)
 
+#TODO provide a correct version of a direct implementation of PM...
 def tree_pm_fun_wrong(t, assignment=None):
     """H&K predicate modification -- restricted to type <et>.
 
@@ -1876,26 +1961,15 @@ def tree_pm_fun_wrong(t, assignment=None):
     # TODO: does this overgenerate uncertainty?
     if body1.type.undetermined or body2.type.undetermined:
         conjoined_c.type = types.UndeterminedType(conjoined_c.type)
-
-    #varname = t[0].content.varname
-    #c1 = t[0].content.under_assignment(assignment)
-    #c2 = t[1].content.under_assignment(assignment)
-    #if c2.varname != varname:
-        # ensure that the two functions use the same variable name, by beta reduction
-        #body2 = LFun(fun2.argtype, beta_reduce(fun2.body, fun2.varname, TypedTerm(varname, fun2.argtype)))
-        # actually direct beta reduction isn't a good idea, because I'd have to ensure alpha conversion
-        # so just apply with a new variable to get a body
-    #    body2 = c2.apply(meta.TypedTerm(varname, c2.argtype))
-    #else:
-        # not sure this efficiency is really necessary
-    #    body2 = c2.body
-    #conjoined_c = meta.LFun(c1.argtype, c1.body & body2, c1.varname)
     return BinaryComposite(t[0], t[1], conjoined_c, source=t)
 
 
 
 
 class Trace(Item):
+    """An indexed trace of some specified type.
+
+    This is a meta-language implementation of traces!  That is, a trace in the metalanguage is a variable `t` numbered by index."""
     def __init__(self, index, typ=None):
         if typ is None:
             typ = types.type_e
@@ -1907,10 +1981,15 @@ class Trace(Item):
         Item.__init__(self, name, meta.TypedTerm(name, typ), index=index)        
 
 class Binder(Item):
+    """An indexed binder.  Note that its content is always `None`.  Currently untyped; this may change."""
     def __init__(self, index):
         Item.__init__(self, "%i" % index, None, index=index)
 
 def pa_fun(binder, content, assignment=None):
+    """Do predicate abstraction given a `binder` and `content`.
+
+    This is a direct implementation.  Will find a (completely) unused variable name to abstract over, and replace
+    any traces of the appropriate index with that variable.  This assumes a meta-language implementation of traces!"""
     if (binder.content is not None) or not binder.name.strip().isnumeric():
         raise TypeMismatch(binder, content, "Predicate Abstraction")
     index = int(binder.name.strip())
@@ -1923,46 +2002,23 @@ def pa_fun(binder, content, assignment=None):
     f = meta.LFun(types.type_e, (inner_fun)(outer_vname + "_e").reduce(), outer_vname)
     return BinaryComposite(binder, content, f)
 
+# TODO: this is the same as tree_fa_fun_abstract, basically...
 def fa_fun(fun, arg, assignment=None):
+    """Do function application, given some function and argument."""
     ts = meta.get_type_system()
     if not ts.fun_arg_check_bool(fun, arg):
         raise TypeMismatch(fun, arg, "Function Application")
-    #if (not fun.type.functional()) or fun.type.left != arg.type:
-    #    raise TypeMismatch(fun, arg, "Function Application")
     return BinaryComposite(fun, arg, 
                 (fun.content.under_assignment(assignment)(arg.content.under_assignment(assignment))).reduce())
 
-def pm_fun_wrong(fun1, fun2, assignment=None):
-    """H&K predicate modification -- restricted to type <et>."""
-    ts = meta.get_type_system()
-    if not (ts.eq_check(fun1.type, type_property) and 
-            ts.eq_check(fun2.type, type_property)):
-        raise TypeMismatch(fun1, fun2, "Predicate Modification")
-    #if fun1.type != fun2.type or fun1.type != type_property:
-    #    raise TypeMismatch(fun1, fun2, "Predicate Modification")
-    varname = fun1.content.varname
-    c1 = fun1.content.under_assignment(assignment)
-    c2 = fun2.content.under_assignment(assignment)
-    if c2.varname != varname:
-        # ensure that the two functions use the same variable name, by beta reduction
-        #body2 = LFun(fun2.argtype, beta_reduce(fun2.body, fun2.varname, TypedTerm(varname, fun2.argtype)))
-        # actually direct beta reduction isn't a good idea, because I'd have to ensure alpha conversion
-        # so just apply with a new variable to get a body
-        body2 = c2.apply(meta.TypedTerm(varname, c2.argtype))
-    else:
-        # not sure this efficiency is really necessary
-        body2 = c2.body
-    conjoined_c = meta.LFun(c1.argtype, c1.body & body2, c1.varname)
-    return BinaryComposite(fun1, fun2, conjoined_c)
-
 def pm_fun(fun1, fun2, assignment=None):
-    """H&K predicate modification -- restricted to type <et>."""
+    """H&K predicate modification, given two functions.  Restricted to type <et>.
+
+    This is implemented using the combinator `lang.pm_op`."""
     ts = meta.get_type_system()
     if not (ts.eq_check(fun1.type, type_property) and 
             ts.eq_check(fun2.type, type_property)):
-        raise TypeMismatch(fun1, fun2, "Predicate Modification")
-    #if fun1.type != fun2.type or fun1.type != type_property:
-    #    raise TypeMismatch(fun1, fun2, "Predicate Modification")
+        raise TypeMismatch(fun1, fun2, "Predicate Modification") # this isn't strictly necessary, but will make errors look slightly nicer.
     varname = fun1.content.varname
     c1 = fun1.content.under_assignment(assignment)
     c2 = fun2.content.under_assignment(assignment)
@@ -1972,18 +2028,28 @@ def pm_fun(fun1, fun2, assignment=None):
 
 
 def unary_factory(meta_fun, name, typeshift=False, reduce=True):
+    """Factory function to construct a unary composition operation given some function.
+
+    This is extremely useful for building unary operations and type-shifts from meta-language combinators.
+    """
     def op_fun(arg, assignment=None):
         result = meta_fun(arg.content.under_assignment(assignment))
         return UnaryComposite(arg, result)
     return UnaryCompositionOp(name, op_fun, typeshift=typeshift, reduce=reduce)
 
 def binary_factory(meta_fun, name, reduce=True):
+    """Factory function to construct a binary composition operation given some function."""
     def op_fun(arg1, arg2, assignment=None):
         result = meta_fun(arg1.content.under_assignment(assignment), arg2.content.under_assignment(assignment))
         return BinaryComposite(arg1, arg2, result)
     return BinaryCompositionOp(name, op_fun, reduce=reduce)
 
 def binary_factory_curried(meta_fun, name, reduce=True):
+    """Factory function to construct a binary composition operation given some (curried) function.
+
+    This is extremely useful for building operations from meta-language combinators.  For example, PM can be implemented using just:
+    >lang.binary_factory_curried(lang.pm_op, "PM")
+    """
     def op_fun(arg1, arg2, assignment=None):
         result = meta_fun(arg1.content.under_assignment(assignment))(arg2.content.under_assignment(assignment))
         return BinaryComposite(arg1, arg2, result)
@@ -1992,6 +2058,12 @@ def binary_factory_curried(meta_fun, name, reduce=True):
 
 
 def setup_type_driven():
+    """Build a basic bottom-up composition system with PM, FA, and PA.
+
+    The composition system is set to `lang.td_system`.  It's recommended that you copy this rather than modifying it directly.  This 
+    is the default composition system.
+
+    Also exports a few basic lexical entries for testing purposes."""
     global td_system, cat, gray, john, pm, fa, pa, inP, texas, isV, julius
     # note that PM is only commutative if the underlying logic has commutative conjunction...
     oldlevel = meta.logger.level
@@ -2015,6 +2087,11 @@ def setup_type_driven():
 setup_type_driven()
 
 def setup_hk_chap3():
+    """Build a basic tree composition system modeled after chapter 3 of Heim and Kratzer.  This has just FA and PM.
+
+    The composition system is set to `lang.hk3_system`.  It's recommended that you copy this rather than modifying it directly.
+
+    Note that the lexical items defined by `setup_type_driven` can be used here too, and are in fact added to the lexicon of this system by default."""
     global hk3_system, tfa_l, tfa_r, tpm
 
     tfa_l = TreeCompositionOp("FA/left", tree_left_fa_fun)
