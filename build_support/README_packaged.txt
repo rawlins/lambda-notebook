@@ -1,5 +1,7 @@
 # IPython Lambda Notebook.  
 
+Version 0.5, 10/6/2014
+
 Requires OS X 10.8 or later.
 
 For more info see:
