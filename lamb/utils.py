@@ -32,7 +32,7 @@ def ltx_print(*args):
     return MiniLatex(s)
 
 # from AIMA utils
-def num_or_str(x):
+def num_or_str(x, allow_float=False):
     """The argument is a string; convert to a number if possible, or strip it.
     >>> num_or_str('42')
     42
@@ -43,10 +43,12 @@ def num_or_str(x):
     try:
         return int(x)
     except ValueError:
-        try:
-            return float(x)
-        except ValueError:
-            return str(x).strip()
+        if allow_float:
+            try:
+                return float(x)
+            except ValueError:
+                pass
+        return str(x).strip()
 
 def parens(s):
     # TODO: ensure at most one outer set of parens
