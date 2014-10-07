@@ -73,6 +73,7 @@ app_master: clean_ln_install app
 $(APP_NAME).dmg: build_tmp $(APP_NAME).app README_packaged.txt
 	mkdir -p build_tmp/dmg_tmp/
 	cp README_packaged.txt build_tmp/dmg_tmp/README.txt
+	cp -R licenses/ build_tmp/dmg_tmp/licenses/
 	ditto $(APP_NAME).app build_tmp/dmg_tmp/$(APP_NAME).app
 	hdiutil create -fs HFSX -layout SPUD -size 100m "build_tmp/ln_tmp.dmg" -srcfolder build_tmp/dmg_tmp/ -format UDRW -volname $(APP_NAME)
 	hdiutil convert "build_tmp/ln_tmp.dmg" -format UDZO -imagekey zlib-level=9 -o $(APP_NAME).dmg

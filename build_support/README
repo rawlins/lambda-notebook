@@ -17,6 +17,8 @@ easy-install (you may need to fiddle with names/paths to get this to run).
       packaging solution.  In my testing, even with things like --relocatable,
       I could not generate a virtualenv that reliably runs on computers other than the one it
       was built on, because of low-level library dependencies.
+    * WARNING: not everything installed in the virtualenv is suitable for packaged redistribution.
+      E.g. pandoc is GPL and therefore can't be packaged with the lambda notebook.
 
 2. Use py2app relative to this virtualenv to build an app bundle that contains
 everything needed to run the notebook.  This (because of the way apps work)
