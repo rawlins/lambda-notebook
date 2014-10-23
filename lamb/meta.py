@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import sys, re, logging, random
 from numbers import Number
-from lamb import types, utils, parsing
+from lamb import types, utils, parsing, display
 from lamb.types import TypeMismatch, type_e, type_t, type_n, type_property, type_transitive, OntoType, FunType
 from lamb.utils import *
 #import logic, utils
@@ -1023,6 +1023,9 @@ class Tuple(TypedExpr):
 
     def copy(self):
         return Tuple(self.args)
+
+    def index(self, i):
+        return self.args[i]
 
     def term(self):
         return False
@@ -2456,11 +2459,29 @@ class Derivation(object):
         s += "</table>"
         return s
 
+    def build_display_tree(self, recurse=False, parent=None, reason=None, style=None):
+        defaultstyle = display.lr_table_style
+        style = display.Styled.merge_styles(style, defaultstyle)
+        l = self.steps_sequence(latex=True)
+        parts = list()
+        for (expr, subreason, subexpression) in l:
+            if reason == "":
+                reason = None
+            if subexpression and subexpression.derivation and (recurse):
+                parts.append(subexpression.derivation.build_display_tree(recurse=recurse, parent=expr, reason=subreason, style=style))
+            else:
+                parts.append(display.RecursiveDerivationDisplay(expr, explanation=subreason, parts=None, style=style))
+        if len(parts) == 0:
+            parts = None
+        return display.RecursiveDerivationDisplay(parent, explanation=reason, parts=parts, style=style)
+
     def trace(self, recurse=True):
-        return MiniLatex(self.latex_steps_str(recurse=recurse))
+        #return MiniLatex(self.latex_steps_str(recurse=recurse))
+        return self.build_display_tree(recurse=recurse)
 
     def _repr_latex_(self):
-        return self.latex_steps_str()
+        #return self.latex_steps_str()
+        return self.build_display_tree(recurse=False)._repr_latex_()
 
     def steps_str(self):
         l = self.steps_sequence(latex=False)

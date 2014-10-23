@@ -22,6 +22,7 @@ def inject_into_ipython():
         ip.user_ns["meta"] = lamb.meta
         ip.user_ns["lang"] = lamb.lang
         ip.user_ns["parsing"] = lamb.parsing
+        ip.user_ns["display"] = lamb.display
 
         # inject some convenience functions
         ip.user_ns["reload_lamb"] = reload_lamb
@@ -42,6 +43,7 @@ def reload_lamb():
     imp.reload(lamb.meta)
     imp.reload(lamb.lang)
     imp.reload(lamb.parsing)
+    imp.reload(lamb.display)
     lamb.reload_all = reload_lamb
     inject_into_ipython()
 
