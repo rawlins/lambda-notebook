@@ -968,12 +968,15 @@ class TypedExpr(object):
         return hash(self.op) ^ hash(tuple(self.args))
 
     def __getitem__(self, i):
-        """Return a part of `self` by index.  
+        """If `i` is a number, returns a part of `self` by index.  
         index 0 always gives the operator.
-        index >=1 gives whatever arguments there are.
+        index >=1 gives whatever arguments there are.  Note that this is shifted from the indexing of `self.args`.
 
-        Note that this is shifted from the indexing of `self.args`."""
-        return ([self.op] + self.args).__getitem__(i)
+        If `i` is a TypedExpr, try to construct an expression representing indexing."""
+        if isinstance(i, TypedExpr):
+            return TupleIndex(self, i)
+        else:
+            return ([self.op] + self.args).__getitem__(i)
 
     def __len__(self):
         """Return the number of parts of `self`, including the operator."""
@@ -1060,7 +1063,7 @@ class TypedTerm(TypedExpr):
 
     The attribute 'type_guessed' is flagged if the type was not specified; this may result in coercion as necessary."""
     def __init__(self, varname, typ=None, latex_op_str=None):
-        self.op = varname
+        self.op = num_or_str(varname)
         self.derivation = None
         if typ is None:
             self.type = default_type(varname)
@@ -1068,6 +1071,10 @@ class TypedTerm(TypedExpr):
         else:
             self.type_guessed = False
             self.type = typ
+        if isinstance(self.op, Number): # this isn't very elegant...
+            if self.type != type_n:
+                raise TypeMismatch(self.op, self.type, "Numeric must have type n")
+            self.type_guessed = False
         self.args = list()
         self.suppress_type = False
         self.latex_op_str = latex_op_str
@@ -1091,7 +1098,7 @@ class TypedTerm(TypedExpr):
     def constant(self):
         """Return true iff `self` is a constant.
 
-        This follows the prolog convention: a constant is a term with a capitalized first letter."""
+        This follows the prolog convention: a constant is a term with a capitalized first letter.  Numbers are constants."""
         return not is_var_symbol(self.op)
 
     def variable(self):
@@ -1497,9 +1504,49 @@ class SetContains(BinaryOpExpr):
         return False
 
 
+class TupleIndex(BinaryOpExpr):
+    def __init__(self, arg1, arg2):
+        arg1 = self.ensure_typed_expr(arg1)
+        if not isinstance(arg1.type, types.TupleType):
+            raise types.TypeMismatch(arg1, arg2, mode="Tuple indexing (tuple required)")
+        arg2 = self.ensure_typed_expr(arg2, types.type_n)
+        if isinstance(arg2.op, Number): # TODO better way to determine whether arg2 is a constant of type type_n?
+            if arg2.op >= len(arg1.type):
+                raise TypeMismatch(arg1, arg2, mode="Index out of range for tuple type")
+            output_type = arg1.type[arg2.op]
+        else:
+            output_type = types.undetermined_type # TODO this is very problematic
+            logger.warning("Using non-constant index; not well-supported at present.")
+        super().__init__(output_type, "[]", arg1, arg2, "[]", "[]", tcheck_args=False)
+
+    def copy(self):
+        return TupleIndex(self.args[0], self.args[1])
+
+    def __str__(self):
+        return "%s\nType: %s" % (repr(self), self.type)
+
+    def __repr__(self):
+        return "(%s[%s])" % (repr(self.args[0]), repr(self.args[1]))
+
+    def latex_str_long(self):
+        return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
+
+    def latex_str(self):
+        return ensuremath("(%s[%s])" % (self.args[0].latex_str(), self.args[1].latex_str()))
+
+    def reduce(self):
+        if isinstance(self.args[0], Tuple) and isinstance(self.args[1].op, Number):
+            result = self.args[0].tuple()[self.args[1].op].copy()
+            return derived(result, self, "Resolution of index")
+        else:
+            return self
 
 
-
+    def reducible(self):
+        if isinstance(self.args[0], Tuple) and isinstance(self.args[1].op, Number):
+            return True
+        # no support for non-constant indices at present, not even ones that should be mathematically simplifiable
+        return False
 
 
 unary_symbols_to_op_exprs = {"~" : UnaryNegExpr,
