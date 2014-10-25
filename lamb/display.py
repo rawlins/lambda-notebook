@@ -146,7 +146,7 @@ class RecursiveDerivationDisplay(Styled):
     def render_parts_table_compose(self, **kwargs):
         part_cells = []
         for p in self.parts:
-            part_cells.append("<td style=\"vertical-align:bottom\">%s</td>" % self.to_str(p, style=kwargs))
+            part_cells.append("<td style=\"vertical-align:bottom;padding:5px\">%s</td>" % self.to_str(p, style=kwargs))
         s = "<table><tr>"
         s += "<td style=\"vertical-align:bottom;padding:10px\">$\circ$</td>".join(part_cells)
         s += "</tr></table>"
@@ -202,10 +202,18 @@ class RecursiveDerivationDisplay(Styled):
         return self.render_content(**kwargs)
          
     def nonterminal_render_proof(self, **kwargs):
+        expl_loc = self.get_style(kwargs, "expl_loc", "above")
+        above = expl_loc == "above"
         s = "<table><tr><td style=\"vertical-align:bottom;padding:0px 10px\" align=\"center\">"
         s += self.render_parts(**kwargs)
         s += "</td>"
         expl = self.render_expl(**kwargs)
+        if above and len(expl) > 0:
+            s += "<td style=\"border:1px solid #848482;vertical-align:center;padding:10px\">"
+            s += expl
+            s += "</td></tr>"
+        else:
+            s += "<td></td></tr>"
         #if len(expl) > 0:
         #    s += "<td style=\"vertical-align:bottom;padding-bottom:5px;padding-left:10px\">"
         #    s += expl
@@ -213,33 +221,34 @@ class RecursiveDerivationDisplay(Styled):
         #else:
         #    s += "</tr>"
         s += "<tr style=\"border-top: 1px solid #848482\"><td align=\"center\">%s</td>" % self.render_content(**kwargs)
-        if len(expl) > 0:
+        if (not above) and len(expl) > 0:
             s += "<td style=\"vertical-align:bottom;padding-bottom:5px;padding-left:10px\">"
             s += expl
             s += "</td></tr></table>\n"
         else:
-            s += "</tr></table>\n"
+            s += "<td></td></tr></table>\n"
         return s
     
     def nonterminal_render_td_boxes(self, **kwargs):
-        s = "<table><tr><td style=\"border:1px solid #848482;vertical-align:bottom;padding:0px 10px\">"
+        expl_loc = self.get_style(kwargs, "expl_loc", "above")
+        above = expl_loc == "above"
+        s = "<table><tr style=\"border:1px solid #848482\"><td style=\"vertical-align:bottom;padding:0px 10px\">"
         s += self.render_parts(**kwargs)
         s += "</td>"
         expl = self.render_expl(**kwargs)
-        if len(expl) > 0:
-           s += "<td style=\"border:1px solid #848482;vertical-align:center;padding:10px\">"
-           s += expl
-           s += "</td></tr>"
+        if above and len(expl) > 0:
+            s += "<td style=\"border-left:1px solid #848482;vertical-align:center;padding:10px\">"
+            s += expl
+            s += "</td></tr>"
         else:
-           s += "</tr>"
+            s += "<td></td></tr>"
         s += "<tr style=\"border-style:solid;border-color:#848482;border-width:0px 1px 1px 1px\"><td align=\"center\">%s</td>" % self.render_content(**kwargs)
-#         if len(expl) > 0:
-#             s += "<td style=\"vertical-align:bottom;padding-bottom:5px;padding-left:10px\">"
-#             s += expl
-#             s += "</td></tr></table>\n"
-#         else:
-#             s += "</tr></table>\n"
-        s += "</table>"
+        if ((not above) and len(expl) > 0):
+            s += "<td style=\"border-top:1px solid #848482;vertical-align:center;padding:10px\">"
+            s += expl
+            s += "</td></tr></table>\n"
+        else:
+            s += "<td></td></tr></table>"
         return s
         
     def nonterminal_render_lr_boxes(self, **kwargs):

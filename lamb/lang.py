@@ -1,7 +1,7 @@
 #!/usr/local/bin/python3
 import collections, itertools, logging
 
-from lamb import utils, types, meta
+from lamb import utils, types, meta, display
 from lamb.utils import *
 from lamb.types import type_e, type_t, type_property, TypeMismatch
 from lamb.meta import  TypedExpr, ensuremath, MiniLatex
@@ -28,7 +28,8 @@ from lamb.tree_mini import Tree
 
 
 # configurable bracketing options.  BRACKET_BARS is always safe.
-# This is configurable because the nicer looking options are _much_ slower than the uglier ones.
+# This is configurable because the nicer looking options are _much_ slower than the uglier ones, depending on the MathJax render mode.
+# for best results, I recommend firefox, with MathJax in SVG mode, and BRACKET_FANCY.
 global bracket_setting, BRACKET_BARS, BRACKET_FANCY, BRACKET_UNI
 BRACKET_BARS = 1
 BRACKET_FANCY = 2
@@ -136,17 +137,25 @@ class Composable(object):
         return False
 
     def _repr_latex_(self):
-        return self.latex_str()
+        return self.show()._repr_latex_()
 
     def latex_str(self):
-        raise NotImplementedError
+        return self.show()._repr_latex_()
 
-    def tree(self, derivations=False):
-        return self.latex_step_tree(derivations)
+    def show(self, recurse=True, style=None):
+        raise NotImplementedError(repr(self))
+
+    def build_display_tree(self, derivations=False, recurse=True, style=None):
+        raise NotImplementedError(repr(self))
+
+    def tree(self, derivations=False, recurse=True, style=None):
+        return self.build_display_tree(derivations=derivations, recurse=recurse, style=style)
+        #return self.latex_step_tree(derivations)
 
     def latex_step_tree(self, derivations=False):
         """Show the step-by-step derivation(s) as a proof tree."""
-        return meta.MiniLatex(self.latex_step_tree_r(derivations=derivations))
+        #return meta.MiniLatex(self.latex_step_tree_r(derivations=derivations))
+        return self.tree(derivations=derivations)
 
     def latex_step_tree_r(self, derivations=False):
         raise NotImplementedError(repr(self))
@@ -810,6 +819,39 @@ class TreeComposite(Composite, Tree):
         s += "<tr style=\"border-top: 1px solid #848482\"><td align=\"center\">%s</td><td></td></tr></table>\n" % self.local_latex_tree(derivations=derivations)
         return s
 
+    def build_display_tree(self, derivations=False, recurse=True, style=None):
+        defaultstyle = display.td_box_style
+        style = display.Styled.merge_styles(style, defaultstyle)
+        parts = list()
+        for i in range(len(self)):
+            if not isinstance(self[i], Composable):
+                continue
+            if isinstance(self[i], str):
+                part_i = display.RecursiveDerivationDisplay(self[i], style=style)
+            else:
+                part_i = self[i].build_display_tree(derivations=False, style=style)
+            parts.append(part_i)
+        if derivations and self.content.derivation is not None:
+            content_str = self.derivs_for_tree() #self.content.derivation.latex_steps_str()
+        else:
+            if self.placeholder():
+                content_str = utils.ensuremath(self.content.latex_str())
+            else:
+                content_str = utils.ensuremath(self.content.latex_str())
+        if self.placeholder():
+            node_content = display.RecursiveDerivationLeaf(content_str, style=style)
+            expl = None
+        else:
+            node_content = display.RecursiveDerivationLeaf(self.short_str_latex(), content_str, style=style)
+            if self.mode:
+                if isinstance(self.mode, str):
+                    expl = self.mode
+                else:
+                    expl = self.mode.name
+            else:
+                expl = None
+        return display.RecursiveDerivationDisplay(node_content, explanation=expl, parts=parts, style=style)
+
     @property
     def name(self):
         try:
@@ -885,7 +927,7 @@ class CompositionResult(Composable):
                 s += "    " + composite.compose_str()
         return s
 
-    def latex_str(self):
+    def show(self, recurse=True, style=None):
         s = str()
         if (len(self.results) == 0):
             if self.source is None:
@@ -904,7 +946,7 @@ class CompositionResult(Composable):
                 s += "\n<br />" + latex_indent() + "[%i]: " % n + composite.latex_str()
                 n += 1
                 #s += latex_indent() + "`%s' $*$ `%s' leads to `%s'\n" % (composite.p1.short_str_latex(), composite.p2.short_str_latex(), ensuremath(composite.latex_str()))
-        return s
+        return MiniLatex(s)
 
     def failures_str_latex(self):
         return self.failures_str(latex=True)
@@ -960,7 +1002,7 @@ class CompositionResult(Composable):
             i += 1
         return meta.MiniLatex(s)
 
-    def latex_step_tree(self, derivations=False):
+    def tree(self, recurse=True, derivations=False, style=None):
         """Show the step-by-step derivation(s) as a proof tree."""
         s = str()
         if len(self.results) == 0:
@@ -974,7 +1016,7 @@ class CompositionResult(Composable):
             if len(self.results) > 1:
                 s += "Path [%i]:<br />\n" % i
             # this will return a MiniLatex-packaged string.
-            rst = r.latex_step_tree(derivations=derivations)
+            rst = r.tree(derivations=derivations, recurse=recurse, style=style)
             s += rst._repr_latex_() + "<br /><br />"
             i += 1
         return MiniLatex(s)
@@ -1129,6 +1171,13 @@ class Item(TreeComposite):
         else:
             return "<table align=\"center\"><tr><td align=\"center\">%s</td></tr><tr><td align=\"center\">%s</td></tr></table>\n" % (self.short_str_latex(), ensuremath(self.content.latex_str()))
 
+    def build_display_tree(self, derivations=False, style=None):
+        defaultstyle = display.td_box_style
+        style = display.Styled.merge_styles(style, defaultstyle)
+        if not self.content:
+            return display.RecursiveDerivationLeaf(self.short_str_latex(), "N/A", style=style)
+        else:
+            return display.RecursiveDerivationLeaf(self.short_str_latex(), ensuremath(self.content.latex_str()))
 
 class BinaryCompositionOp(object):
     """A composition operation on two Composables."""

@@ -2522,9 +2522,12 @@ class Derivation(object):
             parts = None
         return display.RecursiveDerivationDisplay(parent, explanation=reason, parts=parts, style=style)
 
-    def trace(self, recurse=True):
+    def trace(self, recurse=True, style=None):
         #return MiniLatex(self.latex_steps_str(recurse=recurse))
-        return self.build_display_tree(recurse=recurse)
+        return self.build_display_tree(recurse=recurse, style=style)
+
+    def show(self, recurse=False, style=None):
+        return self.trace(recurse=recurse, style=style)
 
     def _repr_latex_(self):
         #return self.latex_steps_str()
