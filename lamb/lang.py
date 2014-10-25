@@ -492,30 +492,36 @@ class CompositionTree(Tree, Composable):
         if isinstance(self.content, CompositionResult):
             for c in self.content:
                 yield TreeComposite(*children, content=c, source=self)
+            raise StopIteration()
         else:
             if self.content is None or len(self.content) == 0:
                 # TODO: is this right?
                 yield TreeComposite(*children, content=None, source=self)
+                raise StopIteration()
             elif len(self.content) == 1:
                 yield TreeComposite(*children, content=self.content[0], source=self)
+                raise StopIteration()
             else:
                 raise NotImplementedError()
 
     def locally_flat_iter(self): # TODO: generalize to n-ary trees
-        """Return an iterator that yields TreeComposites for every possible denotation of the current node."""
+        """Generator function that yields TreeComposites for every possible denotation of the current node."""
         if len(self) == 0:
             yield from self.perspective_iter()
+            raise StopIteration()
         elif len(self) == 1:
             if not isinstance(self[0], Composable):
                 raise NotImplementedError("Cannot construct an iterator on non-Composables.  (Did compose_container get called without build_local_tree?)")
             for c in self[0].content_iter():
                 yield from self.perspective_iter(self[0].build_composite(c))
+            raise StopIteration()
         elif len(self) == 2:
             if not isinstance(self[0], Composable) or not isinstance(self[1], Composable):
                 raise NotImplementedError("Cannot construct an iterator on non-Composables.  (Did compose_container get called without build_local_tree?)")
             for a in self[0].content_iter():
                 for b in self[1].content_iter():
                     yield from self.perspective_iter(self[0].build_composite(a), self[1].build_composite(b))
+            raise StopIteration()
         else:
             raise NotImplementedError()
 
@@ -1897,6 +1903,7 @@ class TreeCompositionSystem(CompositionSystem):
             if subtree is last:
                 return tree
             self.compose_path(tree, full_path)
+            last = subtree
 
     # TODO: this is obsolete given the current setup, but I need to return to implementing it
     # def search_td_bf(self, node, expanded_fun, len_fun):
