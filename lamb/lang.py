@@ -478,6 +478,7 @@ class CompositionTree(Tree, Composable):
         return TreeComposite(*self.children, content=den, source=self)
 
     def build_perspective(self, *children):
+        ## this is really wrong -- not deleting yet in case I'm missing something
         if isinstance(self.content, CompositionResult):
             return TreeComposite(*children, content=self.content, source=self)
         else:
@@ -489,6 +490,7 @@ class CompositionTree(Tree, Composable):
                 raise NotImplementedError()
 
     def perspective_iter(self, *children):
+        ## this is really wrong -- not deleting yet in case I'm missing something
         if isinstance(self.content, CompositionResult):
             for c in self.content:
                 yield TreeComposite(*children, content=c, source=self)
@@ -506,6 +508,7 @@ class CompositionTree(Tree, Composable):
 
     def locally_flat_iter(self): # TODO: generalize to n-ary trees
         """Generator function that yields TreeComposites for every possible denotation of the current node."""
+        ## this is really wrong -- not deleting yet in case I'm missing something
         if len(self) == 0:
             yield from self.perspective_iter()
             raise StopIteration()
@@ -524,6 +527,40 @@ class CompositionTree(Tree, Composable):
             raise StopIteration()
         else:
             raise NotImplementedError()
+
+    def flatten_iter(self):
+        # prone to combinatorial explosion?
+        if self.content and len(self.content) > 0:
+            yield from self.content_iter() # double check -- is source set properly?
+        else:
+            if len(self) == 0:
+                yield TreeComposite(content=None, source=self)
+            elif len(self) == 1:
+                try:
+                    iter0 = self[0].flatten_iter()
+                except:
+                    yield self[0]
+                    raise StopIteration()
+                    #raise NotImplementedError("Cannot construct an iterator on non-Composables.  (Did compose_container get called without build_local_tree?)")
+                for c in iter0:
+                    yield TreeComposite(c, content=None, source=self)
+            elif len(self) == 2:
+                # just some duck punching...
+                try:
+                    iter0 = self[0].flatten_iter()
+                except AttributeError:
+                    iter0 = iter([self[0]])
+                try:
+                    iter1 = self[1].flatten_iter()
+                except AttributeError:
+                    iter1 = iter([self[1]])
+                #if not isinstance(self[0], Composable) or not isinstance(self[1], Composable):
+                #    raise NotImplementedError("Cannot construct an iterator on non-Composables.  (Did compose_container get called without build_local_tree?)")
+                for c0 in iter0:
+                    for c1 in iter1:
+                        yield TreeComposite(c0, c1, content=None, source=self)
+            else:
+                raise NotImplementedError()
 
     def find_empty_results(self):
         empty = list()
@@ -769,9 +806,16 @@ class TreeComposite(Composite, Tree):
         l = self.content.derivation.steps_sequence(latex=True, ignore_trivial=True)
         s = "<table>"
         for (step, reason, subexpression) in l:
-            s += "<tr><td style=\"padding-right:5px\"> $=$ </td><td style=\"align:center\">%s</td></tr>" % step
+            s += "<tr><td style=\"padding-right:5px\"> $=$ </td><td style=\"align:left\">%s</td></tr>" % step
         s += "</table>"
         return s
+
+    def derivs_for_tree_rdd(self, content):
+        if self.content.derivation is None:
+            return None
+        l = self.content.derivation.steps_sequence(latex=True, ignore_trivial=True)
+        steps = [content,] + [step[0] for step in l]
+        return display.RecursiveDerivationLeaf(*steps, style={"leaf_style": "eq"})
 
     def latex_terminal_tree(self, derivations=False):
         if self.content is None:
@@ -835,20 +879,16 @@ class TreeComposite(Composite, Tree):
             if isinstance(self[i], str):
                 part_i = display.RecursiveDerivationDisplay(self[i], style=style)
             else:
-                part_i = self[i].build_display_tree(derivations=False, style=style)
+                part_i = self[i].build_display_tree(derivations=derivations, recurse=recurse, style=style)
             parts.append(part_i)
-        if derivations and self.content.derivation is not None:
-            content_str = self.derivs_for_tree() #self.content.derivation.latex_steps_str()
+        if self.content:
+            content_str = utils.ensuremath(self.content.latex_str())
         else:
-            if self.placeholder():
-                content_str = utils.ensuremath(self.content.latex_str())
-            else:
-                content_str = utils.ensuremath(self.content.latex_str())
+            content_str = "N/A"
         if self.placeholder():
             node_content = display.RecursiveDerivationLeaf(content_str, style=style)
             expl = None
         else:
-            node_content = display.RecursiveDerivationLeaf(self.short_str_latex(), content_str, style=style)
             if self.mode:
                 if isinstance(self.mode, str):
                     expl = self.mode
@@ -856,6 +896,20 @@ class TreeComposite(Composite, Tree):
                     expl = self.mode.name
             else:
                 expl = None
+            # TODO revisit and generalize this (maybe override Item in a better way?)
+            if expl and len(parts) == 0:
+                # no subparts but there is an explanation.  This is the case of a leaf node derived from a tree.
+                # show the short str in the slot for a part
+                parts.append(display.RecursiveDerivationLeaf(self.short_str_latex(), style=style))
+                if derivations and self.content.derivation is not None:
+                    node_content = self.derivs_for_tree_rdd(None)
+                else:
+                    node_content = display.RecursiveDerivationLeaf(content_str, style=style)
+            else:
+                if derivations and self.content.derivation is not None:
+                    node_content = self.derivs_for_tree_rdd(self.short_str_latex()) #self.content.derivation.latex_steps_str()
+                else:
+                    node_content = display.RecursiveDerivationLeaf(self.short_str_latex(), content_str, style=style)
         return display.RecursiveDerivationDisplay(node_content, explanation=expl, parts=parts, style=style)
 
     @property
@@ -1177,13 +1231,14 @@ class Item(TreeComposite):
         else:
             return "<table align=\"center\"><tr><td align=\"center\">%s</td></tr><tr><td align=\"center\">%s</td></tr></table>\n" % (self.short_str_latex(), ensuremath(self.content.latex_str()))
 
-    def build_display_tree(self, derivations=False, style=None):
+    def build_display_tree(self, derivations=False, recurse=None, style=None):
         defaultstyle = display.td_box_style
         style = display.Styled.merge_styles(style, defaultstyle)
         if not self.content:
             return display.RecursiveDerivationLeaf(self.short_str_latex(), "N/A", style=style)
         else:
-            return display.RecursiveDerivationLeaf(self.short_str_latex(), ensuremath(self.content.latex_str()))
+            #return display.RecursiveDerivationLeaf(self.short_str_latex(), ensuremath(self.content.latex_str()))
+            return super().build_display_tree(derivations=derivations, recurse=recurse, style=style)
 
 class BinaryCompositionOp(object):
     """A composition operation on two Composables."""
@@ -1740,7 +1795,7 @@ class CompositionSystem(object):
 
     def compose_container(self, c, assignment=None, block_typeshift=False):
         """Compose a container `c`.  Intended for use with a CompositionTree."""
-        r = self.compose_iterators(c.locally_flat_iter(), assignment=assignment, block_typeshift=block_typeshift)
+        r = self.compose_iterators(c.flatten_iter(), assignment=assignment, block_typeshift=block_typeshift)
         #print("hi %s" % repr(r.failures))
         if r.empty() and len(r.failures) == 0:
             r.failures.extend(c.find_empty_results()) # find any errors inherited from subtrees.

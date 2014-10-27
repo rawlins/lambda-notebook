@@ -6,7 +6,7 @@ def log_warning(m):
 
 
 
-global td_box_style, td_proof_style, lr_num_style, lr_table_style
+global td_box_style, td_proof_style, lr_num_style, lr_table_style, leaf_derivs_style
 
 td_box_style = {"direction": "td", 
                 "style": "boxes",
@@ -23,6 +23,14 @@ td_proof_style = {"direction": "td",
                   "expl_color": "blue", 
                   "leaf_align": "center",
                   "leaf_style": "div"}
+
+leaf_derivs_style = {"direction": "td", 
+                     "style": "proof",
+                     "parts_style": "eq",
+                     "expl_style": "bracket", 
+                     "expl_color": "blue", 
+                     "leaf_align": "center",
+                     "leaf_style": "div"}
 
 lr_num_style = {"direction": "lr",
                 "style": "boxes",
@@ -166,6 +174,20 @@ class RecursiveDerivationDisplay(Styled):
         s += "</table>"
         return s
 
+    def render_parts_eq_seq(self, **kwargs):
+        part_cells = []
+        i = 1
+        for p in self.parts:
+            if i == 1:
+                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px\"></td><td style=\"align:left\">%s</td></tr>" % (self.to_str(p, style=kwargs)))
+            else:
+                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px\"> $=$ </td><td style=\"align:left\">%s</td></tr>" % (self.to_str(p, style=kwargs)))
+            i += 1
+        s = "<table style=\"padding-bottom:5px\">"
+        s += "".join(part_cells)
+        s += "</table>"
+        return s
+
     def render_parts_table_steps_rows(self, **kwargs):
         part_cells = []
         i = 1
@@ -194,6 +216,8 @@ class RecursiveDerivationDisplay(Styled):
                 return self.render_parts_table_steps_rows(**kwargs)
             else:
                 return self.render_parts_table_steps(**kwargs)
+        elif style == "eq":
+            return self.render_parts_eq_seq(**kwargs)
         else:
             log_warning("Unknown style '%s'" % style)
             return self.render_parts_table_steps(**kwargs)
@@ -232,7 +256,7 @@ class RecursiveDerivationDisplay(Styled):
     def nonterminal_render_td_boxes(self, **kwargs):
         expl_loc = self.get_style(kwargs, "expl_loc", "above")
         above = expl_loc == "above"
-        s = "<table><tr style=\"border:1px solid #848482\"><td style=\"vertical-align:bottom;padding:0px 10px\">"
+        s = "<table><tr style=\"border:1px solid #848482\"><td style=\"vertical-align:bottom;padding:0px 10px\" align=\"center\">"
         s += self.render_parts(**kwargs)
         s += "</td>"
         expl = self.render_expl(**kwargs)
@@ -242,9 +266,9 @@ class RecursiveDerivationDisplay(Styled):
             s += "</td></tr>"
         else:
             s += "<td></td></tr>"
-        s += "<tr style=\"border-style:solid;border-color:#848482;border-width:0px 1px 1px 1px\"><td align=\"center\">%s</td>" % self.render_content(**kwargs)
+        s += "<tr style=\"border-style:solid;border-color:#848482;border-width:0px 1px 1px 1px\"><td style=\"padding:5px\" align=\"center\">%s</td>" % self.render_content(**kwargs)
         if ((not above) and len(expl) > 0):
-            s += "<td style=\"border-top:1px solid #848482;vertical-align:center;padding:10px\">"
+            s += "<td style=\"border-top:1px solid #848482;vertical-align:center;padding:5px\">"
             s += expl
             s += "</td></tr></table>\n"
         else:
@@ -273,7 +297,7 @@ class RecursiveDerivationDisplay(Styled):
 #             s += "</tr></table>\n"
         s += "</table>"
         return s
-    
+
     def nonterminal_render_lr_boxes_rows(self, **kwargs):
         expl = self.render_expl(**kwargs)
         s = self.render_content(**kwargs)
@@ -356,6 +380,8 @@ class RecursiveDerivationLeaf(Styled):
             return self.div_render(**kwargs)
         elif style == "table":
             return self.table_rows_render(**kwargs)
+        elif style == "eq":
+            return self.render_eq_seq(**kwargs)
         else:
             log_warning("Unknown style '%s'" % style)
             return self.div_render(**kwargs)
@@ -371,6 +397,23 @@ class RecursiveDerivationLeaf(Styled):
             for p in self.parts:
                 s += "<div style=\"vertical-align:bottom;text-align:%s\">%s</div>" % (align, self.to_str(p, style=kwargs))
             s += "</div>"
+        return s
+
+    def render_eq_seq(self, **kwargs):
+        align = self.get_style(kwargs, "leaf_align", "center")
+        if len(self.parts) == 0:
+            return ""
+        part_cells = []
+        i = 1
+        for p in self.parts:
+            if i == 1:
+                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px\"></td><td style=\"text-align:%s\">%s</td></tr>" % (align, self.to_str(p, style=kwargs)))
+            else:
+                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px\"> $=$ </td><td style=\"text-align:%s\">%s</td></tr>" % (align, self.to_str(p, style=kwargs)))
+            i += 1
+        s = "<table style=\"padding-bottom:5px\">"
+        s += "".join(part_cells)
+        s += "</table>"
         return s
         
     def table_rows_render(self, **kwargs):
