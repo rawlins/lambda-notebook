@@ -780,8 +780,30 @@ class Tree(list):
         s += "</tr></table></tr><tr><td align=\"center\">%s</td></tr></table>\n" % nodetext
         return s
 
+    def build_display_tree(self, derivations=False, recurse=True, style=None):
+        import lamb
+        from lamb import display
+        defaultstyle = display.td_proof_style
+        style = display.Styled.merge_styles(style, defaultstyle)
+        parts = list()
+        for i in range(len(self)):
+            try:
+                part_i = self[i].build_display_tree(recurse=recurse, derivations=derivations, style=style)
+            except AttributeError:
+                try:
+                    part_i = display.RecursiveDerivationLeaf(self[i]._repr_latex_(), style=style)
+                except AttributeError:
+                    part_i = display.RecursiveDerivationLeaf(str(self[i]), style=style)
+            parts.append(part_i)
+        try:
+            nodetext = self.node._repr_latex_()
+        except:
+            nodetext = str(self.node)
+        return display.RecursiveDerivationDisplay(nodetext, explanation=None, parts=parts, style=style)
+
     def _repr_latex_(self):
-        return self.pprint_ipython_mathjax()
+        #return self.pprint_ipython_mathjax()
+        return self.build_display_tree()._repr_latex_()
 
     def pprint_latex_qtree(self):
         r"""

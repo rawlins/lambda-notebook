@@ -438,22 +438,25 @@ class CompositionTree(Tree, Composable):
 
     def build_local_tree(self, override=True):
         """This function ensures that any necessary PlaceholderTerms are inserted into the denotation of a daughter node."""
-        for i in range(len(self)):
-            ch = self[i]
-            if not isinstance(ch, CompositionTree):
-                if isinstance(ch, str):
-                    ch = CompositionTree(ch, system=self.system)
-                    self[i] = ch
-                elif isinstance(ch, Composable):
-                    ch = CompositionTree.tree_factory(ch, system=self.system)
-                    self[i] = ch
-                elif isinstance(ch, Tree):
-                    #ch = CompositionTree(ch.node, children=ch.children, system=self.system)
-                    ch = self.from_tree(ch, system=self.system)
-                    self[i] = ch
-                else:
-                    raise NotImplementedError()
-            ch.build_placeholder(override)
+        if len(self) == 0:
+            self.build_placeholder(override=override)
+        else:
+            for i in range(len(self)):
+                ch = self[i]
+                if not isinstance(ch, CompositionTree):
+                    if isinstance(ch, str):
+                        ch = CompositionTree(ch, system=self.system)
+                        self[i] = ch
+                    elif isinstance(ch, Composable):
+                        ch = CompositionTree.tree_factory(ch, system=self.system)
+                        self[i] = ch
+                    elif isinstance(ch, Tree):
+                        #ch = CompositionTree(ch.node, children=ch.children, system=self.system)
+                        ch = self.from_tree(ch, system=self.system)
+                        self[i] = ch
+                    else:
+                        raise NotImplementedError()
+                ch.build_placeholder(override)
         return self
 
     @property
@@ -473,6 +476,24 @@ class CompositionTree(Tree, Composable):
             self.build_local_tree(override=False) # do not want to override non-placeholder children
             self.denotations = self.system.compose_container(self, assignment=assignment)
         return self
+
+    def compose_path(self, path, assignment=None):
+        if len(path) > 0:
+            sub = self[path[0]]
+            if not isinstance(sub, CompositionTree):
+                sub = self.tree_factory(sub)
+            sub = sub.compose_path(path[1:], assignment=assignment)
+            self[path[0]] = sub
+            if self.composed():
+                # redo any super-nodes that were already composed
+                return self.compose(override=True, assignment=assignment)
+            else:
+                return self
+        else:
+            return self.compose(override=True, assignment=assignment)
+
+    def composed(self):
+        return self.denotations is not None
 
     def build_composite(self, den): # TODO: use a factory function
         return TreeComposite(*self.children, content=den, source=self)
@@ -571,7 +592,7 @@ class CompositionTree(Tree, Composable):
         #print(repr(empty))
         return empty
 
-    def short_str(self, latex=False, children=True):
+    def short_str(self, latex=False, children=True, force_brackets=False):
         if isinstance(self.node, str):
             n = self.node
         elif isinstance(self.node, SingletonComposable):
@@ -584,15 +605,24 @@ class CompositionTree(Tree, Composable):
                 if isinstance(c, str):
                     c_list.append(c)
                 elif isinstance(c, CompositionTree):
-                    c_list.append(c.short_str(latex=latex, children=False))
+                    c_list.append(c.short_str(latex=latex, children=False, force_brackets=False))
                 elif isinstance(c, Tree):
                     c_list.append(str(c.node))
                 else:
                     c_list.append(str(c))
         if len(c_list) == 0:
-            return "[%s]" % n
+            n = "[%s]" % n
         else:
-            return "[%s %s]" % (n, " ".join(c_list))
+            n = "[%s %s]" % (n, " ".join(c_list))
+        if force_brackets:
+            if latex:
+                # TODO: figure out how to get assignment controller to render here?  Right now this is tracked
+                # on singleton composables only.
+                return ensuremath(inbr(n))
+            else:
+                return text_inbr(n)
+        else:
+            return n
 
     def latex_str(self):
         if self.content is None:
@@ -623,13 +653,47 @@ class CompositionTree(Tree, Composable):
     def latex_step_tree(self,derivations=False):
         """Show the step-by-step derivation(s) as a proof tree."""
         if self.content is None:
-            return Tree.print_ipython_mathjax(self)
+            #return utils.MiniLatex(Tree.pprint_ipython_mathjax(self))
+            return Tree.build_display_tree(self, derivations=derivations)
         elif isinstance(self.content, CompositionResult):
             return self.content.latex_step_tree(derivations=derivations)
         elif len(self.content) == 1:
             return self.content[0].latex_step_tree(derivations=derivations)
         else:
             raise NotImplementedError()
+
+    # def build_display_tree(self, derivations=False, recurse=True, style=None):
+    #     if self.composed():
+    #         #return self.content.build_display_tree(derivations=derivations, recurse=recurse, style=style)
+    #         s =  self.content.build_summary_for_tree(style=style)
+    #         return display.RecursiveDerivationLeaf(self.short_str(latex=True, force_brackets=True), s, style=style)
+    #     else:
+    #         return Tree.build_display_tree(self, derivations=derivations, style=style)
+
+
+    def build_display_tree(self, derivations=False, recurse=True, style=None):
+        defaultstyle = display.td_proof_style
+        style = display.Styled.merge_styles(style, defaultstyle)
+        parts = list()
+        for i in range(len(self)):
+            try:
+                part_i = self[i].build_display_tree(recurse=recurse, derivations=derivations, style=style)
+            except AttributeError:
+                try:
+                    part_i = display.RecursiveDerivationLeaf(self[i]._repr_latex_(), style=style)
+                except AttributeError:
+                    part_i = display.RecursiveDerivationLeaf(str(self[i]), style=style)
+            parts.append(part_i)
+        if self.composed():
+            s = self.content.build_summary_for_tree(style=style)
+            node = display.RecursiveDerivationLeaf(self.short_str(latex=True, force_brackets=True), s, style=dict(style, leaf_border="1px"))
+        else:
+            try:
+                node = self.node._repr_latex_()
+            except:
+                node = str(self.node)
+        return display.RecursiveDerivationDisplay(node, explanation=None, parts=parts, style=style)
+
 
     def latex_step_tree_r(self, derivations=False):
         if len(self.content) == 1:
@@ -661,7 +725,7 @@ class CompositionTree(Tree, Composable):
         if system is None:
             system = get_system()
         if isinstance(composable, str):
-            t = Tree(composable)
+            t = Tree(composable, children=list())
             return CompositionTree.from_tree(t, system=system)
         if isinstance(composable, meta.TypedExpr):
             raise NotImplementedError()
@@ -1008,6 +1072,20 @@ class CompositionResult(Composable):
                 #s += latex_indent() + "`%s' $*$ `%s' leads to `%s'\n" % (composite.p1.short_str_latex(), composite.p2.short_str_latex(), ensuremath(composite.latex_str()))
         return MiniLatex(s)
 
+    def build_summary_for_tree(self, style=None):
+        defaultstyle = display.td_box_style
+        style = display.Styled.merge_styles(style, defaultstyle)
+        if len(self.results) == 0:
+            return display.RecursiveDerivationLeaf("Composition failure", style=dict(style, leaf_style="alert"))
+        elif len(self.results) == 1:
+            return display.RecursiveDerivationLeaf(self.results[0].latex_str(), style=style)
+        else:
+            n = 0
+            parts = list()
+            for composite in self.results:
+                parts.append("[%i]: " % n + composite.latex_str())
+            return display.RecursiveDerivationLeaf(*parts, style=style)
+
     def failures_str_latex(self):
         return self.failures_str(latex=True)
 
@@ -1080,6 +1158,30 @@ class CompositionResult(Composable):
             s += rst._repr_latex_() + "<br /><br />"
             i += 1
         return MiniLatex(s)
+
+    def build_display_trees(self, recurse=True, derivations=False, style=None):
+        defaultstyle = display.td_box_style
+        style = display.Styled.merge_styles(style, defaultstyle)
+
+        if len(self.results) == 0:
+            return display.RecursiveDerivationLeaf("No succesful composition paths.", style=style)
+        else:
+            rows = list()
+            if len(self.results) == 1:
+                rows.append("1 composition path:")
+            else:
+                rows.append("%i composition paths:\n" % len(self.results))
+            i = 0
+            for r in self.results:
+                if len(self.results) > 1:
+                    rows.append("Path [%i]:\n" % i)
+                rst = r.build_display_tree(derivations=derivations, recurse=recurse, style=style)
+                rows.append(rst)
+                rows.append("<br />")
+                i += 1
+            return display.RecursiveDerivationLeaf(*rows, style=dict(style, leaf_align="left"))
+
+
 
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as possible."""
@@ -1424,7 +1526,10 @@ class LexiconOp(TreeCompositionOp):
         # TODO: revisit
         if isinstance(t, TreeComposite) and t.node is None and t.source is not None:
             name = t.source.node
+        elif t.node and isinstance(t.node, PlaceholderTerm) and t.source is not None:
+            name = t.source.node
         else:
+            assert(isinstance(t.node, str))
             name = t.node
         #assert(name is not None)
         den = self.system.lookup_item(name)
@@ -1870,6 +1975,17 @@ class TreeCompositionSystem(CompositionSystem):
             # else:
             #     raise NotImplementedError
 
+    def bu_df_lr_gen(self, tree, parent, path_from_par, len_fun, full_path=None):
+        if full_path is None:
+            full_path = tuple()
+        if len_fun(tree) == 0:
+            yield (tree, parent, path_from_par, full_path)
+        elif len_fun(tree) >= 1:
+            for i in range(len_fun(tree)):
+                yield from self.bu_df_lr_gen(tree[i], tree, i, len_fun, full_path=full_path + (i,))
+            yield (tree, parent, path_from_par, full_path)
+
+
     def tree_factory(self, composable):
         return CompositionTree.tree_factory(composable, system=self)
 
@@ -1919,24 +2035,34 @@ class TreeCompositionSystem(CompositionSystem):
     def len_fun(self, node):
         if isinstance(node, Tree):
             return len(node)
-        if isinstance(node, CompositionResult):
+        elif isinstance(node, CompositionResult):
             return len(node)
-        if isinstance(node, Item):
+        elif isinstance(node, Item):
             return 0
+        elif isinstance(node, str):
+            return 0
+        raise NotImplementedError()
 
-    def qsfu(self, tree):
+    def qsfu(self, tree, order=None):
         """Convenience wrapper around expansion functions.  Uses top-down left-to-right expansion order to find a node that has not been expanded.
         (stands for 'quick search for unexpanded')"""
-        return self.search_for_unexpanded(tree, self.td_df_lr_gen, self.is_expanded, self.len_fun)
+        if order is None:
+            order = self.bu_df_lr_gen
+        return self.search_for_unexpanded(tree, order, self.is_expanded, self.len_fun)
 
-    def compose_path(self, root, path, assignment=None):
+    def compose_path_old(self, root, path, assignment=None):
         if len(path) > 0:
             self.compose_path(root[path[0]], path[1:])
         #self.compose()
-        return root.compose(override=True, assignment=assignment)
+        #return root.compose(override=True, assignment=assignment)
+        return self.compose(root, override=True, assignment=assignment)
+
+    def compose_path(self, root, path, assignment=None):
+        return root.compose_path(path, assignment=assignment)
 
     def expand_next(self, tree):
         """Convenience wrapper around expansion functions.  Expands whatever `qsfu` finds in tree."""
+        tree = self.tree_factory(tree)
         (subtree, parent, path_from_parent, full_path) = self.qsfu(tree)
         if subtree is None:
             return None
@@ -1945,19 +2071,20 @@ class TreeCompositionSystem(CompositionSystem):
 
         #parent[path_from_parent]
         #return self.compose(tree, override=True) # redo everything?
-        return self.compose_path(tree, full_path)
+        return tree.compose_path(full_path)
 
     def expand_all(self, tree):
         """Expand everything in the tree that can be expanded."""
         # TODO: less of a hack
+        cur = self.tree_factory(tree)
         last = None
         while True:
-            (subtree, parent, path_from_parent, full_path) = self.qsfu(tree)
+            (subtree, parent, path_from_parent, full_path) = self.qsfu(cur)
             if subtree is None:
-                return tree
+                return cur
             if subtree is last:
-                return tree
-            self.compose_path(tree, full_path)
+                return cur
+            cur = cur.compose_path(full_path)
             last = subtree
 
     # TODO: this is obsolete given the current setup, but I need to return to implementing it

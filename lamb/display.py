@@ -380,24 +380,46 @@ class RecursiveDerivationLeaf(Styled):
             return self.div_render(**kwargs)
         elif style == "table":
             return self.table_rows_render(**kwargs)
+        elif style == "alert":
+            return self.alert_render(**kwargs)
         elif style == "eq":
             return self.render_eq_seq(**kwargs)
         else:
             log_warning("Unknown style '%s'" % style)
             return self.div_render(**kwargs)
-        
+    
     def div_render(self, **kwargs):
         align = self.get_style(kwargs, "leaf_align", "center")
+        border = self.get_style(kwargs, "leaf_border", "0px")
         if len(self.parts) == 0:
             return ""
         elif len(self.parts) == 1:
-            return "<div style=\"margin-top:10px;vertical-align:bottom;text-align:%s\">%s</div>" % (align, self.to_str(self.parts[0], style=kwargs))
+            return "<div style=\"margin-top:3px;border-width:%s;border-style:solid;border-color:#848482;vertical-align:bottom;text-align:%s\">%s</div>" % (border, align, self.to_str(self.parts[0], style=kwargs))
         else:
-            s = "<div style=\"margin-top:10px\">"
+            s = "<div style=\"margin-top:10px;border-style:solid;border-color:#848482;border-width:%s\">" % border
             for p in self.parts:
                 s += "<div style=\"vertical-align:bottom;text-align:%s\">%s</div>" % (align, self.to_str(p, style=kwargs))
             s += "</div>"
         return s
+
+    def alert_render(self, **kwargs):
+        align = self.get_style(kwargs, "leaf_align", "center")
+        color = self.get_style(kwargs, "leaf_alert_color", "red")
+        border = self.get_style(kwargs, "leaf_border", "0px")
+        if len(self.parts) == 0:
+            return ""
+        elif len(self.parts) == 1:
+            return "<div style=\"margin-top:3px;vertical-align:bottom;border-style:solid;border-color:#848482;border-width:%s;text-align:%s\"><span style=\"color:%s\">%s</span></div>" % (border, align, color, self.to_str(self.parts[0], style=kwargs))
+        else:
+            s = "<div style=\"margin-top:10px;border-style:solid;border-color:#848482;border-width:%s\">" % border
+            for i in range(len(self.parts)):
+                if i == 0:
+                    s += "<div style=\"margin-top:5px;vertical-align:bottom;text-align:%s\"><span style=\"color:%s\">%s</span></div>" % (align, color, self.to_str(self.parts[i], style=kwargs))
+                else:
+                    s += "<div style=\"margin-top:5px;vertical-align:bottom;text-align:%s\">%s</div>" % (align, self.to_str(self.parts[i], style=kwargs))
+            s += "</div>"
+        return s
+
 
     def render_eq_seq(self, **kwargs):
         align = self.get_style(kwargs, "leaf_align", "center")
