@@ -642,25 +642,32 @@ class CompositionTree(Tree, Composable):
             return None
 
     def _repr_latex_(self):
-        return self.latex_str()
+        return self.show()._repr_latex_()
 
     def print_ipython_mathjax(self):
         return self.latex_step_tree()
 
-    def tree(self, derivations=False):
-        return self.latex_step_tree(derivations=derivations)
+    def tree(self, derivations=False, recurse=True, style=None):
+        #return self.latex_step_tree(derivations=derivations)
+        return self.build_display_tree(derivations=derivations, recurse=recurse, style=style)
 
-    def latex_step_tree(self,derivations=False):
+    def show(self,derivations=False, short=True, style=None):
         """Show the step-by-step derivation(s) as a proof tree."""
         if self.content is None:
             #return utils.MiniLatex(Tree.pprint_ipython_mathjax(self))
-            return Tree.build_display_tree(self, derivations=derivations)
+            return self.build_display_tree(derivations=derivations, style=style)
         elif isinstance(self.content, CompositionResult):
-            return self.content.latex_step_tree(derivations=derivations)
+            if short:
+                return self.content.show(style=style)
+            else:
+                return self.content.tree(derivations=derivations, style=style)
         elif len(self.content) == 1:
-            return self.content[0].latex_step_tree(derivations=derivations)
+            return self.content[0].tree(derivations=derivations, style=style)
         else:
             raise NotImplementedError()
+
+    def paths(self,derivations=False, style=None):
+        return self.show(derivations=derivations, short=False, style=None)
 
     # def build_display_tree(self, derivations=False, recurse=True, style=None):
     #     if self.composed():
@@ -1078,12 +1085,13 @@ class CompositionResult(Composable):
         if len(self.results) == 0:
             return display.RecursiveDerivationLeaf("Composition failure", style=dict(style, leaf_style="alert"))
         elif len(self.results) == 1:
-            return display.RecursiveDerivationLeaf(self.results[0].latex_str(), style=style)
+            return display.RecursiveDerivationLeaf(self.results[0].latex_str(), style=dict(style, leaf_align="center"))
         else:
             n = 0
             parts = list()
             for composite in self.results:
-                parts.append("[%i]: " % n + composite.latex_str())
+                parts.append("<span style=\"color:blue\">[path %i]</span>: &nbsp;" % n + composite.latex_str())
+                n += 1
             return display.RecursiveDerivationLeaf(*parts, style=style)
 
     def failures_str_latex(self):
@@ -2150,6 +2158,10 @@ def tree_right_fa_fun(t, assignment=None):
         raise TypeMismatch(t[0], t[1], "FA/right")
     return BinaryComposite(t[0], t[1], result, source=t)
 
+def tree_nn_fun(t, assignment=None):
+    return UnaryComposite(t[0], content=t[0].content.under_assignment(assignment), source=t)
+
+
 # combinator for predicate modification
 pm_op = te("L f_<e,t> : L g_<e,t> : L x_e : f(x) & g(x)")
 
@@ -2332,11 +2344,12 @@ def setup_hk_chap3():
     Note that the lexical items defined by `setup_type_driven` can be used here too, and are in fact added to the lexicon of this system by default."""
     global hk3_system, tfa_l, tfa_r, tpm
 
-    tfa_l = TreeCompositionOp("FA/left", tree_left_fa_fun)
-    tfa_r = TreeCompositionOp("FA/right", tree_right_fa_fun)
-    tpm = TreeCompositionOp("PM", tree_pm_fun)
+    tfa_l = TreeCompositionOp("FA/left", tree_left_fa_fun) # Function Application
+    tfa_r = TreeCompositionOp("FA/right", tree_right_fa_fun) # Function Application
+    tpm = TreeCompositionOp("PM", tree_pm_fun) # Predicate Modification
+    nn = TreeCompositionOp("NN", tree_nn_fun, preconditions=tree_unary) # Non-branching Node
 
-    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm], basictypes={type_e, type_t}, name="H&K Tree version")
+    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, nn], basictypes={type_e, type_t}, name="H&K Tree version")
     hk3_system.add_items(cat, gray, john, julius, inP, texas, isV)
 
 
