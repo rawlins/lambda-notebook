@@ -693,7 +693,7 @@ class CompositionTree(Tree, Composable):
             parts.append(part_i)
         if self.composed():
             s = self.content.build_summary_for_tree(style=style)
-            node = display.RecursiveDerivationLeaf(self.short_str(latex=True, force_brackets=True), s, style=dict(style, leaf_border="1px"))
+            node = display.RecursiveDerivationLeaf(self.short_str(latex=True, children=False, force_brackets=True), s, style=dict(style, leaf_border="1px"))
         else:
             try:
                 node = self.node._repr_latex_()
