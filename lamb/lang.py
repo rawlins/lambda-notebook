@@ -34,7 +34,8 @@ global bracket_setting, BRACKET_BARS, BRACKET_FANCY, BRACKET_UNI
 BRACKET_BARS = 1
 BRACKET_FANCY = 2
 BRACKET_UNI = 3
-bracket_setting = BRACKET_BARS
+#bracket_setting = BRACKET_BARS
+bracket_setting = BRACKET_FANCY
 
 
 def text_inbr(s):
