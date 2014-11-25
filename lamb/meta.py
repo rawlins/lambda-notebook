@@ -195,7 +195,11 @@ class TypedExpr(object):
             if isinstance(op, LFun):
                 arg.type_not_guessed()
             else:
-                self.type_guessed = op.type_guessed
+                # not 100% that the following is the right fix...
+                try:
+                    self.type_guessed = op.type_guessed
+                except AttributeError:
+                    self.type_guessed = False
         elif (len(args) == 0):
             # TODO this should never be called directly any more??  But may want to be able to call from subclasses?
             #raise ValueError("TypedExpr called with no arguments.  Should use function or term.  (op: '%s')" % repr(op))
