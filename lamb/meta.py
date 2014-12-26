@@ -805,7 +805,7 @@ class TypedExpr(object):
         if not self.reducible():
             return self
         if isinstance(self.op, LFun):
-            return derived(self.op.apply(self.args[0]), self, desc="F-A reduction")
+            return derived(self.op.apply(self.args[0]), self, desc="Beta reduction")
         else:
             # functional op but don't know what to do
             # TODO: implement some special casing here?
