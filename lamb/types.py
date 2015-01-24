@@ -61,6 +61,9 @@ class AbstractType(object):
     def __repr__(self):
         return re.sub(r'[\s]+', '', self.__str__())
 
+    def __str__(self):
+        raise NotImplementedError
+
     @classmethod
     def parse(cls, s, i, parse_control_fun):
         raise NotImplementedError
