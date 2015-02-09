@@ -881,6 +881,12 @@ class TypeSystem(object):
         result = self.unify(t, self.type_parser(repr(t)))
         return (result is not None)
 
+    def unify_check(self, t1, t2):
+        result = self.unify(t1, t2)
+        return (result is not None)
+
+    def parse_unify_check(self, t1, t2):
+        return self.unify_check(self.type_parser(t1), self.type_parser(t2))
 
 class StrictTypeSystem(TypeSystem):
     def __init__(self, atomics, nonatomics):
@@ -975,6 +981,8 @@ class PolyTypeSystem(TypeSystem):
             return t2.unify(t1, self.unify_r, assignment)
         else:
             (result, r_assign) = t1.unify(t2, self.unify_r, assignment)
+            if result is None:
+                return (None, None)
             if len(result) > 1:
                 # enforce changes present in assignment on all parts of the result
                 # TODO: could do this incrementally?
@@ -1096,5 +1104,21 @@ class TypeTest(unittest.TestCase):
     def test_parser_poly(self):
         for i in range(0, 1000):
             self.assertTrue(poly_system.repr_unify_check(poly_system.random_type(5, 0.2)))
+
+    def test_var_cases(self):
+        self.assertTrue(poly_system.parse_unify_check("e", "e"))
+        self.assertTrue(poly_system.parse_unify_check("<e,t>", "<e,t>"))
+        self.assertTrue(poly_system.parse_unify_check("X", "X"))
+        self.assertTrue(poly_system.parse_unify_check("X", "Y"))
+        self.assertTrue(poly_system.parse_unify_check("<X,Y>", "<Y,Z>"))
+        self.assertTrue(poly_system.parse_unify_check("<X,X>", "<Y,Z>"))
+        self.assertTrue(poly_system.parse_unify_check("<<X,X>,X>", "<<e,Y>,Z>"))
+        self.assertTrue(poly_system.parse_unify_check("<<<e,X>,Y>,Y>", "<<<X,Z>,Z>,e>"))
+        self.assertTrue(poly_system.parse_unify_check("<<X,Y>,<Z,<Z',Z''>>>", "<<X',Y'>,<Y',Z'>>"))
+
+        self.assertFalse(poly_system.parse_unify_check("e", "t"))
+        self.assertFalse(poly_system.parse_unify_check("<e,t>", "<e,e>"))
+        self.assertFalse(poly_system.parse_unify_check("<<e,X>,X>", "<<X,X>,t>"))
+        self.assertFalse(poly_system.parse_unify_check("<<X,X>,<Y,Y>>", "<<e,Z>,<Z,t>>"))
 
 
