@@ -99,6 +99,9 @@ class TypeConstructor(object):
         return accum
 
     def sub_type_vars(self, assignment):
+        """Substitute type variables in `self` given the mapping in `assignment`.
+
+        This does only one-place substitutions, so it won't follow chains if there are any."""
         l = list()
         dirty = False
         for i in range(len(self)):
@@ -111,6 +114,7 @@ class TypeConstructor(object):
             return self
 
     def unify(self, other, unify_control_fun, data):
+        """General function for type unification.  Not intended to be called directly.  See `TypeSystem.unify`."""
         if not isinstance(self, other.__class__):
             return (None, None)
         if len(self) != len(other):
@@ -543,7 +547,7 @@ class VariableType(TypeConstructor):
         self.left = self # ???
         self.right = self # ???
 
-    def functional(self, symbol):
+    def functional(self):
         return True # ???
 
     def copy_local(self):
@@ -820,7 +824,7 @@ class TypeSystem(object):
             if a is None:
                 return (None, None, None)
             else:
-                return (FunType(a, fun.right), b, fun.right)
+                return (FunType(a, fun.right), a, fun.right)
         else:
             return (None, None, None)
 
@@ -919,6 +923,14 @@ def injective(d):
     v_set = set(v)
     return len(v) == len(v_set)
 
+def invert(d):
+    i = dict()
+    for k in d.keys():
+        if d[k] in i:
+            raise Exception("can't invert non-injective dict")
+        i[d[k]] = k
+    return i
+
 def strengthens(d):
     """Check for any strengthening assignments in `d`.  A strengthening assignment is one that maps a variable to a non-variable."""
     for key in d:
@@ -947,14 +959,36 @@ def safe_vars(typ, var_list):
             unsafe = unsafe | {base}
     return result
 
+def safe_var_in_type(typ):
+    unsafe = typ.bound_type_vars()
+    n = 0
+    vt = VariableType("X", n)
+    while vt in unsafe:
+        n += 1
+        vt = VariableType("X", n)
+    return vt
+
+
 def make_safe(typ1, typ2, unsafe=None):
-    """Return a version of typ1 that is completely safe w.r.t. variables in typ2"""
+    """Return a version of typ1 that is completely safe w.r.t. variables in typ2.
+
+    Note that this will work in either order to avoid variable name collisions, but preserves variable names in typ2 over typ1.
+    """
     if unsafe is None:
         unsafe = list()
     else:
         unsafe = list(unsafe)
     assignment = safe_vars(typ2, list(typ1.bound_type_vars()) + unsafe)
+    #return (typ1.sub_type_vars(assignment), invert(assignment))
     return typ1.sub_type_vars(assignment)
+
+class UnificationResult(object):
+    def __init__(self, principle, t1, t2, mapping):
+        self.principle = principle
+        self.t1 = t1
+        self.t2 = t2
+        self.mapping = mapping
+        self.trivial = injective(mapping) and not strengthens(mapping)
 
 class PolyTypeSystem(TypeSystem):
     def __init__(self, atomics=None, nonatomics=None):
@@ -963,16 +997,21 @@ class PolyTypeSystem(TypeSystem):
 
     def unify(self, t1, t2):
         assignment = dict()
-        result, r_assign = self.unify_details(t1, t2, assignment)
-        return result
-
+        result = self.unify_details(t1, t2, assignment)
+        if result is None:
+            return None
+        else:
+            return result.principle
 
     def unify_details(self, t1, t2, assignment=None):
         if assignment is None:
             assignment = dict()
         t1safe = make_safe(t1, t2, set(assignment.keys()) | set(assignment.values()))
         (result, r_assign) = self.unify_r(t1safe, t2, assignment)
-        return (result, r_assign)
+        if result is None:
+            return None
+        else:
+            return UnificationResult(result, t1, t2, r_assign)
 
     def unify_r(self, t1, t2, assignment):
         if isinstance(t1, VariableType):
@@ -993,8 +1032,46 @@ class PolyTypeSystem(TypeSystem):
                 result = result.copy_local(*l)
             return (result, r_assign)
 
+    def unify_fa(self, fun, arg):
+        """Try unifying the input type of the function with the argument's type.
+        If it succeeds, it returns a (possibly changed) tuple of the function's type, the argument's type, and the output type.
+        If this fails, returns (None, None, None)."""
+
+        output_var = safe_var_in_type(arg)
+        hyp_fun = FunType(arg, output_var)
+        result = self.unify_details(hyp_fun, fun) # use reverse order to try to keep variables in fun preferentially
+        if result is None: # this will fail if `fun` is not a function or cannot be made into one
+            return (None, None, None)
+        else:
+            if result.trivial: # no need to introduce spurious alpha renaming
+                return (fun, fun.left, fun.right)
+            else:
+                return (result.principle, result.principle.left, result.principle.right)
 
 
+    # There's really got to be a better way to do this...
+    def alpha_equiv(t1, t2):
+        assignment = dict()
+        t1safe = make_safe(t1, t2, set(assignment.keys()) | set(assignment.values()))
+        (result, r_assign) = self.unify_r(t1safe, t2, assignment)
+        return injective(r_assign) and not strengthens(r_assign)
+
+    def random_type(self, max_depth, p_terminate_early, allow_variables=True):
+        term = random.random()
+        #print(max_depth)
+        if max_depth == 0 or term < p_terminate_early:
+            #print(term, p_terminate_early, term > p_terminate_early)
+            # choose an atomic type
+            t = random.choice(list(self.atomics))
+            return t
+        else:
+            # choose a non-atomic type and generate a random instantiation of it
+            ctrl_fun = lambda *a: self.random_type(max_depth - 1, p_terminate_early, allow_variables)
+            if allow_variables:
+                t_class = random.choice(list(self.nonatomics))
+            else:
+                t_class = random.choice(list(self.nonatomics - {VariableType}))
+            return t_class.random(ctrl_fun)
 
 class TypeParseError(Exception):
     def __init__(self, msg, s, i):

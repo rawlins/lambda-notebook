@@ -3,7 +3,7 @@
 import sys, re, logging, random
 from numbers import Number
 from lamb import types, utils, parsing, display
-from lamb.types import TypeMismatch, type_e, type_t, type_n, type_property, type_transitive, OntoType, FunType
+from lamb.types import TypeMismatch, type_e, type_t, type_n, type_property, type_transitive, BasicType, FunType
 from lamb.utils import *
 #import logic, utils
 
@@ -43,19 +43,14 @@ def get_type_system():
     return _type_system
 
 def ts_unify(a, b):
-    """Calls the current type system's `unify` function on types `a` and `b`.  This returns a pair of the closest 
-    matching types according to the type system, or `None` if the two can't be unified."""
+    """Calls the current type system's `unify` function on types `a` and `b`.  This returns a unified type, or `None` if the two can't be unified."""
     ts = get_type_system()
     return ts.unify(a, b)
 
 def ts_compatible(a, b):
     """Returns `True` or `False` depending on whether `a` and `b` are compatible types."""
     ts = get_type_system()
-    r = ts.unify(a,b)
-    if r[0] is None:
-        return False
-    else:
-        return True
+    return ts.unify(a,b) is not None
 
 def tp(s):
     """Convenience wrapper for the current type system's type parser."""
@@ -74,7 +69,7 @@ def term(s, typ=None, assignment=None):
     return TypedTerm.term_factory(s, typ=typ, assignment=assignment)
 
 #_type_system = types.UnderTypeSystem()
-_type_system = types.under_system
+_type_system = types.poly_system
 
 unary_tf_ops = set(['~'])
 binary_tf_ops = set(['>>', '<<', '&', '|', '<=>', '%'])
@@ -148,18 +143,13 @@ class TypedExpr(object):
             # remove to factory, with specialized subclass
             raise NotImplementedError("Warning: constructing expression from deprecated basic operator '%s'" % op)
             self.args = [self.ensure_typed_expr(x) for x in args]
-            uncertain = False
             for a in self.args:
                 a.type_not_guessed()
-                if a.type.undetermined:
-                    uncertain = True
             # python 2.x was map(typed_expr, args)
             if op in tf_ops:
                 self.type = type_t
             elif op in num_ops:
                 self.type = type_n
-            if uncertain:
-                self.type = types.UndeterminedType(self.type)
             self.op = op
         elif isinstance(op, TypedExpr):
             if (len(args) > 1):
@@ -219,19 +209,12 @@ class TypedExpr(object):
         NOTE: this function is currently not used, and not well tested."""
         type_sys = get_type_system()
         if (self.op in basic_ops):
-            uncertain = False
-            for a in self.args:
-                if a.type.undetermined:
-                    uncertain = True
             if self.op in tf_ops:
                 self.type = type_t
             elif self.op in num_ops:
                 self.type = type_n
-            if uncertain:
-                self.type = types.UndeterminedType(self.type)
         elif isinstance(self.op, LFun):
             unify_f, unify_a, unify_r = type_sys.unify_fa(self.op.type, self.args[0].type)
-            #if arg.type != op.argtype and not arg.type.undetermined:
             self.type = unify_r
         elif isinstance(self.op, TypedExpr):
             if (len(args) == 0):
@@ -256,12 +239,12 @@ class TypedExpr(object):
         If it fails completely, it returns None."""
         ts = get_type_system()
         #unify_a, unify_base = ts.local_unify(new_type, self.type)
-        unify_a, unify_target = ts.local_unify(self.type, new_type)
+        unify_target = ts.unify(self.type, new_type)
         #print("new_type %s self type %s unify_a %s unify_target %s" % (new_type, self.type, unify_a, unify_target))
-        if unify_a is None:
+        if unify_target is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
             return None
-        if self.type == unify_a:
+        if self.type == unify_target:
             return self
         else:
             if derivation_reason is None:
@@ -272,7 +255,8 @@ class TypedExpr(object):
                     raise ValueError("Wrong number of arguments on type adjustment")
                     #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
                     #return None
-                new_op_type = types.UndeterminedType(types.FunType(self.args[0].type, unify_a))
+                new_op_type = types.FunType(self.args[0].type, unify_target)
+                # TODO TYPES need to unify with op, this is currently wrong
                 new_op = self.op.try_adjust_type(new_op_type, derivation_reason)
                 if new_op is None:
                     return None
@@ -285,10 +269,10 @@ class TypedExpr(object):
                 # should be term?
                 if self.term():
                     new_op = self.copy()
-                    new_op.type = unify_a
+                    new_op.type = unify_target
                     return derived(new_op, self, derivation_reason)
                 else:
-                    logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
+                    logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
                     return self
 
     # def __getitem__(self, key):
@@ -315,14 +299,14 @@ class TypedExpr(object):
         c = self.copy()
         ts = get_type_system()
         # check: is the type of the substitution compatible with the type of what it is replacing?
-        unify_a, unify_b = ts.unify(old.type, s.type)
+        unified = ts.unify(old.type, s.type)
         #print("%s, %s" % (unify_a, unify_b))
-        if unify_a is None:
+        if unified is None:
             raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
-        if unify_b != s.type:
+        if unified != s.type:
             # compatible but unify suggested a new type for the substitution.  
             # Try adjusting the type of the expression.
-            s_a = s.try_adjust_type(unify_b)
+            s_a = s.try_adjust_type(unified)
             if s_a is None:
                 raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
             #print("adjusting %s to %s" % (s,s_a))
@@ -557,12 +541,12 @@ class TypedExpr(object):
                     typ = assignment[term_name.group(1)].type
             else:
                 if term_name.group(1) in assignment:
-                    u_l, u_r = ts.unify(typ, assignment[term_name.group(1)].type)
-                    if u_l is None:
+                    unified = ts.unify(typ, assignment[term_name.group(1)].type)
+                    if unified is None:
                         raise TypeMismatch(cls.term_factory(term_name.group(1), typ), assignment[term_name.group(1)], "Type inheritence from assignment")
                     else:
                         # TODO: better logic?
-                        typ = u_l
+                        typ = unified
 
         if return_obj:
             # should call a factory function here, need to resolve circularity first.
@@ -669,10 +653,6 @@ class TypedExpr(object):
                     args = (coerced_op,) + args[1:]
                 else:
                     logger.warning("Unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (args[0].type, repr(args[0]), repr(args[1]), args[1].type))
-            if args[0].type.functional() and not args[0].type.left.undetermined and args[1].type.undetermined:
-                # special case: applying undetermined type to function, would have to coerce to do full application
-                # TODO: implement coercion here?
-                pass
             # if we get to this point, args[0] should be the operator, and the rest of the list arguments to the operator.
             return TypedExpr(*args)
 
@@ -729,9 +709,9 @@ class TypedExpr(object):
         c = TypedExpr(self.op, *self.args, defer=self.defer)
         #c.derivation = self.derivation #TODO: should I do this?
         #print(c.type, self.type, c, self, self.op, self.args[0])
-        assert c == self
-        #if c != self:
-        #    raise Exception(c, self)
+        #assert c == self
+        # if c != self:
+        #     raise Exception(c, self)
         return c
 
     def under_assignment(self, assignment):
@@ -925,7 +905,7 @@ class TypedExpr(object):
             return ensuremath(str(self.op))
         elif isinstance(self.op, LFun):
             return ensuremath("[%s](%s)" % (self.op.latex_str(), ', '.join([a.latex_str() for a in self.args])))
-        elif isinstance(self.op, TypedExpr) and (self.op.type.functional() or self.op.type.undetermined):  # Functional or propositional operator
+        elif isinstance(self.op, TypedExpr) and (self.op.type.functional()):  # Functional or propositional operator
             arg_str = ', '.join([a.latex_str() for a in self.args])
             if isinstance(self.op, CustomTerm):
                 return ensuremath(self.op.custom_appl_latex(arg_str))
@@ -1282,15 +1262,15 @@ class UnaryOpExpr(TypedExpr):
     def type_constraints(self):
         # TODO: generalize somehow
         ts = get_type_system()
-        unify_a, unify_base = ts.local_unify(self.args[0].type, self.type)
-        if unify_a is None:
+        unified = ts.unify(self.args[0].type, self.type)
+        if unified is None:
             raise TypeMismatch(MiniOp.from_op(self), self.args[0], mode="Unary operator")
-        if self.args[0].type != unify_a:
+        if self.args[0].type != unified:
             if isinstance(self.args[0], TypedTerm):
                 self.args[0] = self.args[0].copy()
-                self.args[0].type = unify_a
+                self.args[0].type = unified
             else:
-                logger.warning("Unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.args[0].type, unify_a))
+                logger.warning("Unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.args[0].type, unified))
 
     def __str__(self):
         return "%s%s\nType: %s" % (self.op_name, repr(self.args[0]), self.type)
@@ -1519,7 +1499,7 @@ class TupleIndex(BinaryOpExpr):
                 raise TypeMismatch(arg1, arg2, mode="Index out of range for tuple type")
             output_type = arg1.type[arg2.op]
         else:
-            output_type = types.undetermined_type # TODO this is very problematic
+            output_type = types.VariableType("X") # TODO this is very problematic
             logger.warning("Using non-constant index; not well-supported at present.")
         super().__init__(output_type, "[]", arg1, arg2, "[]", "[]", tcheck_args=False)
 
@@ -1633,7 +1613,7 @@ class BindingOp(TypedExpr):
                 logger.warning("Overriding varname '%s' with '%s'" % (varname, var_or_vtype.op))
             self.varname = var_or_vtype.op
             self.vartype = var_or_vtype.type
-        elif isinstance(var_or_vtype, types.AbstractType):
+        elif isinstance(var_or_vtype, types.TypeConstructor):
             if varname is None:
                 varname = self.default_varname()
             self.varname = varname
@@ -1902,16 +1882,16 @@ class ConditionSet(BindingOp):
         If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
         If it fails completely, it returns None."""
         ts = get_type_system()
-        unify_a, unify_b = ts.local_unify(new_type, self.type)
-        if unify_a is None:
+        unified = ts.unify(new_type, self.type)
+        if unified is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
             return None
-        if self.type == unify_b:
+        if self.type == unified:
             return self
         else:
             if derivation_reason is None:
                 derivation_reason = "Type adjustment"
-            inner_type = unify_b.content_type
+            inner_type = unified.content_type
             char = self.to_characteristic()
             sub_var = TypedTerm(self.varname, inner_type)
             new_condition = char.apply(sub_var)
@@ -1931,7 +1911,7 @@ class ListedSet(TypedExpr):
         s = set(iterable) # just make it a set first, remove duplicates, flatten order
         self.args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
         if len(self.args) == 0 and typ is None:
-            typ = types.undetermined_type
+            typ = types.VariableType("X") # could be a set of anything
         elif typ is None:
             typ = self.args[0].type
         for i in range(len(self.args)): # type checking TODO: this isn't right, would need to pick the strongest type
@@ -2017,16 +1997,16 @@ class ListedSet(TypedExpr):
         If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
         If it fails completely, it returns None."""
         ts = get_type_system()
-        unify_a, unify_b = ts.local_unify(new_type, self.type)
-        if unify_a is None:
+        unified = ts.unify(new_type, self.type)
+        if unified is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
             return None
-        if self.type == unify_b:
+        if self.type == unified:
             return self
         else:
             if derivation_reason is None:
                 derivation_reason = "Type adjustment"
-            inner_type = unify_b.content_type
+            inner_type = unified.content_type
             content = [a.try_adjust_type(inner_type, derivation_reason) for a in self.args]
             return derived(ListedSet(content), self, derivation_reason)
 
@@ -2117,25 +2097,25 @@ class LFun(BindingOp):
         If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
         If it fails completely, it returns None."""
         ts = get_type_system()
-        unify_a, unify_b = ts.local_unify(new_type, self.type)
-        if unify_a is None:
+        unified = ts.unify(new_type, self.type)
+        if unified is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
             return None
-        if self.type == unify_b:
+        if self.type == unified:
             return self
         else: # either input or output type can be strengthened
             #new_body = self.body.try_adjust_type(unify_a.right) # will only make copy if necessary
             if derivation_reason is None:
                 derivation_reason = "Type adjustment"
-            new_argtype = unify_b.left
-            if self.argtype != unify_b.left:
+            new_argtype = unified.left
+            if self.argtype != unified.left:
                 # arg type needs to be adjusted, and hence all instances of the bound variable as well.  Do this with beta reduction.
-                new_var = TypedTerm(self.varname, unify_b.left)
+                new_var = TypedTerm(self.varname, unified.left)
                 new_body = self.apply(new_var)
             else:
                 new_body = self.body
             #if new_body.type != unify_a.right:
-            new_body = new_body.try_adjust_type(unify_b.right, derivation_reason) # will only make copy if necessary
+            new_body = new_body.try_adjust_type(unified.right, derivation_reason) # will only make copy if necessary
             new_fun = LFun(new_argtype, new_body, self.varname)
             return derived(new_fun, self, derivation_reason)
         
@@ -2652,7 +2632,7 @@ def random_term(typ, blockset=None, usedset=set(), prob_used=0.8, prob_var=0.5):
 
 def random_fa_combo(output_type, ctrl, max_type_depth=1):
     ts = get_type_system()
-    input_type = ts.random_type(max_type_depth, 0.5)
+    input_type = ts.random_type(max_type_depth, 0.5, allow_variables=False)
     fun_type = types.FunType(input_type, output_type)
     result = (ctrl(typ=fun_type))(ctrl(typ=input_type))
     return result
@@ -2737,7 +2717,7 @@ def test_repr_parse_abstract(self, depth):
         x = random_expr(depth=depth)
         result = repr_parse(x)
         if not result:
-            print("Failure on '%s'" % repr(x))
+            print("Failure on depth %i expression '%s'" % (depth, repr(x)))
         self.assertTrue(result)
 
 class MetaTest(unittest.TestCase):

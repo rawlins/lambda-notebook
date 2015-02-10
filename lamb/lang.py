@@ -1553,7 +1553,7 @@ class PlaceholderTerm(meta.TypedTerm):
     """This class represents a placeholder for some denotation  that is unknown or not yet composed.  The primary use
     is in incrementally doing top-down composition."""
     def __init__(self, varname, placeholder_for, system=None):
-        meta.TypedTerm.__init__(self, varname, types.undetermined_type)
+        meta.TypedTerm.__init__(self, varname, types.VariableType("X"))
         self.placeholder_for = placeholder_for
         if system is None:
             self.system = get_system()
@@ -2141,8 +2141,8 @@ def tree_fa_fun_abstract(f, a, assignment=None):
     if not ts.fun_arg_check_bool(f, a):
         return None
     result = (f.content.under_assignment(assignment))(a.content.under_assignment(assignment))
-    if not a.type.undetermined:
-        result = result.reduce()
+    # if not a.type.undetermined:
+    #     result = result.reduce()
     return result
 
 def tree_left_fa_fun(t, assignment=None):
@@ -2209,9 +2209,6 @@ def tree_pm_fun_wrong(t, assignment=None):
     body1 = c1.apply(meta.TypedTerm(varname, types.type_e))
     body2 = c2.apply(meta.TypedTerm(varname, types.type_e))
     conjoined_c = meta.LFun(type_e, body1 & body2, varname)
-    # TODO: does this overgenerate uncertainty?
-    if body1.type.undetermined or body2.type.undetermined:
-        conjoined_c.type = types.UndeterminedType(conjoined_c.type)
     return BinaryComposite(t[0], t[1], conjoined_c, source=t)
 
 

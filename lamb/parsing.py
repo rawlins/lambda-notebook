@@ -148,17 +148,17 @@ def parse_equality_line(s, env=None, transforms=None):
         if not term.variable():
             raise ParseError("Assignment to non-variable term '%s'" % term)
         ts = meta.get_type_system()
-        (unify_l, unify_r) = ts.local_unify(term.type, right_side.type)
+        u_result = ts.unify(term.type, right_side.type)
         # there are two ways in which unify could fail.  One is the built-in ad hoc type_guessed flag, and one is a genuine type mismatch.
         # we want to silently override guessed types here.
-        if unify_l is None:
+        if u_result is None:
             if term.type_guessed:
                 term.type = right_side.type
             else:
                 raise types.TypeMismatch(term, right_side, "Variable assignment")
         else:
             # brute force
-            term.type = unify_r
+            term.type = u_result
         if transform:
             right_side = transform(right_side)
         # NOTE side-effect here
