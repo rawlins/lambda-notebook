@@ -255,22 +255,27 @@ class TypedExpr(object):
                     raise ValueError("Wrong number of arguments on type adjustment")
                     #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
                     #return None
-                new_op_type = types.FunType(self.args[0].type, unify_target)
-                # TODO TYPES need to unify with op, this is currently wrong
+                #new_op_type = types.FunType(self.args[0].type, unify_target)
+                (new_op_type, new_arg_type, new_ret_type) = ts.unify_fr(self.op.type, unify_target)
+                if new_op_type is None:
+                    return None
                 new_op = self.op.try_adjust_type(new_op_type, derivation_reason)
                 if new_op is None:
                     return None
+                new_arg = self.args[0].try_adjust_type(new_arg_type, derivation_reason)
+                if new_arg is None:
+                    return None
                 self_copy = self.copy()
                 self_copy.op = new_op
-                # can't guarantee that we will have adopted the unified type, may still be weaker
-                self_copy.type = new_op.type.right
+                self_copy.args = [new_arg]
+                #self_copy.type = new_op.type.right
                 return derived(self_copy, self, derivation_reason)
             else:
                 # should be term?
                 if self.term():
-                    new_op = self.copy()
-                    new_op.type = unify_target
-                    return derived(new_op, self, derivation_reason)
+                    new_term = self.copy()
+                    new_term.type = unify_target
+                    return derived(new_term, self, derivation_reason)
                 else:
                     logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
                     return self

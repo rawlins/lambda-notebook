@@ -98,14 +98,14 @@ class TypeConstructor(object):
             accum = accum | part.bound_type_vars()
         return accum
 
-    def sub_type_vars(self, assignment):
+    def sub_type_vars(self, assignment, trans_closure=False):
         """Substitute type variables in `self` given the mapping in `assignment`.
 
         This does only one-place substitutions, so it won't follow chains if there are any."""
         l = list()
         dirty = False
         for i in range(len(self)):
-            l.append(self[i].sub_type_vars(assignment))
+            l.append(self[i].sub_type_vars(assignment,trans_closure=trans_closure))
             if l[i] is not self[i]:
                 dirty = True
         if dirty:
@@ -533,6 +533,35 @@ def is_vartype_symbol(x):
     else:
         return False
 
+def transitive_add(v, end, assignment):
+    visited = set()
+    while v in assignment:
+        if v in visited or v == end:
+            from lamb import meta
+            from lamb.meta import logger
+            logger.error("Warning: breaking loop (v: '%s', end: '%s', visited: '%s')" % (v, end, visited))
+            break
+        visited |= {v}
+        next_v = assignment[v]
+        assignment[v] = end
+        v = next_v
+    return assignment
+
+def transitive_find_end(v, assignment):
+    # TODO: delete the loop checking from these functions once it's solid
+    visited = set()
+    last_v = None
+    while isinstance(v, VariableType) and v in assignment:
+        if v in visited:
+            from lamb import meta
+            from lamb.meta import logger
+            logger.error("Warning: breaking loop (v: '%s', visited: '%s')" % (v, visited))
+            break
+        visited |= {v}
+        last_v = v
+        v = assignment[v]
+    return (v, last_v)
+
 
 class VariableType(TypeConstructor):
     def __init__(self, symbol, number=None):
@@ -563,34 +592,45 @@ class VariableType(TypeConstructor):
             return (self, assignment)
         if self in assignment:
             # need to check if existing assignment for t2 is compatible
-            v_trans = self
             # follow any transitive sequences to the principle type
-            while v_trans in assignment:
-                (r_result, r_assign) = unify_control_fun(assignment[v_trans], t2, assignment)
-                #print(v_trans, assignment[v_trans], (r_result, r_assign))
-                if r_result is None:
-                    return (None, None)
-                v_trans = assignment[v_trans]
+            (principle, key) = transitive_find_end(self, assignment)
+            # test if existing principle type is compatible with t2
+            r_result, assignment = unify_control_fun(principle, t2, assignment)
+            # r_result is a potentially stronger principle type
+            if r_result is None:
+                return (None, None)
+            if key is None:
+                assignment[self] = r_result
+            else: # update with new principle type
+                #print(key, r_result)
+                assignment[key] = r_result
+
+
             # r_result is the (new) principle type
             # r_assign[v] = r_result
-            v_trans = self
+
+            #v_trans = self
             # short-circuit any transitive pairs that led to r_result
-            while v_trans in assignment:
-                next_v = assignment[v_trans]
-                assignment[v_trans] = r_result
-                v_trans = next_v
+            # while v_trans in assignment:
+            #     next_v = assignment[v_trans]
+            #     assignment[v_trans] = r_result
+            #     v_trans = next_v
+            #assignment = transitive_add(self, r_result, assignment)
             if isinstance(t2, VariableType):
                 # ensure that t2's value gets back-converted to the discovered principle type, if relevant
-                r_result, r_assign = t2.unify(r_result, unify_control_fun, r_assign)
+                r_result, assignment = t2.unify(r_result, unify_control_fun, assignment)
+                #print(r_result)
                 if r_result is None:
                     return (None, None)
-            return r_result, r_assign
+            return r_result, assignment
         else:
             # t2 is guaranteed to be the principle type
             # note that if t2 is a var, this always uses the second var as the principle.
             # requires full alpha conversion before unification.
-            assignment[self] = t2
+
             r_result = t2
+            #assignment = transitive_add(self, r_result, assignment)
+            assignment[self] = t2
             return (r_result, assignment)
         
     
@@ -601,8 +641,16 @@ class VariableType(TypeConstructor):
         if self in assignment:
             x = assignment[self]
             if trans_closure:
+                visited = {self}
                 while x in assignment:
-                    x = assignment[x] # TODO, should make this loop safe (relies on there never being loops in the assignment)
+                    if x in visited:
+                        from lamb import meta
+                        from lamb.meta import logger
+                        logger.error("Breaking loop in substitution (x: '%s', visited: '%s')" % (x, visited))
+                        break
+                    visited |= x
+                    x = assignment[x]
+                #print("substituting %s for %s" % (x, self))
             return x
         else:
             return self
@@ -814,6 +862,19 @@ class TypeSystem(object):
         (result, r_assign) = a.unify(b, self.unify, None)
         return result
 
+    def unify_ar(self, arg, ret):
+        return FunType(arg, ret)
+
+    def unify_fr(self, fun, ret):
+        if fun.functional():
+            r = self.unify(fun.right, ret)
+            if r is None:
+                return (None, None, None)
+            else:
+                return (fun, fun.left, r)
+        else:
+            return (None, None, None)
+
     def unify_fa(self, fun, arg):
         """Try unifying the input type of the function with the argument's type.
         If it succeeds, it returns a (possibly changed) tuple of the function's type, the argument's type, and the output type.
@@ -824,7 +885,7 @@ class TypeSystem(object):
             if a is None:
                 return (None, None, None)
             else:
-                return (FunType(a, fun.right), a, fun.right)
+                return (fun, a, fun.right)
         else:
             return (None, None, None)
 
@@ -1023,22 +1084,21 @@ class PolyTypeSystem(TypeSystem):
             if result is None:
                 return (None, None)
             if len(result) > 1:
+                #print("before: ", result, r_assign)
                 # enforce changes present in assignment on all parts of the result
                 # TODO: could do this incrementally?
                 l = list()
-                for i in range(len(result)-1):
-                    l.append(result[i].sub_type_vars(r_assign))
-                l.append(result[-1])
+                for i in range(len(result)):
+                    l.append(result[i].sub_type_vars(r_assign, trans_closure=True))
+                #l.append(result[-1])
+                #print(l)
                 result = result.copy_local(*l)
+                #print("after: ", result)
             return (result, r_assign)
 
-    def unify_fa(self, fun, arg):
-        """Try unifying the input type of the function with the argument's type.
-        If it succeeds, it returns a (possibly changed) tuple of the function's type, the argument's type, and the output type.
-        If this fails, returns (None, None, None)."""
-
-        output_var = safe_var_in_type(arg)
-        hyp_fun = FunType(arg, output_var)
+    def unify_fr(self, fun, ret):
+        input_var = safe_var_in_type(ret)
+        hyp_fun = FunType(input_var, ret)
         result = self.unify_details(hyp_fun, fun) # use reverse order to try to keep variables in fun preferentially
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
@@ -1049,8 +1109,29 @@ class PolyTypeSystem(TypeSystem):
                 return (result.principle, result.principle.left, result.principle.right)
 
 
+    def unify_fa(self, fun, arg):
+        """Try unifying the input type of the function with the argument's type.
+        If it succeeds, it returns a (possibly changed) tuple of the function's type, the argument's type, and the output type.
+        If this fails, returns (None, None, None)."""
+
+        #print("fun: ", fun)
+        output_var = safe_var_in_type(arg)
+        hyp_fun = FunType(arg, output_var)
+        #print("hyp fun: ", hyp_fun)
+        result = self.unify_details(hyp_fun, fun) # use reverse order to try to keep variables in fun preferentially
+        #print("principle: ", result.principle)
+        #print(self.unify(fun, hyp_fun))
+        if result is None: # this will fail if `fun` is not a function or cannot be made into one
+            return (None, None, None)
+        else:
+            if result.trivial: # no need to introduce spurious alpha renaming
+                return (fun, fun.left, fun.right)
+            else:
+                return (result.principle, result.principle.left, result.principle.right)
+
+
     # There's really got to be a better way to do this...
-    def alpha_equiv(t1, t2):
+    def alpha_equiv(self, t1, t2):
         assignment = dict()
         t1safe = make_safe(t1, t2, set(assignment.keys()) | set(assignment.values()))
         (result, r_assign) = self.unify_r(t1safe, t2, assignment)
