@@ -539,7 +539,7 @@ def transitive_add(v, end, assignment):
         if v in visited or v == end:
             from lamb import meta
             from lamb.meta import logger
-            logger.error("Warning: breaking loop (v: '%s', end: '%s', visited: '%s')" % (v, end, visited))
+            logger.error("breaking loop (v: '%s', end: '%s', visited: '%s', assignment: '%s')" % (v, end, visited, assignment))
             break
         visited |= {v}
         next_v = assignment[v]
@@ -555,7 +555,7 @@ def transitive_find_end(v, assignment):
         if v in visited:
             from lamb import meta
             from lamb.meta import logger
-            logger.error("Warning: breaking loop (v: '%s', visited: '%s')" % (v, visited))
+            logger.error("breaking loop (v: '%s', visited: '%s', assignment: '%s')" % (v, visited, assignment))
             break
         visited |= {v}
         last_v = v
@@ -589,50 +589,60 @@ class VariableType(TypeConstructor):
     def unify(self, t2, unify_control_fun, assignment):
         if self == t2:
             # does this really come up?
+            print("hi")
             return (self, assignment)
-        if self in assignment:
-            # need to check if existing assignment for t2 is compatible
-            # follow any transitive sequences to the principle type
-            (principle, key) = transitive_find_end(self, assignment)
-            # test if existing principle type is compatible with t2
-            r_result, assignment = unify_control_fun(principle, t2, assignment)
-            # r_result is a potentially stronger principle type
-            if r_result is None:
-                return (None, None)
-            if key is None:
-                assignment[self] = r_result
-            else: # update with new principle type
-                #print(key, r_result)
-                assignment[key] = r_result
-
-
-            # r_result is the (new) principle type
-            # r_assign[v] = r_result
-
-            #v_trans = self
-            # short-circuit any transitive pairs that led to r_result
-            # while v_trans in assignment:
-            #     next_v = assignment[v_trans]
-            #     assignment[v_trans] = r_result
-            #     v_trans = next_v
-            #assignment = transitive_add(self, r_result, assignment)
-            if isinstance(t2, VariableType):
-                # ensure that t2's value gets back-converted to the discovered principle type, if relevant
-                r_result, assignment = t2.unify(r_result, unify_control_fun, assignment)
-                #print(r_result)
-                if r_result is None:
-                    return (None, None)
-            return r_result, assignment
+        if isinstance(t2, VariableType):
+            # both are variable types.  Must either integrate one or both variables into an existing transitive chain, or start a new one.
+            if self in assignment:
+                if t2 in assignment:
+                    # The hard case: need to merge two chains.  Merge them by unifying the tails.
+                    (principle1, key1) = transitive_find_end(self, assignment)
+                    (principle2, key2) = transitive_find_end(t2, assignment)
+                    if principle1 == principle2:
+                        return (principle1, assignment)
+                    new_principle, assignment = unify_control_fun(principle1, principle2, assignment)
+                    if new_principle is None:
+                        return (None, None)
+                    assignment[key1] = new_principle
+                    assignment[key2] = new_principle
+                    return (new_principle, assignment)
+                    
+                else:
+                    (principle, key) = transitive_find_end(self, assignment)
+                    #return principle.unify(self, assignment)
+                    if principle != t2: # special case: is t2 already the end of the chain?
+                        assignment[t2] = self # new head.  note that we can't get here if t2 is part of this chain already.
+                    return (principle, assignment)
+            else:
+                if t2 in assignment:
+                    (principle, key) = transitive_find_end(t2, assignment)
+                    if principle != self:
+                        assignment[self] = t2 # new head
+                    return (principle, assignment)
+                else:
+                    # the easy case.  Either direction should work.
+                    # note that this may either extend an existing 1-step chain, or merge with an existing 1-step chain.
+                    assignment[self] = t2
+                    return (t2, assignment)
         else:
-            # t2 is guaranteed to be the principle type
-            # note that if t2 is a var, this always uses the second var as the principle.
-            # requires full alpha conversion before unification.
-
-            r_result = t2
-            #assignment = transitive_add(self, r_result, assignment)
-            assignment[self] = t2
-            return (r_result, assignment)
-        
+            # t2 is not a variable.  Need to add or unify it to the end of some transitive chain.
+            if self in assignment:
+                (principle, key) = transitive_find_end(self, assignment)
+                if isinstance(principle, VariableType):
+                    # just add t2 to the tail of the chain
+                    return principle.unify(t2, unify_control_fun, assignment)
+                else:
+                    # try to merge the two
+                    r_result, assignment = unify_control_fun(principle, t2, assignment)
+                    if r_result is None:
+                        return (None, None)
+                    if r_result != principle:
+                        assignment[key] = r_result
+                    return (r_result, assignment)
+            else:
+                # safe to start a new transitive chain
+                assignment[self] = t2
+                return (t2, assignment)
     
     def bound_type_vars(self):
         return set((self,))
@@ -646,9 +656,9 @@ class VariableType(TypeConstructor):
                     if x in visited:
                         from lamb import meta
                         from lamb.meta import logger
-                        logger.error("Breaking loop in substitution (x: '%s', visited: '%s')" % (x, visited))
+                        logger.error("breaking loop in substitution (x: '%s', visited: '%s', , assignment: '%s')" % (x, visited, assignment))
                         break
-                    visited |= x
+                    visited |= {x}
                     x = assignment[x]
                 #print("substituting %s for %s" % (x, self))
             return x
@@ -685,7 +695,7 @@ class VariableType(TypeConstructor):
 
     @classmethod
     def random(cls, random_ctrl_fun):
-        primes = random.randint(0, 10)
+        primes = random.randint(0, 5)
         var = random.choice(("X", "Y", "Z"))
         return VariableType(var, number=primes)
 
@@ -1057,6 +1067,9 @@ class PolyTypeSystem(TypeSystem):
         self.add_nonatomic(VariableType)
 
     def unify(self, t1, t2):
+        #from lamb import meta
+        #from lamb.meta import logger
+        #logger.warning("Unify(%s, %s)" % (t1,t2))
         assignment = dict()
         result = self.unify_details(t1, t2, assignment)
         if result is None:
@@ -1137,6 +1150,17 @@ class PolyTypeSystem(TypeSystem):
         (result, r_assign) = self.unify_r(t1safe, t2, assignment)
         return injective(r_assign) and not strengthens(r_assign)
 
+    def unify_sym_check(self, t1, t2):
+        r1 = self.unify(t1, t2)
+        r2 = self.unify(t2, t1)
+        if r1 is None and r2 is None:
+            return True
+        if (r1 is None or r2 is None):
+            return False
+        #print("equiv: ", r1, r2)
+        return self.alpha_equiv(r1, r2)
+
+
     def random_type(self, max_depth, p_terminate_early, allow_variables=True):
         term = random.random()
         #print(max_depth)
@@ -1152,6 +1176,21 @@ class PolyTypeSystem(TypeSystem):
                 t_class = random.choice(list(self.nonatomics))
             else:
                 t_class = random.choice(list(self.nonatomics - {VariableType}))
+            return t_class.random(ctrl_fun)
+
+    def random_variable_type(self, max_depth, p_terminate_early):
+        """Use only variable types in place of atomic types"""
+        term = random.random()
+        #print(max_depth)
+        ctrl_fun = lambda *a: self.random_variable_type(max_depth - 1, p_terminate_early)
+        if max_depth == 0 or term < p_terminate_early:
+            #print(term, p_terminate_early, term > p_terminate_early)
+            # choose a variable type
+            t = VariableType.random(ctrl_fun)
+            return t
+        else:
+            # choose a non-variable type and generate a random instantiation of it
+            t_class = random.choice(list(self.nonatomics - {VariableType}))
             return t_class.random(ctrl_fun)
 
 class TypeParseError(Exception):
@@ -1262,6 +1301,20 @@ class TypeTest(unittest.TestCase):
     def test_parser_poly(self):
         for i in range(0, 1000):
             self.assertTrue(poly_system.repr_unify_check(poly_system.random_type(5, 0.2)))
+
+    def test_parser_poly_varsonly(self):
+        for i in range(0, 1000):
+            self.assertTrue(poly_system.repr_unify_check(poly_system.random_variable_type(5, 0.2)))
+
+    def test_symmetry(self):
+        """Ensure that unify is symmetric for variable types."""
+        for depth in range (1,5):
+            for i in range(0, 200):
+                t1 = poly_system.random_variable_type(depth, 0.2)
+                t2 = poly_system.random_variable_type(depth, 0.2)
+                #print(t1, t2)
+                self.assertTrue(poly_system.unify_sym_check(t1, t2))
+
 
     def test_var_cases(self):
         self.assertTrue(poly_system.parse_unify_check("e", "e"))
