@@ -132,75 +132,84 @@ class TypedExpr(object):
         Raises:
           TypeMismatch if the operator and argument(s) do not have compatible types.
         """
-        # TODO: unify convenience type guessing and type inference more generally?
         self.type_guessed = False
-        type_sys = get_type_system()
         self.derivation = None
         self.defer = defer
 
-        if (op in basic_ops):
-            #TODO: how to deal properly with the arguments here?
-            # remove to factory, with specialized subclass
-            raise NotImplementedError("Warning: constructing expression from deprecated basic operator '%s'" % op)
-            self.args = [self.ensure_typed_expr(x) for x in args]
-            for a in self.args:
-                a.type_not_guessed()
-            # python 2.x was map(typed_expr, args)
-            if op in tf_ops:
-                self.type = type_t
-            elif op in num_ops:
-                self.type = type_n
-            self.op = op
-        elif isinstance(op, TypedExpr):
-            if (len(args) > 1):
-                raise TypeMismatch(op, args, "Function argument combination (too many arguments)")
-            elif (len(args) == 0):
-                logger.warning("Vacuous container TypedExpr")
-                self.type = op.type
-                self.op = op
-                self.args = list()
-            else:
-                history = False
-                arg = self.ensure_typed_expr(args[0])
-                unify_f, unify_a, unify_r = type_sys.unify_fa(op.type, arg.type)
-                if unify_f is None:
-                    raise TypeMismatch(op, arg, "Function argument combination (unification failed)")
-                self.type = unify_r
-                if op.type == unify_f or defer:
-                    self.op = op
-                else:
-                    self.op = op.try_adjust_type(unify_f, "Function argument combination")
-                    history = True
-                if unify_a == arg.type or defer:
-                    self.args = [arg]
-                else:
-                    self.args = [arg.try_adjust_type(unify_a, "Function argument combination")]
-                    history = True
-                if history:
-                    #print("hi %s %s" % (repr(self.op), repr(self.args[0])))
-                    # bit of a hack: build a derivation with the deferred version as the origin
-                    old = TypedExpr(op, arg, defer=True)
-                    #print(old[0], self[0])
-                    derived(self, old, desc="Type inference")
-            if isinstance(op, LFun):
-                arg.type_not_guessed()
-            else:
-                # not 100% that the following is the right fix...
-                try:
-                    self.type_guessed = op.type_guessed
-                except AttributeError:
-                    self.type_guessed = False
-        elif (len(args) == 0):
-            # TODO this should never be called directly any more??  But may want to be able to call from subclasses?
-            #raise ValueError("TypedExpr called with no arguments.  Should use function or term.  (op: '%s')" % repr(op))
-            self.op = num_or_str(op)
-            if isinstance(self.op, Number):
-                self.type = type_n
-            else:
-                self.type = type_e # TODO is this the right thing to do? these were potentially predicate names in aima
-            self.args = list()
-        else:
-            raise NotImplementedError("Don't know how to initialize TypedExpr with '%s: %s'" % (repr(op), repr(args)))
+        # if (op in basic_ops):
+        #     # removed to factory, with specialized subclass.  Still here just in case there's any lingering code.
+        #     raise NotImplementedError("Can't construct expression from deprecated basic operator '%s'" % op)
+        if (len(args) == 0):
+            logger.warning("Vacuous container TypedExpr")
+            args = list()
+
+        self.op = op
+        self.args = list(args)
+
+        # logger.warning("TypedExpr constructor called with %s, %s" % (op, repr(args)))
+        # if (op in basic_ops):
+        #     #TODO: how to deal properly with the arguments here?
+        #     # remove to factory, with specialized subclass
+        #     raise NotImplementedError("Warning: constructing expression from deprecated basic operator '%s'" % op)
+        #     self.args = [self.ensure_typed_expr(x) for x in args]
+        #     for a in self.args:
+        #         a.type_not_guessed()
+        #     # python 2.x was map(typed_expr, args)
+        #     if op in tf_ops:
+        #         self.type = type_t
+        #     elif op in num_ops:
+        #         self.type = type_n
+        #     self.op = op
+        # elif isinstance(op, TypedExpr):
+        #     if (len(args) > 1):
+        #         raise TypeMismatch(op, args, "Function argument combination (too many arguments)")
+        #     elif (len(args) == 0):
+        #         logger.warning("Vacuous container TypedExpr")
+        #         self.type = op.type
+        #         self.op = op
+        #         self.args = list()
+        #     else:
+        #         history = False
+        #         arg = self.ensure_typed_expr(args[0])
+        #         unify_f, unify_a, unify_r = type_sys.unify_fa(op.type, arg.type)
+        #         if unify_f is None:
+        #             raise TypeMismatch(op, arg, "Function argument combination (unification failed)")
+        #         self.type = unify_r
+        #         if op.type == unify_f or defer:
+        #             self.op = op
+        #         else:
+        #             self.op = op.try_adjust_type(unify_f, "Function argument combination")
+        #             history = True
+        #         if unify_a == arg.type or defer:
+        #             self.args = [arg]
+        #         else:
+        #             self.args = [arg.try_adjust_type(unify_a, "Function argument combination")]
+        #             history = True
+        #         if history:
+        #             #print("hi %s %s" % (repr(self.op), repr(self.args[0])))
+        #             # bit of a hack: build a derivation with the deferred version as the origin
+        #             old = TypedExpr(op, arg, defer=True)
+        #             #print(old[0], self[0])
+        #             derived(self, old, desc="Type inference")
+        #     if isinstance(op, LFun):
+        #         arg.type_not_guessed()
+        #     else:
+        #         # not 100% that the following is the right fix...
+        #         try:
+        #             self.type_guessed = op.type_guessed
+        #         except AttributeError:
+        #             self.type_guessed = False
+        # elif (len(args) == 0):
+        #     # TODO this should never be called directly any more??  But may want to be able to call from subclasses?
+        #     #raise ValueError("TypedExpr called with no arguments.  Should use function or term.  (op: '%s')" % repr(op))
+        #     self.op = num_or_str(op)
+        #     if isinstance(self.op, Number):
+        #         self.type = type_n
+        #     else:
+        #         self.type = type_e # TODO is this the right thing to do? these were potentially predicate names in aima
+        #     self.args = list()
+        # else:
+        #     raise NotImplementedError("Don't know how to initialize TypedExpr with '%s: %s'" % (repr(op), repr(args)))
 
     # TODO: not comfortable with replicating this logic separately.  Need a better way.
     def recalc_type(self):
@@ -659,7 +668,8 @@ class TypedExpr(object):
                 else:
                     logger.warning("Unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (args[0].type, repr(args[0]), repr(args[1]), args[1].type))
             # if we get to this point, args[0] should be the operator, and the rest of the list arguments to the operator.
-            return TypedExpr(*args)
+            #return TypedExpr(*args)
+            return ApplicationExpr(*args)
 
     @classmethod
     def ensure_typed_expr(cls, s, typ=None, assignment=None):
@@ -692,7 +702,9 @@ class TypedExpr(object):
             return None
         result = self.op.try_coerce_new_argument(typ)
         if result:
-            copy = TypedExpr(result, *self.args)
+            #copy = TypedExpr(result, *self.args)
+            copy = ApplicationExpr(result, *self.args)
+            #copy = result.copy()
             if (remove_guessed):
                 result.type_guessed = False
             return copy
@@ -823,7 +835,8 @@ class TypedExpr(object):
     def reduce_all(self):
         """Maximally reduce function-argument combinations in `self`."""
         # this is a dumb strategy: it's either not fully general (but I haven't found the case yet), or it's way
-        # overkill, I'm not sure which; probably both.  The potential overkill is the recursive step.
+        # too inefficient, I'm not sure which; probably both.  The potential overkill is the recursive step.
+        # TODO: research on reduction strategies.
         # TODO: add some kind of memoization?
 
         # uncomment this to see just how bad this function is...
@@ -993,6 +1006,51 @@ class TypedExpr(object):
     def __neg__(self):           return self.factory('-',  self)
     def __pow__(self, other):    return self.factory('**', self, other)
 
+class ApplicationExpr(TypedExpr):
+    def __init__(self, fun, arg, defer=False):
+        ts = get_type_system()
+        fun = self.ensure_typed_expr(fun)
+        arg = self.ensure_typed_expr(arg)
+
+        history = False
+        #self.derivation = None
+        #self.type_guessed = False
+        #self.defer = defer
+        (f_type, a_type, out_type) = ts.unify_fa(fun.type, arg.type)
+        if f_type is None:
+            raise TypeMismatch(fun, arg, "Function argument combination (unification failed)")
+
+        self.type = out_type
+        if fun.type == f_type or defer:
+            op = fun
+        else:
+            op = fun.try_adjust_type(f_type, "Function argument combination")
+            history = True
+
+        if a_type == arg.type or defer:
+            args = [arg]
+        else:
+            args = [arg.try_adjust_type(a_type, "Function argument combination")]
+            history = True
+        super().__init__(op, *args, defer=defer)
+        #self.op = op
+        #self.args = args
+
+        if history:
+            # bit of a hack: build a derivation with the deferred version as the origin
+            old = ApplicationExpr(fun, arg, defer=True)
+            derived(self, old, desc="Type inference")    
+        if isinstance(fun, LFun):
+            arg.type_not_guessed()
+        else:
+            # not 100% that the following is the right fix...
+            try:
+                self.type_guessed = fun.type_guessed
+            except AttributeError:
+                self.type_guessed = False
+
+    def copy(self):
+        return ApplicationExpr(self.op, self.args[0], defer=self.defer)
 
 class Tuple(TypedExpr):
     """TypedExpr wrapper on a tuple.
@@ -1000,17 +1058,18 @@ class Tuple(TypedExpr):
     This works basically as a python tuple would, and is indicated using commas within a parenthetical.
     `args` is a list containing the elements of the tuple."""
     def __init__(self, args, typ=None):
-        self.op = "Tuple"
-        self.derivation = None
-        self.args = list()
+        # self.op = "Tuple"
+        # self.derivation = None
+        new_args = list()
         type_accum = list()
         for i in range(len(args)):
             if typ is None:
                 a_i = self.ensure_typed_expr(args[i])
             else:
                 a_i = self.ensure_typed_expr(args[i], typ=typ[i])
-            self.args.append(a_i)
+            new_args.append(a_i)
             type_accum.append(a_i.type)
+        super().__init__("Tuple", *new_args)
         self.type = types.TupleType(*type_accum)
 
     def copy(self):
@@ -1052,6 +1111,7 @@ class TypedTerm(TypedExpr):
 
     The attribute 'type_guessed' is flagged if the type was not specified; this may result in coercion as necessary."""
     def __init__(self, varname, typ=None, latex_op_str=None):
+        # NOTE: does not call super
         self.op = num_or_str(varname)
         self.derivation = None
         if typ is None:
@@ -1243,10 +1303,11 @@ class UnaryOpExpr(TypedExpr):
     For example, statements like '~p is a sentence iff p is a sentence'.  While semantics is not currently implemented, it could be
     done in subclasses."""
     def __init__(self, typ, op, arg1, op_name_uni=None, op_name_latex=None):
-        self.derivation = None
-        self.op = op
+        #self.derivation = None
+        super().__init__(op, self.ensure_typed_expr(arg1, typ))
+        #self.op = op
         # default behavior: type of body is type of whole
-        self.args = [self.ensure_typed_expr(arg1, typ)]
+        #self.args = [self.ensure_typed_expr(arg1, typ)]
         self.type = typ
         if op_name_uni is None:
             self.op_name = op
@@ -1302,12 +1363,13 @@ class BinaryOpExpr(TypedExpr):
 
     Because of the way the copy function works, it is currently not suited for direct instantiation at all."""
     def __init__(self, typ, op, arg1, arg2, op_name_uni=None, op_name_latex=None, tcheck_args=True):
-        self.derivation = None
-        self.op = op
+        #self.derivation = None
+        #self.op = op
         if tcheck_args:
-            self.args = [self.ensure_typed_expr(arg1, typ), self.ensure_typed_expr(arg2, typ)]
+            args = [self.ensure_typed_expr(arg1, typ), self.ensure_typed_expr(arg2, typ)]
         else:
-            self.args = [self.ensure_typed_expr(arg1), self.ensure_typed_expr(arg2)]
+            args = [self.ensure_typed_expr(arg1), self.ensure_typed_expr(arg2)]
+        super().__init__(op, *args)
         self.type = typ
         if op_name_uni is None:
             self.op_name = op
@@ -1607,6 +1669,7 @@ class BindingOp(TypedExpr):
     op_name_latex = None
 
     def __init__(self, var_or_vtype, typ, body, varname=None, body_type = None, assignment=None):
+        # NOTE: not calling superclass
         # Warning: can't assume in general that typ is not None.  I.e. may be set in subclass after a call
         # to this function.  Subclass is responsible for doing this properly...
         if body_type is None:
@@ -1629,6 +1692,7 @@ class BindingOp(TypedExpr):
             raise ValueError("Need variable name (got '%s')" % self.varname)
         self.type = typ
         self.derivation = None
+        self.type_guessed = False
         self.var_instance = TypedTerm(self.varname, self.vartype) # normalize class
         # set self.op so that hashing and equality comparison work correctly
         # TODO: consider overriding __eq__ and __hash__.
@@ -1914,16 +1978,16 @@ class ListedSet(TypedExpr):
 
     def __init__(self, iterable, typ=None, assignment=None):
         s = set(iterable) # just make it a set first, remove duplicates, flatten order
-        self.args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
+        args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
         if len(self.args) == 0 and typ is None:
             typ = types.VariableType("X") # could be a set of anything
         elif typ is None:
             typ = self.args[0].type
         for i in range(len(self.args)): # type checking TODO: this isn't right, would need to pick the strongest type
-            self.args[i] = self.ensure_typed_expr(self.args[i], typ)
-        self.op = "Set"
+            args[i] = self.ensure_typed_expr(self.args[i], typ)
+        super().__init__("Set", *args)
+        #self.op = "Set"
         self.type = types.SetType(typ)
-        self.derivation = None
 
     def subst(self, i, s):
         if len(self.args) < 2:
