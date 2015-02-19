@@ -1187,7 +1187,7 @@ class PolyTypeSystem(TypeSystem):
         output_var = safe_var_in_set(unsafe_set, internal=True)
         hyp_fun = FunType(arg, output_var)
         #print("hyp fun: ", hyp_fun)
-        print("unify_fa: ", fun, hyp_fun, type_env, unsafe_set)
+        #print("unify_fa: ", fun, hyp_fun, type_env, unsafe_set)
         result = self.unify_details(fun, hyp_fun) # use reverse order to try to keep variables in fun preferentially
         #print("principle: ", result.principle)
         #print(self.unify(fun, hyp_fun))
@@ -1369,7 +1369,7 @@ class TypeTest(unittest.TestCase):
             for i in range(0, 200):
                 t1 = poly_system.random_variable_type(depth, 0.2)
                 t2 = poly_system.random_variable_type(depth, 0.2)
-                print(t1, t2)
+                #print(t1, t2)
                 self.assertTrue(poly_system.unify_sym_check(t1, t2))
 
 
