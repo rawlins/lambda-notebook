@@ -101,7 +101,7 @@ def parse_te(line, env=None, use_env=False):
     var_env = vars_only(env)
     try:
         result = meta.te(line, assignment=var_env)
-        result = result.regularize_type_env(var_env)
+        result = result.regularize_type_env(var_env, constants=True)
         if reduce:
             result = result.reduce_all()
     except Exception as e:
@@ -171,7 +171,7 @@ def parse_equality_line(s, env=None, transforms=None):
     else:
         try:
             right_side = meta.TypedExpr.factory(right_str.strip(), assignment=var_env)
-            right_side = right_side.regularize_type_env(var_env)
+            right_side = right_side.regularize_type_env(var_env, constants=True)
             right_side = right_side.under_assignment(var_env)
         except Exception as e:
             meta.logger.error("Parsing of assignment to '%s' failed with exception:" % left_s)
