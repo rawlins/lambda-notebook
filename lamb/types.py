@@ -1184,7 +1184,7 @@ class PolyTypeSystem(TypeSystem):
         if type_env is None:
             type_env = dict()
         unsafe_set = arg.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env)
-        output_var = safe_var_in_set(unsafe_set, internal=True)
+        output_var = safe_var_in_set(unsafe_set, internal=False)
         hyp_fun = FunType(arg, output_var)
         #print("hyp fun: ", hyp_fun)
         #print("unify_fa: ", fun, hyp_fun, type_env, unsafe_set)
