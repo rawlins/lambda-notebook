@@ -525,8 +525,8 @@ class TypedExpr(object):
                 v = s
             if typ is not None:
                 type_vars = typ.bound_type_vars()
-                if len(type_vars) > 0 and not v in assignment:
-                    raise TypeMismatch(TypedTerm(v, typ=typ), None, "Cannot use type variables in non-declared or free terms.")
+                #if len(type_vars) > 0 and not v in assignment:
+                #    raise TypeMismatch(TypedTerm(v, typ=typ), None, "Cannot use type variables in non-declared or free terms.")
             if _constants_use_custom and not is_var_symbol(v):
                 return CustomTerm(v, typ=typ, assignment=assignment)
             else:
@@ -2261,7 +2261,7 @@ class LFun(BindingOp):
             if self.argtype != unified.left:
                 # arg type needs to be adjusted, and hence all instances of the bound variable as well.  Do this with beta reduction.
                 new_var = TypedTerm(self.varname, unified.left)
-                new_body = self.apply(new_var, assignment=assignment)
+                new_body = self.apply(new_var)
             else:
                 new_body = self.body
             #if new_body.type != unify_a.right:
