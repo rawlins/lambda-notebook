@@ -600,7 +600,7 @@ class TypedExpr(object):
 
                 # prevent future coercion of the argument
                 args[1].type_not_guessed()
-                coerced_op = args[0].try_coerce_new_argument(args[1].type)
+                coerced_op = args[0].try_coerce_new_argument(args[1].type, assignment=assignment)
                 if coerced_op is not None:
                     logger.info("Coerced guessed type %s for '%s' into %s, to match argument '%s'" % (args[0].type, repr(args[0]), coerced_op.type, repr(args[1])))
                     args = (coerced_op,) + args[1:]
@@ -632,7 +632,7 @@ class TypedExpr(object):
             else:
                 return r_adjusted
 
-    def try_coerce_new_argument(self, typ, remove_guessed=False):
+    def try_coerce_new_argument(self, typ, remove_guessed=False, assignment=None):
         """For guessed types, see if it is possible to coerce a new argument.  Will recurse to
         find guessed types.
 
@@ -641,7 +641,7 @@ class TypedExpr(object):
             return None
         if not isinstance(self.op, TypedExpr):
             return None
-        result = self.op.try_coerce_new_argument(typ)
+        result = self.op.try_coerce_new_argument(typ, assignment=assignment)
         if result:
             #copy = TypedExpr(result, *self.args)
             copy = ApplicationExpr(result, *self.args)
@@ -1183,6 +1183,7 @@ class TypedTerm(TypedExpr):
         coerced_op.type = self.type.add_internal_argument(typ)
         if not remove_guessed:
             coerced_op.type_guessed = True
+        
         if assignment is not None and self.op in assignment:
             assignment[self.op] = coerced_op
         return coerced_op
@@ -2462,7 +2463,7 @@ def variable_transform_rebuild(expr, dom, fun):
                 # ???
                 raise ValueError("problem during variable conversion...") # TODO: make less cryptic
         if dirty:
-            print("            local_copy of %s" % repr(expr))
+            #print("            local_copy of %s" % repr(expr))
             expr = expr.local_copy(*seq)
     return expr
 
