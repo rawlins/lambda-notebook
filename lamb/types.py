@@ -528,7 +528,7 @@ class TupleType(TypeConstructor):
         args = tuple([random_ctrl_fun() for i in range(0,tuple_len)])
         return TupleType(*args)
 
-vartype_regex_str = r"[XYZ]'*"
+vartype_regex_str = r"[XYZ]('+|([0-9]*))"
 vartype_regex = re.compile(vartype_regex_str)
 vartype_regex_full = re.compile( "^" + vartype_regex_str + "$")
 
@@ -538,6 +538,19 @@ def is_vartype_symbol(x):
         return True
     else:
         return False
+
+def parse_vartype(x):
+    m = vartype_regex_full.match(x)
+    if not m:
+        return (None, None)
+    symbol = x[0]
+    if len(x) > 1:
+        if x[1] == "'":
+            return (symbol, len(x)-1)
+        else:
+            return (symbol, int(x[1:]))
+    else:
+        return (symbol, 0)
 
 def transitive_add(v, end, assignment):
     visited = set()
@@ -596,21 +609,28 @@ def replace_in_assign(var, value, assign):
     return assign
 
 class VariableType(TypeConstructor):
+    max_id = 0
+
     def __init__(self, symbol, number=None):
         super().__init__()
-        if number:
-            self.symbol = symbol[0] + "'" * number
+        if number is not None:
+            self.symbol = symbol[0] #+ str(number)
             self.number = number
         else:
+            (symbol, number) = parse_vartype(symbol)
+            if symbol is None:
+                raise parsing.ParseError("Can't parse variable type", s=symbol)
             self.symbol = symbol
-            self.number = len(self.symbol[1:])
+            self.number = number
+        if self.number > VariableType.max_id:
+            VariableType.max_id = self.number
         self.name = symbol
         self.values = set()
         self.left = self # ???
         self.right = self # ???
 
     def internal(self):
-        return self.symbol == "I"
+        return self.symbol[0] == "I"
 
     def functional(self):
         return True # ???
@@ -682,22 +702,34 @@ class VariableType(TypeConstructor):
         else:
             return self
 
+    def key_str(self):
+        return self.symbol + str(self.number)
+
     def __hash__(self):
-        return hash(self.symbol)
+        return hash(self.key_str())
 
     def __eq__(self, other):
         """This implements token equality.  This is _not_ semantic equality due to type variable binding.
         """
         if isinstance(other, VariableType):
-            return self.symbol == other.symbol
+            return self.symbol == other.symbol and self.number == other.number
         else:
             return False
-        
+    
+    def __repr__(self):
+        if self.number > 3:
+            return self.symbol + str(self.number)
+        else:
+            return self.symbol + "'" * self.number
+
     def __str__(self):
-        return self.symbol
+        return self.__repr__()
     
     def latex_str(self):
-        return utils.ensuremath(self.__str__())
+        if self.number > 3:
+            return ensuremath(self.symbol + "_{" + str(self.number) + "}")
+        else:
+            return ensuremath(self.symbol + "'" * self.number)
     
     def _repr_latex_(self):
         return self.latex_str()
@@ -715,6 +747,51 @@ class VariableType(TypeConstructor):
         primes = random.randint(0, 5)
         var = random.choice(("X", "Y", "Z"))
         return VariableType(var, number=primes)
+
+    @classmethod
+    def fresh(cls):
+        return VariableType("X", number=cls.max_id + 1)
+
+# ensure that this gets reset on reload
+VariableType.max_id = 0
+
+class UnknownType(VariableType):
+    max_identifier = 0
+    def __init__(self):
+        UnknownType.max_identifier += 1
+        self.identifier = UnknownType.max_identifier
+        super().__init__("?", number=self.identifier)
+
+    def __str__(self):
+        return "?"
+
+    def __repr__(self):
+        return "?"
+
+    # def __hash__(self):
+    #     return hash("?" + str(self.identifier))
+
+    # def __eq__(self, other):
+    #     return self.identifer == other.identifier
+    
+    def copy_local(self):
+        return UnknownType()
+    
+    @classmethod
+    def parse(cls, s, i, parse_control_fun):
+        new_i = parsing.consume_char(s, i, "?")
+        if new_i is None:
+            return (None, i)
+        else:
+            return (UnknownType(), new_i)
+
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        return UnknownType()
+
+    @classmethod
+    def fresh(cls):
+        return UnknownType()
 
 
 
@@ -1080,6 +1157,28 @@ def make_safe(typ1, typ2, unsafe=None):
     #return (typ1.sub_type_vars(assignment), invert(assignment))
     return typ1.sub_type_vars(assignment)
 
+def compact_type_set(types, unsafe=None):
+    if unsafe is None:
+        unsafe = set()
+    remap = list()
+    keep = set()
+    mapping = dict()
+    for t in types:
+        if t.number > 3:
+            remap.append(t)
+        else:
+            keep.add(t)
+    remap.sort(key=VariableType.key_str) # for deterministic behavior
+    for t in remap:
+        m = safe_var_in_set(keep | unsafe)
+        assert t not in m
+        mapping[t] = m
+        keep.add(m)
+    return mapping
+
+
+
+
 class UnificationResult(object):
     def __init__(self, principle, t1, t2, mapping):
         self.principle = principle
@@ -1164,7 +1263,8 @@ class PolyTypeSystem(TypeSystem):
     def unify_fr(self, fun, ret, type_env=None):
         if type_env is None:
             type_env = dict()
-        input_var = safe_var_in_set(ret.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env), internal=False)
+        #input_var = safe_var_in_set(ret.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env), internal=False)
+        input_var = VariableType.fresh()
         hyp_fun = FunType(input_var, ret)
         result = self.unify_details(fun, hyp_fun)
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
@@ -1184,7 +1284,8 @@ class PolyTypeSystem(TypeSystem):
         if type_env is None:
             type_env = dict()
         unsafe_set = arg.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env)
-        output_var = safe_var_in_set(unsafe_set, internal=False)
+        #output_var = safe_var_in_set(unsafe_set, internal=False)
+        output_var = VariableType.fresh()
         hyp_fun = FunType(arg, output_var)
         #print("hyp fun: ", hyp_fun)
         #print("unify_fa: ", fun, hyp_fun, type_env, unsafe_set)
@@ -1206,6 +1307,12 @@ class PolyTypeSystem(TypeSystem):
         t1safe = make_safe(t1, t2, set(assignment.keys()) | set(assignment.values()))
         (result, r_assign) = self.unify_r(t1safe, t2, assignment)
         return injective(r_assign) and not strengthens(r_assign)
+
+    def compact_type_vars(self, t1, unsafe=None):
+        types = t1.bound_type_vars()
+        mapping = compact_type_set(types, unsafe)
+        return t1.sub_type_vars(mapping)
+
 
     def unify_sym_check(self, t1, t2):
         r1 = self.unify(t1, t2)

@@ -1101,7 +1101,7 @@ class TypedTerm(TypedExpr):
                 ts = get_type_system()
                 unified = ts.unify(typ, assignment[self.op].type)
                 if unified is None:
-                    raise TypeMismatch(cls.term_factory(self.op, typ), assignment[self.op], "Failed to unify with type specified by assignment")
+                    raise TypeMismatch(self.term_factory(self.op, typ), assignment[self.op], "Failed to unify with type specified by assignment")
                 else:
                     typ = unified
                     update_a = True
