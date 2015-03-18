@@ -1,8 +1,12 @@
-import os, os.path, shutil
+import os, os.path, shutil, json
 
 try:
     import IPython
     from IPython.html import notebookapp
+    from IPython.terminal.ipapp import TerminalIPythonApp
+    from IPython.kernel import kernelspec
+    from IPython.config import Config
+
 except:
     print("Warning: Failed to load IPython.  Some features disabled.")
 
@@ -88,16 +92,61 @@ def install_notebooks(nb_path, package_nb_path, force=False):
         if errors:
             raise shutil.Error(errors)
 
-def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=None):
-    # see branded notebook recipe here: https://gist.github.com/timo/1497850
-    #base_path = os.path.abspath(os.path.dirname(__file__))
-    #sys.path.append(base_path) # perhaps not needed here
-    #setupscript = os.path.join(base_path, "lamb_setup.py")
+kernelspec_str = """{
+ "argv": ["python3", "-m", "IPython.kernel",
+          "-f", "{connection_file}", "%s"],
+ "display_name": "Lambda Notebook (Python 3)",
+ "language": "python"
+}"""
 
-    app = notebookapp.NotebookApp()
+kernelspec_json = {
+    "argv": ["python3", "-m", "IPython.kernel", "-f", "{connection_file}"],
+    "display_name": "Lambda Notebook (Python 3)",
+    "language": "python"
+}
+
+def install_kernelspec(kernel_dir, lib_dir):
+    if lib_dir:
+        # TODO: won't override an installed copy of lamb in site-packages (e.g. in the app), fix this
+        injection_path_opt = "--IPKernelApp.exec_lines=[\"import sys; sys.path.append(\\\"%s\\\"); import lamb.lnsetup; lamb.lnsetup.ipython_setup()\"]" % lib_dir
+    else:
+        injection_path_opt = "--IPKernelApp.exec_lines=[\"import lamb.lnsetup; lamb.lnsetup.ipython_setup()\"]"
+
+    k_json = kernelspec_json.copy()
+    k_json["argv"].append(injection_path_opt)
+    k_json_filename = os.path.join(kernel_dir, "kernel.json")
+    with open(k_json_filename, 'w') as k_json_file:
+        json.dump(k_json, k_json_file, sort_keys=True, indent=4)
+
+    kernelspec.install_kernel_spec(kernel_dir, user=True, replace=True)
+
+def launch_lambda_console(args, lib_dir=None, kernel_dir=None):
+    if kernel_dir is None:
+        kernel_dir = os.path.join(lib_dir, "kernel/lambda-notebook")
+    install_kernelspec(kernel_dir, lib_dir)
+
+    c = Config()
+    # no idea why this doesn't work, but it doesn't...
+    #c.IPythonConsoleApp.kernel_name="lambda-notebook"
+    c.InteractiveShellApp.exec_lines=["import sys; sys.path.append(\"%s\"); import lamb.lnsetup; lamb.lnsetup.ipython_setup()" % lib_dir]
+
+    app = TerminalIPythonApp.instance(config=c)
+    app.initialize(argv=args[1:])
+    app.start()
 
 
-    #nb_path_opt = '--NotebookManager.notebook_dir="%s"' % (os.path.join(base_path, "notebooks"))
+def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=None, kernel_dir=None):
+    # originally based on branded notebook recipe here: https://gist.github.com/timo/1497850
+    # that recipe is for a much earlier version of IPython, so the method is quite a bit different now
+
+    if kernel_dir is None:
+        kernel_dir = os.path.join(lib_dir, "kernel/lambda-notebook")
+    
+    # ensure that the lambda-notebook kernelspec is installed
+    install_kernelspec(kernel_dir, lib_dir)
+
+    c = Config()
+
     if nb_path is None:
         nb_path = os.path.expanduser("~/Documents/lambda_notebook/")
         if nb_path[0] == "~":
@@ -109,23 +158,12 @@ def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=Non
         except shutil.Error as err:
             print(err)
         #os.makedirs(nb_path)
-    nb_path_opt = '--NotebookManager.notebook_dir="%s"' % nb_path
-    # this option calls a setup script that injects some environment variables
-    # exec_lines needs to be passed as a command line option so that it gets correctly passed on to the kernel.
-    # This should be simpler to do with exec_files, but I just could not make it work (not sure why)
-    # TODO: this may cause some user specific configuration to get ignored? test
-    # note: bad things happen here if lib_dir is problematic...
-    if lib_dir:
-        # TODO: won't override an installed copy of lamb in site-packages (e.g. in the app), fix this
-        injection_path_opt = '--IPKernelApp.exec_lines=["import sys; sys.path.append(\'%s\'); import lamb.lnsetup; lamb.lnsetup.ipython_setup()"]' % lib_dir
-    else:
-        injection_path_opt = '--IPKernelApp.exec_lines=["import lamb.lnsetup; lamb.lnsetup.ipython_setup()"]'
 
+    c.NotebookApp.notebook_dir = nb_path
 
-    app.initialize([nb_path_opt, injection_path_opt] + args[1:])
+    app = notebookapp.NotebookApp(config=c)
 
-    # this was in the recipe, but seems to be obsolete
-    #signal.signal(signal.SIGINT, signal.default_int_handler)
+    app.initialize(args[1:])
      
     try:
         app.start()

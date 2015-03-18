@@ -14,6 +14,7 @@ build_support/dist/
 build_support/Lambda Notebook.app
 Lambda Notebook.app
 build_support/Lambda Notebook.dmg
+kernel/lambda-notebook/kernel.json
 
 # Sphinx documentation
 docs/_build/
