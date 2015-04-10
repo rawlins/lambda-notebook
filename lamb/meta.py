@@ -2192,7 +2192,7 @@ BindingOp.add_op(LFun)
 
 def unsafe_variables(fun, arg):
     """For a function and an argument, return the set of variables that are not safe to use in application."""
-    return arg.free_variables() & fun.body.bound_variables()
+    return arg.free_variables() | fun.free_variables()
 
 def beta_reduce_ts(t, varname, s):
     if not is_var_symbol(varname):
@@ -2787,6 +2787,13 @@ class MetaTest(unittest.TestCase):
         test2 = TypedExpr.factory("L y_e : L x_e : y_e")
         test2b = TypedExpr.factory("L x_e : x_e")
         self.assertNotEqual(test2.apply(self.x), test2b)
+
+        # test for accidental collisions from alpha conversions, added Apr 2015
+        test3 = TypedExpr.factory("(L xbar_<e,t> : L x_e : xbar(x))(L z_e : P_<(e,e,e),t>(x_e,z_e, x1_e))")
+        test3 = test3.reduce_all()
+        self.assertNotEqual(test3[1][1][1], test3[1][1][2])
+        self.assertNotEqual(test3[1][1][1], test3[1][1][3])
+        self.assertNotEqual(test3[1][1][2], test3[1][1][3])
 
     # each of these generates 1000 random expressions with the specified depth, and checks whether their repr 
     # parses as equal to the original expression
