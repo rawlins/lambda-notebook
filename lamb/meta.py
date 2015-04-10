@@ -99,6 +99,11 @@ def text_op_in_latex(op):
 
 
 def merge_type_envs(env1, env2, target=None):
+    """Merge two type environments.  A type environment is simply an assignment, where the mappings to terms are used to define types.
+    Other mappings are ignored.
+
+    If `target` is set, it specifies a set of variable names to specifically target; anything not in it is ignored.
+    If `target` is None, all mappings are merged."""
     ts = get_type_system()
     result = dict()
     for k1 in env1:
@@ -690,6 +695,11 @@ class TypedExpr(object):
         #     print("        regularize: ", repr(env))
         return self.under_assignment(env)
 
+
+    def compact_type_vars(self, target=None, unsafe=None):
+        env = self.type_env(constants=True, target=target)
+        tvars = types.vars_in_env(env)
+        compacted_map = types.compact_type_set(tvars, unsafe=unsafe)
 
     def alpha_rename_type_vars(self, blocklist, type_assignment=None):
         if type_assignment is None:
