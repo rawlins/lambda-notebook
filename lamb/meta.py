@@ -58,7 +58,7 @@ def ts_compatible(a, b):
         return True
 
 def check_type(item, typ, raise_tm=True, msg=None):
-    ts = meta.get_type_system()
+    ts = get_type_system()
     if not ts.eq_check(item.content.type, typ):
         if raise_tm:
             raise types.TypeMismatch(item, typ, msg)
@@ -1655,8 +1655,30 @@ class BindingOp(TypedExpr):
     # set the following in subclasses
     canonical_name = None
     secondary_names = set()
+    allow_multivars = False
+    allow_novars = False
     op_name_uni = None
     op_name_latex = None
+
+    @classmethod
+    def binding_op_factory(self, op_class, var_list, body, assignment=None):
+        for i in range(len(var_list)):
+            if not is_var_symbol(var_list[i][0]):
+                raise parsing.ParseError("Need variable name in binding operator expression (received '%s')" % var_list[i][0], None)
+            if var_list[i][1] is None:
+                # TODO: flag as a guessed type somehow?
+                var_list[i] = (var_list[i][0], default_variable_type(var_list[i][0]))
+        if op_class.allow_multivars or op_class.allow_novars:
+            # use alternate constructor
+            if (not op_class.allow_multivars) and len(var_list) > 1:
+                raise parsing.ParseError("Operator class '%s' does not allow >1 variables" % (op_class.canonical_name), None)                
+            if (not op_class.allow_novars) and len(var_list) == 0:
+                raise parsing.ParseError("Operator class '%s' does not allow 0 variables" % (op_class.canonical_name), None)                
+            return op_class(var_list, body, assignment=assignment)
+        else:
+            if len(var_list) != 1:
+                raise parsing.ParseError("Operator class '%s' does not allow %i variables" % (op_class.canonical_name, len(var_list)), None)
+            return op_class(var_or_vtype=var_list[0][1], varname=var_list[0][0], body=body, assignment=assignment)
 
     def __init__(self, var_or_vtype, typ, body, varname=None, body_type = None, assignment=None):
         # Warning: can't assume in general that typ is not None.  I.e. may be set in subclass after a call
@@ -1831,13 +1853,15 @@ class BindingOp(TypedExpr):
             raise parsing.ParseError("Missing ':' in binding operator expression", s, None, met_preconditions=False)
         header, remainder = split
         vname = header[i:].strip() # should remove everything but a variable name
-        (v, t) = cls.try_parse_typed_term(vname, strict=True)
-        if not is_var_symbol(v):
-            raise parsing.ParseError("Need variable name in binding operator expression (received '%s')" % v, s, None)
-        if t is None:
-            # TODO: flag as a guessed type somehow?
-            t = default_variable_type(v)
-        return (op_class, v, t, remainder)
+        #(v, t) = cls.try_parse_typed_term(vname, strict=True)
+        var_seq = cls.try_parse_term_sequence(vname, lower_bound=None, upper_bound=None, assignment=assignment)
+        # if not is_var_symbol(v):
+        #     raise parsing.ParseError("Need variable name in binding operator expression (received '%s')" % v, s, None)
+        # if t is None:
+        #     # TODO: flag as a guessed type somehow?
+        #     t = default_variable_type(v)
+        # return (op_class, v, t, remainder)
+        return (op_class, var_seq, remainder)
 
     @classmethod
     def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None, vprefix="ilnb"):
@@ -1869,7 +1893,7 @@ class BindingOp(TypedExpr):
         result = BindingOp.try_parse_header(potential_header)
         if result is None:
             return None
-        (op_class, v, t, remainder) = result
+        (op_class, var_list, remainder) = result
         # remainder is any string left over from parsing the header.
         if bracketed:
             # note: syntax checking for bracket matching is already done, this does not need to check for that here.
@@ -1883,7 +1907,9 @@ class BindingOp(TypedExpr):
         else:
             # create a new one to avoid side effects
             assignment = dict(assignment)
-        assignment[v] = TypedTerm(v, t)
+        for var_tuple in var_list:
+            (v,t) = var_tuple
+            assignment[v] = TypedTerm(v, t)
         body = None
         try:
             body = TypedExpr.try_parse_paren_struc_r(new_struc, assignment=assignment, locals=locals, vprefix=vprefix)
@@ -1894,7 +1920,8 @@ class BindingOp(TypedExpr):
                 raise parsing.ParseError("Binding operator expression has unparsable body", parsing.flatten_paren_struc(struc), None, e=e)
         if body is None:
             raise parsing.ParseError("Can't create body-less binding operator expression", parsing.flatten_paren_struc(struc), None)
-        return op_class(var_or_vtype=t, varname=v, body=body)
+        return BindingOp.binding_op_factory(op_class, var_list, body, assignment=assignment)
+        #return op_class(var_or_vtype=t, varname=v, body=body)
 
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
