@@ -57,6 +57,17 @@ def ts_compatible(a, b):
     else:
         return True
 
+def check_type(item, typ, raise_tm=True, msg=None):
+    ts = meta.get_type_system()
+    if not ts.eq_check(item.content.type, typ):
+        if raise_tm:
+            raise types.TypeMismatch(item, typ, msg)
+        else:
+            return None
+    else:
+        return item
+
+
 def tp(s):
     """Convenience wrapper for the current type system's type parser."""
     ts = get_type_system()
@@ -465,6 +476,30 @@ class TypedExpr(object):
         return result
 
     @classmethod
+    def try_parse_term_sequence(cls, s, lower_bound=1, upper_bound=None, assignment=None):
+        s = s.strip()
+        if len(s) == 0:
+            sequence = list()
+            i = 0
+        else:
+            v, typ, i = cls.parse_term(s, i=0, return_obj=False, assignment=assignment)
+            sequence = [(v, typ)]
+        if i < len(s):
+            i = parsing.consume_whitespace(s, i)
+            while i < len(s):
+                i = parsing.consume_char(s, i, ",", "expected comma in variable sequence")
+                i = parsing.consume_whitespace(s, i)
+                v, typ, i = cls.parse_term(s, i=i, return_obj=False, assignment=assignment)
+                if v is None:
+                    raise parsing.ParseError("Failed to find term following comma in variable sequence", s=s, i=i, met_preconditions=True)
+                sequence.append((v, typ))
+        if lower_bound and len(sequence) < lower_bound:
+            raise parsing.ParseError("Too few variables (%i < %i) in variable sequence" % (len(sequence), lower_bound), s=s, i=i, met_preconditions=True)
+        if upper_bound and len(sequence) > upper_bound:
+            raise parsing.ParseError("Too many variables (%i > %i) in variable sequence" % (len(sequence), upper_bound), s=s, i=i, met_preconditions=True)
+        return sequence
+
+    @classmethod
     def try_parse_typed_term(cls, s, assignment=None, strict=False):
         """Try to parse string 's' as a typed term.
         assignment: a variable assignment to parse s with.
@@ -478,12 +513,14 @@ class TypedExpr(object):
         Returns a tuple of a variable name, and a type.  If you want a TypedTerm, call one of the factory functions.
         Raises: TypeMismatch if the assignment supplies a type inconsistent with the specified one.
         """
-        v, typ, end = cls.parse_term(s, i=0, return_obj=False, assignment=assignment)
-        if strict and end < len(s):
-            remainder = s[end:].strip()
-            if len(remainder) > 0:
-                raise parsing.ParseError("Extra characters ('%s') in binding operator term following variable" % remainder, s, i=end, met_preconditions=True)
-        return (v, typ)
+        # v, typ, end = cls.parse_term(s, i=0, return_obj=False, assignment=assignment)
+        # if strict and end < len(s):
+        #     remainder = s[end:].strip()
+        #     if len(remainder) > 0:
+        #         raise parsing.ParseError("Extra characters ('%s') in binding operator term following variable" % remainder, s, i=end, met_preconditions=True)
+        # return (v, typ)
+        seq = cls.try_parse_term_sequence(s, lower_bound=1, upper_bound=1, assignment=assignment)
+        return seq[0]
 
     @classmethod
     def find_term_locations(cls, s, i=0):
