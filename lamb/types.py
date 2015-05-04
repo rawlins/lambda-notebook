@@ -645,41 +645,41 @@ class VariableType(TypeConstructor):
     def unify(self, t2, unify_control_fun, assignment):
         if self == t2:
             return (self, assignment)
-        # find the principle type in the equivalence class identified by self.  May return self if there's a loop.
+        # find the principal type in the equivalence class identified by self.  May return self if there's a loop.
         #  (Other sorts of loops should be ruled out?)
         if self in assignment:
             (start, prev) = transitive_find_end(self, assignment)
         else:
             start = self
             prev = None
-        # find the principle type in the equivalence class identified by t2.
+        # find the principal type in the equivalence class identified by t2.
         if isinstance(t2, VariableType) and t2 in assignment:
-            (t2_principle, t2_prev) = transitive_find_end(t2, assignment)
+            (t2_principal, t2_prev) = transitive_find_end(t2, assignment)
         else:
-            t2_principle = t2
+            t2_principal = t2
             t2_prev = None
-        #print("t1: %s, t1 principle: %s, t2: %s, t2 principle: %s" % (self, start, t2, t2_principle))
-        new_principle = start
+        #print("t1: %s, t1 principal: %s, t2: %s, t2 principal: %s" % (self, start, t2, t2_principal))
+        new_principal = start
         if isinstance(start, VariableType):
-            if not isinstance(t2_principle, VariableType):
-                t2_principle = t2_principle.sub_type_vars(assignment, trans_closure=True)
-            assignment = replace_in_assign(start, t2_principle, assignment)
-            if start != t2_principle:
-                assignment[start] = t2_principle
-                new_principle = t2_principle
-        if isinstance(t2_principle, VariableType):
+            if not isinstance(t2_principal, VariableType):
+                t2_principal = t2_principal.sub_type_vars(assignment, trans_closure=True)
+            assignment = replace_in_assign(start, t2_principal, assignment)
+            if start != t2_principal:
+                assignment[start] = t2_principal
+                new_principal = t2_principal
+        if isinstance(t2_principal, VariableType):
             if not isinstance(start, VariableType):
                 start = start.sub_type_vars(assignment, trans_closure=True)
-            assignment = replace_in_assign(t2_principle, start, assignment)
-            if t2_principle != start:
-                assignment[t2_principle] = start
-                new_principle = start
-        if not (isinstance(start, VariableType) or isinstance(t2_principle, VariableType)):
-            new_principle, assignment = unify_control_fun(start, t2_principle, assignment)
-            if new_principle is None:
+            assignment = replace_in_assign(t2_principal, start, assignment)
+            if t2_principal != start:
+                assignment[t2_principal] = start
+                new_principal = start
+        if not (isinstance(start, VariableType) or isinstance(t2_principal, VariableType)):
+            new_principal, assignment = unify_control_fun(start, t2_principal, assignment)
+            if new_principal is None:
                 return (None, None)
-        #print("unify assignment: %s, new_principle: %s" % (assignment, new_principle))
-        return (new_principle, assignment)
+        #print("unify assignment: %s, new_principal: %s" % (assignment, new_principal))
+        return (new_principal, assignment)
 
     def bound_type_vars(self):
         return set((self,))
@@ -750,7 +750,9 @@ class VariableType(TypeConstructor):
 
     @classmethod
     def fresh(cls):
-        return VariableType("X", number=cls.max_id + 1)
+        #return VariableType("X", number=cls.max_id + 1)
+        return VariableType("I", number=cls.max_id + 1)
+
 
 # ensure that this gets reset on reload
 VariableType.max_id = 0
@@ -1176,12 +1178,17 @@ def compact_type_set(types, unsafe=None):
         keep.add(m)
     return mapping
 
-
-
+def freshen_type_set(types, unsafe=None):
+    if unsafe is None:
+        unsafe = set()
+    mapping = dict()
+    for v in types:
+        mapping[v] = VariableType.fresh()
+    return mapping
 
 class UnificationResult(object):
-    def __init__(self, principle, t1, t2, mapping):
-        self.principle = principle
+    def __init__(self, principal, t1, t2, mapping):
+        self.principal = principal
         self.t1 = t1
         self.t2 = t2
         self.mapping = mapping
@@ -1201,7 +1208,7 @@ class PolyTypeSystem(TypeSystem):
         if result is None:
             return None
         else:
-            return result.principle
+            return result.principal
 
     def occurs_check(self, t1, t2):
         if isinstance(t1, VariableType) and not isinstance(t2, VariableType):
@@ -1221,7 +1228,7 @@ class PolyTypeSystem(TypeSystem):
         (result, r_assign) = self.unify_r(t1, t2, assignment)
         if result is None:
             return None
-        # a principle type has been found, but may not be fully represented by result.
+        # a principal type has been found, but may not be fully represented by result.
         # enforce the mapping everywhere in result.
         l = list()
         for i in range(len(result)):
@@ -1240,7 +1247,14 @@ class PolyTypeSystem(TypeSystem):
             logger.error("Failed occurs check: can't unify recursive types %s and %s" % (t1,t2))
             return (None, None)
         if isinstance(t1, VariableType):
-            return t1.unify(t2, self.unify_r, assignment)            
+            # TODO: revisit this logic
+            if t1.internal() and isinstance(t2, VariableType):
+                if t2.internal() and t2.number > t1.number:
+                    return t1.unify(t2, self.unify_r, assignment)
+                else:
+                    return t2.unify(t1, self.unify_r, assignment)
+            else:
+                return t1.unify(t2, self.unify_r, assignment)            
         elif isinstance(t2, VariableType):
             return t2.unify(t1, self.unify_r, assignment)
         else:
@@ -1266,14 +1280,15 @@ class PolyTypeSystem(TypeSystem):
         #input_var = safe_var_in_set(ret.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env), internal=False)
         input_var = VariableType.fresh()
         hyp_fun = FunType(input_var, ret)
-        result = self.unify_details(fun, hyp_fun)
+        #result = self.unify_details(fun, hyp_fun)
+        result = self.unify_details(hyp_fun, fun)
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:
             # if result.trivial: # no need to introduce spurious alpha renaming
             #     return (fun, fun.left, fun.right)
             # else:
-            return (result.principle, result.principle.left, result.principle.right)
+            return (result.principal, result.principal.left, result.principal.right)
 
 
     def unify_fa(self, fun, arg, type_env=None):
@@ -1289,8 +1304,9 @@ class PolyTypeSystem(TypeSystem):
         hyp_fun = FunType(arg, output_var)
         #print("hyp fun: ", hyp_fun)
         #print("unify_fa: ", fun, hyp_fun, type_env, unsafe_set)
-        result = self.unify_details(fun, hyp_fun) # use reverse order to try to keep variables in fun preferentially
-        #print("principle: ", result.principle)
+        #result = self.unify_details(fun, hyp_fun) # use reverse order to try to keep variables in fun preferentially
+        result = self.unify_details(hyp_fun, fun)
+        #print("principal: ", result.principal)
         #print(self.unify(fun, hyp_fun))
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
@@ -1298,7 +1314,7 @@ class PolyTypeSystem(TypeSystem):
             # if result.trivial: # no need to introduce spurious alpha renaming
             #     return (fun, fun.left, fun.right)
             # else:
-            return (result.principle, result.principle.left, result.principle.right)
+            return (result.principal, result.principal.left, result.principal.right)
 
 
     # There's really got to be a better way to do this...

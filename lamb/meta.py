@@ -240,7 +240,8 @@ class TypedExpr(object):
         c = self.copy()
         ts = get_type_system()
         # check: is the type of the substitution compatible with the type of what it is replacing?
-        unified = ts.unify(old.type, s.type)
+        #unified = ts.unify(old.type, s.type)
+        unified = ts.unify(s.type, old.type) # order matters: prioritize type variables from the substitution
         #print("%s, %s" % (unify_a, unify_b))
         if unified is None:
             raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
@@ -680,11 +681,11 @@ class TypedExpr(object):
     def local_copy(self, *args):
         raise NotImplementedError
 
-    def type_env(self, constants=False, target=None):
+    def type_env(self, constants=False, target=None, free_only=True):
         env = dict()
         for part in self:
             if isinstance(part, TypedExpr):
-                env = merge_type_envs(env, part.type_env(constants=constants, target=target))
+                env = merge_type_envs(env, part.type_env(constants=constants, target=target, free_only=free_only))
         return env
 
     def regularize_type_env(self, assignment=None, constants=False, target=None):
@@ -697,12 +698,25 @@ class TypedExpr(object):
 
 
     def compact_type_vars(self, target=None, unsafe=None):
-        env = self.type_env(constants=True, target=target)
+        env = self.type_env(constants=True, target=target, free_only=False)
         tvars = types.vars_in_env(env)
         if len(tvars) == 0:
             return self
         compacted_map = types.compact_type_set(tvars, unsafe=unsafe)
         return self.under_type_assignment(compacted_map)
+
+    def freshen_type_vars(self, target=None, unsafe=None):
+        env = self.type_env(constants=True, target=target, free_only=False)
+        tvars = types.vars_in_env(env)
+        if len(tvars) == 0:
+            return self
+        fresh_map = types.freshen_type_set(tvars, unsafe=unsafe)
+        return self.under_type_assignment(fresh_map)
+
+    def has_type_vars(self):
+        env = self.type_env(constants=True, target=None, free_only=False)
+        tvars = types.vars_in_env(env)
+        return len(tvars) > 0
 
     def under_type_assignment(self, mapping):
         #dirty = False
@@ -711,6 +725,7 @@ class TypedExpr(object):
         for part in copy:
             if isinstance(part, TypedExpr):
                 new_part = part.under_type_assignment(mapping)
+                #print(repr(new_part))
             else:
                 new_part = part
             parts.append(new_part)
@@ -719,22 +734,7 @@ class TypedExpr(object):
 
 
     def alpha_rename_type_vars(self, blocklist, type_assignment=None):
-        if type_assignment is None:
-            type_assignment=dict()
-        dirty = False
-        n = list()
-        for part in self:
-            if isinstance(part, TypedExpr):
-                new_part = part.alpha_rename_type_vars(blocklist, type_assignment)
-                if new_part is not part:
-                    dirty = True
-            else:
-                new_part = part
-            n.append(new_part)
-        if dirty:
-            return self.local_copy(*parts)
-        else:
-            return self
+        pass
 
     def under_assignment(self, assignment):
         """Use `assignment` to replace any appropriate variables in `self`."""
@@ -1159,7 +1159,7 @@ class TypedTerm(TypedExpr):
         result.type_guessed = self.type_guessed
         return result
 
-    def type_env(self, constants=False, target=None):
+    def type_env(self, constants=False, target=None, free_only=True):
         if self.constant() and not constants:
             return set()
         if not target or self.op in target:
@@ -1840,6 +1840,8 @@ class BindingOp(TypedExpr):
         new_self.varname = new_varname
         return new_self
 
+
+
     def latex_op_str(self):
         return self.latex_op_str_short()
 
@@ -1881,11 +1883,26 @@ class BindingOp(TypedExpr):
     def bound_variables(self):
         return super().bound_variables() | {self.varname}
 
-    def type_env(self, constants=False, target=None):
-        sub_env = self.args[0].type_env(constants=constants, target=target)
-        if self.varname in sub_env: # binding can be vacuous
+    def type_env(self, constants=False, target=None, free_only=True):
+        sub_env = self.args[0].type_env(constants=constants, target=target, free_only=free_only)
+        if free_only and self.varname in sub_env: # binding can be vacuous
             del sub_env[self.varname]
         return sub_env
+
+    def under_type_assignment(self, mapping):
+        parts = list()
+        copy = self.copy()
+        copy.var_instance = copy.var_instance.under_type_assignment(mapping)
+        copy.vartype = copy.var_instance.type
+        for part in copy:
+            if isinstance(part, TypedExpr):
+                new_part = part.under_type_assignment(mapping)
+            else:
+                new_part = part
+            parts.append(new_part)
+        copy.type = copy.type.sub_type_vars(mapping)
+        return copy.local_copy(*parts)
+
 
     def vacuous(self):
         """Return true just in case the operator's variable is not free in the body expression."""
@@ -2245,7 +2262,7 @@ class LFun(BindingOp):
     op_name_uni="λ"
     op_name_latex="\\lambda{}"
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
+    def __init__(self, var_or_vtype, body, varname=None, let=False, assignment=None):
         #print("a: ", assignment, body.__class__)
         body = self.ensure_typed_expr(body, assignment=assignment)
         # Use placeholder typ argument of None.  This is because the input type won't be known until
@@ -2254,6 +2271,7 @@ class LFun(BindingOp):
         # taking this into account.
         super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=body.type, assignment=assignment)
         self.type = FunType(self.vartype, body.type)
+        self.let = let
 
     @property
     def argtype(self):
