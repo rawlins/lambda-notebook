@@ -699,7 +699,24 @@ class TypedExpr(object):
     def compact_type_vars(self, target=None, unsafe=None):
         env = self.type_env(constants=True, target=target)
         tvars = types.vars_in_env(env)
+        if len(tvars) == 0:
+            return self
         compacted_map = types.compact_type_set(tvars, unsafe=unsafe)
+        return self.under_type_assignment(compacted_map)
+
+    def under_type_assignment(self, mapping):
+        #dirty = False
+        parts = list()
+        copy = self.copy()
+        for part in copy:
+            if isinstance(part, TypedExpr):
+                new_part = part.under_type_assignment(mapping)
+            else:
+                new_part = part
+            parts.append(new_part)
+        copy.type = copy.type.sub_type_vars(mapping)
+        return copy.local_copy(*parts)
+
 
     def alpha_rename_type_vars(self, blocklist, type_assignment=None):
         if type_assignment is None:
@@ -1140,6 +1157,7 @@ class TypedTerm(TypedExpr):
         result = TypedTerm(op, latex_op_str = self.latex_op_str)
         result.type = self.type
         result.type_guessed = self.type_guessed
+        return result
 
     def type_env(self, constants=False, target=None):
         if self.constant() and not constants:
