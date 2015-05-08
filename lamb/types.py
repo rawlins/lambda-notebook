@@ -1289,7 +1289,7 @@ class PolyTypeSystem(TypeSystem):
         input_var = VariableType.fresh()
         hyp_fun = FunType(input_var, ret)
         #result = self.unify_details(fun, hyp_fun)
-        result = self.unify_details(hyp_fun, fun, mapping=assignment)
+        result = self.unify_details(hyp_fun, fun, assignment=assignment)
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:

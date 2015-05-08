@@ -268,7 +268,7 @@ class TypedExpr(object):
 
         # if the two are alpha equivalents, the following call with this order should return new_type
         #if self.term():
-        print("Try adjusting %s to %s" % (repr(self), repr(new_type)))
+        #print("Try adjusting %s to %s" % (repr(self), repr(new_type)))
         unify_target = env.try_unify(new_type, self.type)
         #print("new_type %s self type %s unify_a %s unify_target %s" % (new_type, self.type, unify_a, unify_target))
         if unify_target is None:
@@ -314,8 +314,8 @@ class TypedExpr(object):
                     new_term.type = principal
                     if assignment is not None and new_term.op in assignment:
                         assignment[new_term.op] = new_term
-                    print("Adjusting %s to %s, type %s" % (repr(self), repr(new_term), repr(principal)))
-                    print(env)
+                    #print("Adjusting %s to %s, type %s" % (repr(self), repr(new_term), repr(principal)))
+                    #print(env)
                     return derived(new_term, self, derivation_reason)
                 else:
                     logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
@@ -2434,7 +2434,7 @@ class LFun(BindingOp):
         If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
         If it fails completely, it returns None."""
 
-        print("Try adjusting %s to %s" % (repr(self), repr(new_type)))
+        #print("LFun: Try adjusting %s to %s" % (repr(self), repr(new_type)))
         env = self.body.get_type_env().copy()
         unified = env.try_unify(new_type, self.type)
         if unified is None:
@@ -2444,33 +2444,38 @@ class LFun(BindingOp):
             return self
         else: # either input or output type can be strengthened
             #new_body = self.body.try_adjust_type(unify_a.right) # will only make copy if necessary
+            vacuous = False
+            if not self.varname in env.var_mapping:
+                vacuous = True
+                env.add_var_mapping(self.varname, self.type.left)
             if derivation_reason is None:
                 derivation_reason = "Type adjustment"
             new_argtype = unified.left
-            print("    ", env)
-            print("     Adjusting variable %s to %s" % (self.varname, unified.left))
+            #print("    ", env)
+            #print("     Adjusting variable %s to %s" % (self.varname, unified.left))
             left_principal = env.try_add_var_mapping(self.varname, unified.left)
-            print("    ", env)
+            #print("    ", env)
             if left_principal is None:
                 return None
             #new_argtype = env.var_mapping[self.varname] # principle type
             if self.argtype != left_principal:
                 # arg type needs to be adjusted, and hence all instances of the bound variable as well.  Do this with beta reduction.
                 new_var = TypedTerm(self.varname, left_principal)
-                print("     new_var: ", new_var)
+                #print("     new_var: ", new_var)
                 new_body = self.apply(new_var)
-                print("    new_body: ", new_body)
+                #print("    new_body: ", new_body)
             else:
                 new_body = self.body
             #if new_body.type != unify_a.right:
-            print("    unified: ", unified)
+            #print("    unified: ", unified)
             new_body = new_body.try_adjust_type(unified.right, derivation_reason=derivation_reason, assignment=assignment) # will only make copy if necessary
             new_fun = LFun(new_argtype, new_body, self.varname)
             env.merge(new_body.get_type_env())
             if self.varname in env.var_mapping:
                 del env.var_mapping[self.varname]
+            new_fun = new_fun.under_type_assignment(env.type_mapping)
             new_fun._type_env = env
-            print("Adjusting %s to %s" % (self, new_fun))
+            #print("    Adjusting %s to %s" % (self, new_fun))
             return derived(new_fun, self, derivation_reason)
         
 
@@ -2537,7 +2542,7 @@ def beta_reduce_ts(t, varname, s):
         ts = get_type_system()
         #print("asdf %s, %s" % (varname, repr(t)))
         if (t.term() and t.op == varname):
-            if not ts.eq_check(t.type,subst.type):
+            if not ts.eq_check(subst.type,t.type):
                 raise TypeMismatch(t, subst, "Beta reduction") # TODO make less cryptic
             #print("substituting with %s" % subst)
             return subst # TODO copy??
