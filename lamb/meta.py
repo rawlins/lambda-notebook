@@ -97,6 +97,89 @@ def text_op_in_latex(op):
         return basic_ops_to_latex[op]
     return op
 
+class TypeEnv(object):
+    def __init__(self, var_mapping=None, type_mapping=None):
+        self.type_var_set = set()
+        if type_mapping is None:
+            self.type_mapping = dict()
+        else:
+            self.type_mapping = type_mapping
+        if var_mapping is None:
+            self.var_mapping = dict()
+        else:
+            self.var_mapping = var_mapping
+            #self.update_type_vars()
+
+    def add_var_mapping(self, vname, typ):
+        result = self.try_add_var_mapping(vname, typ)
+        if result is None:
+            raise TypeMismatch(self.var_mapping[vname], typ, "Failed to unify types across distinct instances of term")
+
+    def try_add_var_mapping(self, vname, typ):
+        ts = get_type_system()
+        if vname in self.var_mapping:
+            assert self.var_mapping[vname].term()
+            #unify = ts.unify_details(self.var_mapping[vname].type, typ, assignment=self.type_mapping, typ_env=self.var_mapping)
+            #unify = ts.unify_details(self.var_mapping[vname].type, typ, assignment=self.type_mapping)
+            principal = self.try_unify(typ, self.var_mapping[vname].type, update_mapping=True)
+            if principal is None:
+                return None
+            #self.type_mapping = unify.mapping
+            
+            # new_mappee = self.var_mapping[vname].try_adjust_type(unify.principal)
+            # if new_mappee is None:
+            #     raise TypeMismatch(self.var_mapping[vname], unify.principal, "Failed to unify types across distinct instances of term")
+            self.var_mapping[vname] = TypedTerm(vname, principal, defer_type_env=True)
+            self.update_type_vars()
+        else:
+            self.var_mapping[vname] = TypedTerm(vname, typ, defer_type_env=True)
+        self.add_type_to_var_set(self.var_mapping[vname].type)
+        return self.var_mapping[vname].type
+
+    def try_unify(self, t1, t2, update_mapping=False):
+        ts = get_type_system()
+        #mapping = self.type_mapping.copy()
+        result = ts.unify_details(t1, t2, assignment=self.type_mapping)
+        if result is None:
+            return None
+        else:
+            if update_mapping:
+                self.type_mapping = result.mapping
+                self.type_var_set = self.type_var_set | self.type_mapping.keys()
+            return result.principal
+
+    def add_type_to_var_set(self, typ):
+        self.type_var_set = self.type_var_set | typ.bound_type_vars()
+
+    def update_type_vars(self):
+        for k in self.var_mapping:
+            #print(self.var_mapping)
+            self.var_mapping[k] = self.var_mapping[k].under_type_assignment(self.type_mapping)
+
+    def add_type_mapping(self, type_var, typ, defer=False):
+        principal = self.try_unify(typ, type_var, update_mapping=True)
+        self.type_var_set = self.type_var_set | {type_var}
+        if not defer:
+            self.update_type_vars()
+
+
+    def merge(self, tenv):
+        for v in tenv.type_mapping:
+            self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
+        self.update_type_vars()
+        for v in tenv.var_mapping:
+            self.add_var_mapping(v, tenv.var_mapping[v].type)
+        return self
+
+    def copy(self):
+        env = TypeEnv(self.var_mapping.copy(), self.type_mapping.copy())
+        env.type_var_set = self.type_var_set.copy()
+        return env
+
+    def __repr__(self):
+        return "TypeEnv: Variables: " + repr(self.var_mapping) + ", Type mapping: " +  repr(self.type_mapping) + ", Type variables: " + repr(self.type_var_set)
+
+
 
 def merge_type_envs(env1, env2, target=None):
     """Merge two type environments.  A type environment is simply an assignment, where the mappings to terms are used to define types.
@@ -171,6 +254,7 @@ class TypedExpr(object):
         self.op = op
         self.args = list(args)
 
+
     def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
         """Attempts to adjust the type of `self` to be compatible with `new_type`.  
         If the types already match, it return self.
@@ -178,11 +262,14 @@ class TypedExpr(object):
         If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
         If it fails completely, it returns None."""
         ts = get_type_system()
+        env = self.get_type_env()
         #unify_a, unify_base = ts.local_unify(new_type, self.type)
         #unify_target = ts.unify(self.type, new_type)
 
         # if the two are alpha equivalents, the following call with this order should return new_type
-        unify_target = ts.unify(new_type, self.type)
+        #if self.term():
+        print("Try adjusting %s to %s" % (repr(self), repr(new_type)))
+        unify_target = env.try_unify(new_type, self.type)
         #print("new_type %s self type %s unify_a %s unify_target %s" % (new_type, self.type, unify_a, unify_target))
         if unify_target is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
@@ -199,7 +286,8 @@ class TypedExpr(object):
                     #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
                     #return None
                 #new_op_type = types.FunType(self.args[0].type, unify_target)
-                (new_op_type, new_arg_type, new_ret_type) = ts.unify_fr(self.op.type, unify_target, type_env=assignment)
+                env = env.copy()
+                (new_op_type, new_arg_type, new_ret_type) = ts.unify_fr(self.op.type, unify_target, assignment=env.type_mapping)
                 if new_op_type is None:
                     return None
                 new_op = self.op.try_adjust_type(new_op_type, derivation_reason=derivation_reason, assignment=assignment)
@@ -211,19 +299,44 @@ class TypedExpr(object):
                 self_copy = self.copy()
                 self_copy.op = new_op
                 self_copy.args = [new_arg]
+                self_copy._type_env = env
                 #self_copy.type = new_op.type.right
                 return derived(self_copy, self, derivation_reason)
             else:
                 # should be term?
                 if self.term():
                     new_term = self.copy()
-                    new_term.type = unify_target
+                    env = env.copy()
+                    principal = env.try_add_var_mapping(self.op, new_type)
+                    if principal is None:
+                        return None
+                    new_term._type_env = env
+                    new_term.type = principal
                     if assignment is not None and new_term.op in assignment:
                         assignment[new_term.op] = new_term
+                    print("Adjusting %s to %s, type %s" % (repr(self), repr(new_term), repr(principal)))
+                    print(env)
                     return derived(new_term, self, derivation_reason)
                 else:
                     logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
                     return self
+
+    def get_type_env(self, force_recalc=False):
+        if force_recalc:
+            self._type_env = self.calc_type_env(recalculate=force_recalc)
+        try:
+            return self._type_env
+        except AttributeError:
+            self._type_env = self.calc_type_env(recalculate=force_recalc)
+            return self._type_env
+
+    def calc_type_env(self, recalculate=False):
+        env = TypeEnv()
+        for part in self:
+            if isinstance(part, TypedExpr):
+                env.merge(part.get_type_env(force_recalc=recalculate))
+        return env
+
 
     def subst(self, i, s, assignment=None):
         """ Tries to consistently (relative to types) substitute s for element i of the TypedExpr.
@@ -258,7 +371,7 @@ class TypedExpr(object):
             # the argument and the output
             c.op = s
             # TODO: used to check if op was functional.  This shouldn't arise any more?
-            unify_f, unify_arg, unify_out = ts.unify_fa(c.op.type, c.args[0].type, type_env=assignment)
+            unify_f, unify_arg, unify_out = ts.unify_fa(c.op.type, c.args[0].type)
             if unify_f is None:
                 raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
             if unify_arg != c.args[0].type:
@@ -271,7 +384,7 @@ class TypedExpr(object):
             c.args[i-1] = s
             if isinstance(c.op, TypedExpr):
                 # op must be functional, make sure it is compatible with its new input
-                unify_f, unify_arg, unify_out = ts.unify_fa(c.op.type, c.args[0].type, type_env=assignment)
+                unify_f, unify_arg, unify_out = ts.unify_fa(c.op.type, c.args[0].type)
                 if unify_f is None:
                     raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
                 if unify_f != c.op.type:
@@ -483,19 +596,19 @@ class TypedExpr(object):
         else:
             typ = None
             end = next
-        if (assignment is not None):
-            if typ is None:
-                if term_name.group(1) in assignment:
-                    # inherit type from context
-                    typ = assignment[term_name.group(1)].type
-            else:
-                if term_name.group(1) in assignment:
-                    unified = ts.unify(typ, assignment[term_name.group(1)].type)
-                    if unified is None:
-                        raise TypeMismatch(cls.term_factory(term_name.group(1), typ), assignment[term_name.group(1)], "Failed to unify with type specified by assignment")
-                    else:
-                        # TODO: better logic?
-                        typ = unified
+        # if (assignment is not None):
+        #     if typ is None:
+        #         if term_name.group(1) in assignment:
+        #             # inherit type from context
+        #             typ = assignment[term_name.group(1)].type
+        #     else:
+        #         if term_name.group(1) in assignment:
+        #             unified = ts.unify(typ, assignment[term_name.group(1)].type)
+        #             if unified is None:
+        #                 raise TypeMismatch(cls.term_factory(term_name.group(1), typ), assignment[term_name.group(1)], "Failed to unify with type specified by assignment")
+        #             else:
+        #                 # TODO: better logic?
+        #                 typ = unified
 
         if return_obj:
             # should call a factory function here, need to resolve circularity first.
@@ -1017,7 +1130,7 @@ class ApplicationExpr(TypedExpr):
         #self.derivation = None
         #self.type_guessed = False
         #self.defer = defer
-        (f_type, a_type, out_type) = ts.unify_fa(fun.type, arg.type, type_env=assignment)
+        (f_type, a_type, out_type) = ts.unify_fa(fun.type, arg.type)
         if f_type is None:
             raise TypeMismatch(fun, arg, "Function argument combination (unification failed)")
 
@@ -1117,29 +1230,43 @@ class TypedTerm(TypedExpr):
     In general, these cover variables and constants.  The name of the term is 'op', and 'args' is empty.
 
     The attribute 'type_guessed' is flagged if the type was not specified; this may result in coercion as necessary."""
-    def __init__(self, varname, typ=None, latex_op_str=None, assignment=None):
+    def __init__(self, varname, typ=None, latex_op_str=None, assignment=None, defer_type_env=False):
         # NOTE: does not call super
         self.op = num_or_str(varname)
         self.derivation = None
         self.defer = False
         update_a = False
-        if assignment is not None:
-            if self.op in assignment:
-                ts = get_type_system()
-                unified = ts.unify(typ, assignment[self.op].type)
-                if unified is None:
-                    raise TypeMismatch(self.term_factory(self.op, typ), assignment[self.op], "Failed to unify with type specified by assignment")
-                else:
-                    typ = unified
-                    update_a = True
-            else:
-                update_a = True
         if typ is None:
-            self.type = default_type(varname)
-            self.type_guessed = True
+            if assignment is not None and self.op in assignment:
+                self.type = assignment[self.op].type
+                self.type_guessed = False
+            else:
+                self.type = default_type(varname)
+                self.type_guessed = True
         else:
             self.type_guessed = False
             self.type = typ
+        if not defer_type_env:
+            env = self.calc_type_env()
+            #print("before: ", env)
+            if assignment is not None:
+                if self.op in assignment and typ is not None:
+                    env.add_var_mapping(self.op, assignment[self.op].type)
+            self.type = env.var_mapping[self.op].type
+            self._type_env = env
+            #print("after: ", env)
+
+            #     ts = get_type_system()
+            #     unified = ts.unify(typ, assignment[self.op].type)
+            #     if unified is None:
+            #         raise TypeMismatch(self.term_factory(self.op, typ), assignment[self.op], "Failed to unify with type specified by assignment")
+            #     else:
+            #         typ = unified
+            #         update_a = True
+            # else:
+            #     update_a = True
+        #env.add_var_mapping(self.op, self.type)
+
         if isinstance(self.op, Number): # this isn't very elegant...
             if self.type != type_n:
                 raise TypeMismatch(self.op, self.type, "Numeric must have type n")
@@ -1158,6 +1285,12 @@ class TypedTerm(TypedExpr):
         result.type = self.type
         result.type_guessed = self.type_guessed
         return result
+
+    def calc_type_env(self, recalculate=False):
+        env = TypeEnv()
+        #print("mapping %s to %s" % (self.op, self.type))
+        env.add_var_mapping(self.op, self.type)
+        return env
 
     def type_env(self, constants=False, target=None, free_only=True):
         if self.constant() and not constants:
@@ -1883,6 +2016,13 @@ class BindingOp(TypedExpr):
     def bound_variables(self):
         return super().bound_variables() | {self.varname}
 
+    def calc_type_env(self, recalculate=False):
+        sub_env = self.args[0].get_type_env(force_recalc=recalculate).copy()
+        sub_env.add_type_to_var_set(self.var_instance.type) # ensure any variable types introduced by the variable show up even if they are not present in the subformula
+        if self.varname in sub_env.var_mapping:
+            del sub_env.var_mapping[self.varname]
+        return sub_env
+
     def type_env(self, constants=False, target=None, free_only=True):
         sub_env = self.args[0].type_env(constants=constants, target=target, free_only=free_only)
         if free_only and self.varname in sub_env: # binding can be vacuous
@@ -2293,8 +2433,10 @@ class LFun(BindingOp):
         If it succeeds, it returns a modified _copy_ of self.  
         If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
         If it fails completely, it returns None."""
-        ts = get_type_system()
-        unified = ts.unify(new_type, self.type)
+
+        print("Try adjusting %s to %s" % (repr(self), repr(new_type)))
+        env = self.body.get_type_env().copy()
+        unified = env.try_unify(new_type, self.type)
         if unified is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
             return None
@@ -2305,15 +2447,30 @@ class LFun(BindingOp):
             if derivation_reason is None:
                 derivation_reason = "Type adjustment"
             new_argtype = unified.left
-            if self.argtype != unified.left:
+            print("    ", env)
+            print("     Adjusting variable %s to %s" % (self.varname, unified.left))
+            left_principal = env.try_add_var_mapping(self.varname, unified.left)
+            print("    ", env)
+            if left_principal is None:
+                return None
+            #new_argtype = env.var_mapping[self.varname] # principle type
+            if self.argtype != left_principal:
                 # arg type needs to be adjusted, and hence all instances of the bound variable as well.  Do this with beta reduction.
-                new_var = TypedTerm(self.varname, unified.left)
+                new_var = TypedTerm(self.varname, left_principal)
+                print("     new_var: ", new_var)
                 new_body = self.apply(new_var)
+                print("    new_body: ", new_body)
             else:
                 new_body = self.body
             #if new_body.type != unify_a.right:
+            print("    unified: ", unified)
             new_body = new_body.try_adjust_type(unified.right, derivation_reason=derivation_reason, assignment=assignment) # will only make copy if necessary
             new_fun = LFun(new_argtype, new_body, self.varname)
+            env.merge(new_body.get_type_env())
+            if self.varname in env.var_mapping:
+                del env.var_mapping[self.varname]
+            new_fun._type_env = env
+            print("Adjusting %s to %s" % (self, new_fun))
             return derived(new_fun, self, derivation_reason)
         
 

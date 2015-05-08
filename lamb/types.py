@@ -52,6 +52,7 @@ class TypeConstructor(object):
     def __init__(self):
         self.symbol = None
         self.unify_source = None
+        self.generic = False
 
     def __len__(self):
         return 0
@@ -1132,6 +1133,12 @@ def vars_in_env(type_env):
         unsafe = unsafe | type_env[k].type.bound_type_vars()
     return unsafe
 
+def vars_in_mapping(type_mapping):
+    result = set()
+    for m in type_mapping:
+        result = result | {m}
+        result = result | type_mapping[m].bound_type_vars()
+    return result
 
 def safe_var_in_set(unsafe, internal=False):
     n = 0
@@ -1199,12 +1206,12 @@ class PolyTypeSystem(TypeSystem):
         super().__init__("polymorphic", atomics=atomics, nonatomics=nonatomics)
         self.add_nonatomic(VariableType)
 
-    def unify(self, t1, t2, type_env=None):
+    def unify(self, t1, t2, assignment=None):
         #from lamb import meta
         #from lamb.meta import logger
         #logger.warning("Unify(%s, %s)" % (t1,t2))
         assignment = dict()
-        result = self.unify_details(t1, t2, assignment, type_env=type_env)
+        result = self.unify_details(t1, t2, assignment=assignment)
         if result is None:
             return None
         else:
@@ -1217,10 +1224,11 @@ class PolyTypeSystem(TypeSystem):
             return t2 in t1.bound_type_vars()
         return False
 
-
-    def unify_details(self, t1, t2, assignment=None, type_env=None):
+    def unify_details(self, t1, t2, assignment=None):
         if assignment is None:
             assignment = dict()
+        else:
+            assignment = assignment.copy() # ugh
         #t1safe = make_safe(t1, t2, set(assignment.keys()) | set(assignment.values()))
         # if self.occurs_check(t1, t2) or self.occurs_check(t2, t1):
         #     #print("occurs check fail: ", t1, t2)
@@ -1274,14 +1282,14 @@ class PolyTypeSystem(TypeSystem):
             #     #print("after: ", result)
             return (result, r_assign)
 
-    def unify_fr(self, fun, ret, type_env=None):
-        if type_env is None:
-            type_env = dict()
+    def unify_fr(self, fun, ret, assignment=None):
+        if assignment is None:
+            assignment = dict()
         #input_var = safe_var_in_set(ret.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env), internal=False)
         input_var = VariableType.fresh()
         hyp_fun = FunType(input_var, ret)
         #result = self.unify_details(fun, hyp_fun)
-        result = self.unify_details(hyp_fun, fun)
+        result = self.unify_details(hyp_fun, fun, mapping=assignment)
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:
@@ -1291,21 +1299,21 @@ class PolyTypeSystem(TypeSystem):
             return (result.principal, result.principal.left, result.principal.right)
 
 
-    def unify_fa(self, fun, arg, type_env=None):
+    def unify_fa(self, fun, arg, assignment=None):
         """Try unifying the input type of the function with the argument's type.
         If it succeeds, it returns a (possibly changed) tuple of the function's type, the argument's type, and the output type.
         If this fails, returns (None, None, None)."""
 
-        if type_env is None:
-            type_env = dict()
-        unsafe_set = arg.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env)
+        if assignment is None:
+            assignment = dict()
+        #unsafe_set = arg.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env)
         #output_var = safe_var_in_set(unsafe_set, internal=False)
         output_var = VariableType.fresh()
         hyp_fun = FunType(arg, output_var)
         #print("hyp fun: ", hyp_fun)
         #print("unify_fa: ", fun, hyp_fun, type_env, unsafe_set)
         #result = self.unify_details(fun, hyp_fun) # use reverse order to try to keep variables in fun preferentially
-        result = self.unify_details(hyp_fun, fun)
+        result = self.unify_details(hyp_fun, fun, assignment=assignment)
         #print("principal: ", result.principal)
         #print(self.unify(fun, hyp_fun))
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
