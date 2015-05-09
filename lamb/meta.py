@@ -109,6 +109,14 @@ class TypeEnv(object):
         else:
             self.var_mapping = var_mapping
             #self.update_type_vars()
+        self.update_var_set()
+
+    def update_var_set(self):
+        s = types.vars_in_env(self.var_mapping)
+        s = s | set(self.type_mapping.keys())
+        for m in self.type_mapping:
+            s  = s | self.type_mapping[m].bound_type_vars()
+        self.type_var_set = s
 
     def add_var_mapping(self, vname, typ):
         result = self.try_add_var_mapping(vname, typ)
@@ -129,9 +137,11 @@ class TypeEnv(object):
             # new_mappee = self.var_mapping[vname].try_adjust_type(unify.principal)
             # if new_mappee is None:
             #     raise TypeMismatch(self.var_mapping[vname], unify.principal, "Failed to unify types across distinct instances of term")
+            assert principal is not None
             self.var_mapping[vname] = TypedTerm(vname, principal, defer_type_env=True)
             self.update_type_vars()
         else:
+            assert typ is not None
             self.var_mapping[vname] = TypedTerm(vname, typ, defer_type_env=True)
         self.add_type_to_var_set(self.var_mapping[vname].type)
         return self.var_mapping[vname].type
@@ -154,18 +164,24 @@ class TypeEnv(object):
     def update_type_vars(self):
         for k in self.var_mapping:
             #print(self.var_mapping)
-            self.var_mapping[k] = self.var_mapping[k].under_type_assignment(self.type_mapping)
+            #self.var_mapping[k] = self.var_mapping[k].under_type_assignment(self.type_mapping)
+
+            # note that the following is not generally safe, but here we are working with TypedTerms that have no TypeEnv
+            self.var_mapping[k].type = self.var_mapping[k].type.sub_type_vars(self.type_mapping)
 
     def add_type_mapping(self, type_var, typ, defer=False):
         principal = self.try_unify(typ, type_var, update_mapping=True)
-        self.type_var_set = self.type_var_set | {type_var}
+        self.type_var_set = self.type_var_set | {type_var} | typ.bound_type_vars()
         if not defer:
             self.update_type_vars()
 
 
     def merge(self, tenv):
+        #print("merging %s and %s" % (self, tenv))
         for v in tenv.type_mapping:
+            #print("    Mapping %s to %s" % (v, tenv.type_mapping[v]))
             self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
+            #print("    interim: ", self.type_mapping)
         self.update_type_vars()
         for v in tenv.var_mapping:
             self.add_var_mapping(v, tenv.var_mapping[v].type)
@@ -804,46 +820,87 @@ class TypedExpr(object):
     def regularize_type_env(self, assignment=None, constants=False, target=None):
         if assignment is None:
             assignment = dict()
-        env = merge_type_envs(self.type_env(constants=constants, target=target), assignment, target=target)
+        env = self.get_type_env()
+        #env = merge_type_envs(self.type_env(constants=constants, target=target), assignment, target=target)
         # if env and len(env) > 0:
-        #     print("        regularize: ", repr(env))
-        return self.under_assignment(env)
+        #print("        regularize: ", repr(env))
+        return self.under_type_assignment(env.type_mapping)
 
 
-    def compact_type_vars(self, target=None, unsafe=None):
-        env = self.type_env(constants=True, target=target, free_only=False)
-        tvars = types.vars_in_env(env)
-        if len(tvars) == 0:
+    def compact_type_vars(self, target=None, unsafe=None, used_vars_only=True, store_mapping=False):
+        """Compact the type variables on `self` into X variables with a low number.  By default this will not store the mapping
+        that resulted in the compaction, i.e. the type environment is a clean slate.  For this reason, it is suitable only for let-
+        bound contexts."""
+        history_env = self.get_type_env()
+        if len(history_env.type_var_set) == 0:
             return self
-        compacted_map = types.compact_type_set(tvars, unsafe=unsafe)
-        return self.under_type_assignment(compacted_map)
-
-    def freshen_type_vars(self, target=None, unsafe=None):
-        env = self.type_env(constants=True, target=target, free_only=False)
-        tvars = types.vars_in_env(env)
-        if len(tvars) == 0:
+        c = self.copy()
+        # note: the following is already triggered by copy.  If this behavior changes, this needs updating.
+        #env = c.get_type_env(force_recalc=True)
+        env = c.get_type_env()
+        if used_vars_only:
+            tenv = env.type_var_set - set(env.type_mapping.keys())#types.vars_in_mapping(env.type_mapping) | types.vars_in_env(env.var_mapping)
+        else:
+            tenv = env.type_var_set
+        if len(tenv) == 0:
             return self
-        fresh_map = types.freshen_type_set(tvars, unsafe=unsafe)
-        return self.under_type_assignment(fresh_map)
+        compacted_map = types.compact_type_set(tenv, unsafe=unsafe)
+        result = self.under_type_assignment(compacted_map)
+        result._type_env_history = history_env
+        if not store_mapping:
+            result.get_type_env(force_recalc=True)
+        return result
+
+
+    def freshen_type_vars(self, target=None, unsafe=None, used_vars_only=False, store_mapping=False):
+        # env = self.type_env(constants=True, target=target, free_only=False)
+        # tvars = types.vars_in_env(env)
+        # if len(tvars) == 0:
+        #     return self
+        # fresh_map = types.freshen_type_set(tvars, unsafe=unsafe)
+        # return self.under_type_assignment(fresh_map)
+        history_env = self.get_type_env()
+        if len(history_env.type_var_set) == 0:
+            return self
+        c = self.copy()
+        # note: the following is already triggered by copy.  If this behavior changes, this needs updating.
+        #env = c.get_type_env(force_recalc=True)
+        env = c.get_type_env()
+        if used_vars_only:
+            tenv = env.type_var_set - set(env.type_mapping.keys())#types.vars_in_mapping(env.type_mapping) | types.vars_in_env(env.var_mapping)
+        else:
+            tenv = env.type_var_set
+        if len(tenv) == 0:
+            return self
+        fresh_map = types.freshen_type_set(tenv, unsafe=unsafe)
+        result = self.under_type_assignment(fresh_map)
+        result._type_env_history = history_env
+        if not store_mapping:
+            result.get_type_env(force_recalc=True)
+        return result
 
     def has_type_vars(self):
-        env = self.type_env(constants=True, target=None, free_only=False)
-        tvars = types.vars_in_env(env)
-        return len(tvars) > 0
+        return len(self.get_type_env().type_var_set) > 0
 
     def under_type_assignment(self, mapping):
-        #dirty = False
+        if len(mapping) == 0:
+            return self
+        dirty = False
         parts = list()
         copy = self.copy()
         for part in copy:
             if isinstance(part, TypedExpr):
                 new_part = part.under_type_assignment(mapping)
+                if new_part is not part:
+                    dirty = True
                 #print(repr(new_part))
             else:
                 new_part = part
             parts.append(new_part)
         copy.type = copy.type.sub_type_vars(mapping)
-        return copy.local_copy(*parts)
+        result = copy.local_copy(*parts)
+        result.get_type_env().merge(TypeEnv(type_mapping=mapping))
+        return result
 
 
     def alpha_rename_type_vars(self, blocklist, type_assignment=None):
@@ -1237,6 +1294,8 @@ class TypedTerm(TypedExpr):
         self.defer = False
         update_a = False
         if typ is None:
+            #if varname == "f2":
+            #    raise Error
             if assignment is not None and self.op in assignment:
                 self.type = assignment[self.op].type
                 self.type_guessed = False
@@ -1246,7 +1305,7 @@ class TypedTerm(TypedExpr):
         else:
             self.type_guessed = False
             self.type = typ
-        if not defer_type_env:
+        if not defer_type_env: # note: cannot change type in place safely with this code here
             env = self.calc_type_env()
             #print("before: ", env)
             if assignment is not None:
@@ -1281,8 +1340,8 @@ class TypedTerm(TypedExpr):
         return TypedTerm(self.op, typ=self.type)
 
     def local_copy(self, op):
-        result = TypedTerm(op, latex_op_str = self.latex_op_str)
-        result.type = self.type
+        result = TypedTerm(op, typ=self.type, latex_op_str = self.latex_op_str)
+        #result.type = self.type
         result.type_guessed = self.type_guessed
         return result
 
@@ -1875,6 +1934,7 @@ class BindingOp(TypedExpr):
         self.derivation = None
         self.type_guessed = False
         self.defer = False
+        #assert self.vartype is not None
         self.var_instance = TypedTerm(self.varname, self.vartype) # normalize class
         # set self.op so that hashing and equality comparison work correctly
         # TODO: consider overriding __eq__ and __hash__.
@@ -1894,17 +1954,21 @@ class BindingOp(TypedExpr):
         #print("BindingOp constructor L %s : %s" % (self.varname, repr(body)))
         self.args = [self.ensure_typed_expr(body, body_type, assignment=assignment)]
         #print("    args[0]: ", repr(self.args[0]))
-        new_body = self.args[0].regularize_type_env(assignment) #, target={self.varname})
+        #new_body = self.args[0].regularize_type_env(assignment) #, target={self.varname})
+        #new_body = self.args[0].copy()
+        new_body = self.args[0]
         #print("assignment in body: ", assignment)
         #print("    new_body: ", repr(new_body))
-        new_body_env = new_body.type_env()
-        #print(new_body_env)
-        if self.varname in new_body_env: # binding can be vacuous
-            if new_body_env[self.varname].type != self.vartype: # propagate type inference to binding expression
-                self.vartype = new_body_env[self.varname].type
+        new_body_env = new_body.get_type_env()
+        #print("    hi ", new_body_env)
+        if self.varname in new_body_env.var_mapping: # binding can be vacuous
+            if new_body_env.var_mapping[self.varname].type != self.vartype: # propagate type inference to binding expression
+                #print("mapping: ", new_body_env)
+                self.vartype = new_body_env.var_mapping[self.varname].type
+                assert self.vartype is not None
                 self.var_instance = TypedTerm(self.varname, self.vartype)
                 self.op = "%s %s:" % (self.canonical_name, repr(self.var_instance))
-                self.args = [new_body]
+                #self.args = [new_body]
                 #print("    Using modified body")
         if store_old_v is not None:
             assignment[self.varname] = store_old_v
@@ -2030,18 +2094,39 @@ class BindingOp(TypedExpr):
         return sub_env
 
     def under_type_assignment(self, mapping):
+        if len(mapping) == 0:
+            return self
+        dirty = False
         parts = list()
         copy = self.copy()
-        copy.var_instance = copy.var_instance.under_type_assignment(mapping)
-        copy.vartype = copy.var_instance.type
         for part in copy:
             if isinstance(part, TypedExpr):
                 new_part = part.under_type_assignment(mapping)
+                if new_part is not part:
+                    dirty = True
+                #print(repr(new_part))
             else:
                 new_part = part
             parts.append(new_part)
         copy.type = copy.type.sub_type_vars(mapping)
-        return copy.local_copy(*parts)
+        copy.var_instance = copy.var_instance.under_type_assignment(mapping)
+        copy.vartype = copy.var_instance.type
+        #print("asdf0 ", copy.type, copy.type.left, copy.argtype)
+        #print("parts: ", repr(parts))
+        result = copy.local_copy(*parts)
+        #print("asdf", result.type, result.vartype, repr(result.var_instance))
+        #result.var_instance = result.var_instance.under_type_assignment(mapping)
+        #result.vartype = result.var_instance.type
+        result._type_env = TypeEnv(type_mapping=mapping).merge(result.get_type_env())
+        #print("asdf", result._type_env)
+        #result.get_type_env().merge(TypeEnv(type_mapping=mapping))
+        #print("result: ", repr(self))
+        return result
+        # copy = super().under_type_assignment(mapping)
+        # copy.var_instance = copy.var_instance.under_type_assignment(mapping)
+        # copy.vartype = copy.var_instance.type
+        # #copy.type = FunType(copy.vartype, copy.type.right)
+        # return copy
 
 
     def vacuous(self):
@@ -2425,7 +2510,8 @@ class LFun(BindingOp):
         return LFun(self.argtype, self.body, self.varname)
 
     def local_copy(self, op, arg):
-        return LFun(self.argtype, arg, self.varname)
+        r = LFun(self.argtype, arg, varname=self.varname)
+        return r
 
     def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
         """Attempts to adjust the type of self to be compatible with new_type.  
@@ -2460,6 +2546,7 @@ class LFun(BindingOp):
             #new_argtype = env.var_mapping[self.varname] # principle type
             if self.argtype != left_principal:
                 # arg type needs to be adjusted, and hence all instances of the bound variable as well.  Do this with beta reduction.
+                assert left_principal is not None
                 new_var = TypedTerm(self.varname, left_principal)
                 #print("     new_var: ", new_var)
                 new_body = self.apply(new_var)

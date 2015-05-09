@@ -1256,11 +1256,14 @@ class PolyTypeSystem(TypeSystem):
             return (None, None)
         if isinstance(t1, VariableType):
             # TODO: revisit this logic
-            if t1.internal() and isinstance(t2, VariableType):
-                if t2.internal() and t2.number > t1.number:
-                    return t1.unify(t2, self.unify_r, assignment)
-                else:
-                    return t2.unify(t1, self.unify_r, assignment)
+            # if t1.internal() and isinstance(t2, VariableType):
+            #     if t2.internal() and t2.number > t1.number:
+            #         return t1.unify(t2, self.unify_r, assignment)
+            #     else:
+            #         return t2.unify(t1, self.unify_r, assignment)
+            # else:
+            if isinstance(t2, VariableType):
+                return t2.unify(t1, self.unify_r, assignment)
             else:
                 return t1.unify(t2, self.unify_r, assignment)            
         elif isinstance(t2, VariableType):
