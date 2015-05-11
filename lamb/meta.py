@@ -170,18 +170,41 @@ class TypeEnv(object):
             self.var_mapping[k].type = self.var_mapping[k].type.sub_type_vars(self.type_mapping)
 
     def add_type_mapping(self, type_var, typ, defer=False):
-        principal = self.try_unify(typ, type_var, update_mapping=True)
-        self.type_var_set = self.type_var_set | {type_var} | typ.bound_type_vars()
+        #print("        add_type_mapping: unify %s and %s relative to %s" % (type_var, typ, self.type_mapping))
+        if isinstance(typ, types.VariableType):
+            if typ in self.type_var_set or type_var in self.type_var_set:
+                if (typ in self.type_mapping and self.type_mapping[typ] == type_var):
+                    principle = type_var
+                elif (type_var in self.type_mapping and self.type_mapping[type_var] == typ):
+                    principal = typ
+                else:
+                    principal = self.try_unify(typ, type_var, update_mapping=True)
+            else:
+                principal = type_var
+                self.type_mapping[typ] = type_var
+                self.type_var_set = self.type_var_set | {type_var, typ}                
+        else:
+            principal = self.try_unify(typ, type_var, update_mapping=True)
+            self.type_var_set = self.type_var_set | {type_var} | typ.bound_type_vars()
         if not defer:
             self.update_type_vars()
 
 
     def merge(self, tenv):
-        #print("merging %s and %s" % (self, tenv))
+        #print("    merging %s and %s" % (self, tenv))
         for v in tenv.type_mapping:
             #print("    Mapping %s to %s" % (v, tenv.type_mapping[v]))
             self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
             #print("    interim: ", self.type_mapping)
+        self.update_type_vars()
+        for v in tenv.var_mapping:
+            self.add_var_mapping(v, tenv.var_mapping[v].type)
+        return self
+
+    def intersect_merge(self, tenv):
+        for v in tenv.type_mapping:
+            if v in self.type_var_set or len(tenv.type_mapping[v].bound_type_vars() & self.type_var_set) > 0:
+                self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
         self.update_type_vars()
         for v in tenv.var_mapping:
             self.add_var_mapping(v, tenv.var_mapping[v].type)
@@ -897,9 +920,11 @@ class TypedExpr(object):
             else:
                 new_part = part
             parts.append(new_part)
+        # this may or may not be recalculated by local_copy.  The main case where it isn't is terms.
         copy.type = copy.type.sub_type_vars(mapping)
         result = copy.local_copy(*parts)
-        result.get_type_env().merge(TypeEnv(type_mapping=mapping))
+        #result._type_env = result.get_type_env().merge(TypeEnv(type_mapping=mapping))
+        result._type_env = result.get_type_env().intersect_merge(TypeEnv(type_mapping=mapping))
         return result
 
 
@@ -1366,6 +1391,10 @@ class TypedTerm(TypedExpr):
 
     def term(self):
         return True
+
+    @property
+    def term_name(self):
+        return self.op
 
     def constant(self):
         """Return true iff `self` is a constant.
@@ -1888,7 +1917,8 @@ def op_expr_factory(op, *args):
         raise ValueError("Too many arguments (%s) to operator '%s'" % (len(args), op))
 
 
-
+global recurse_level
+recurse_level = 0
 
 class BindingOp(TypedExpr):
     """Abstract class for a unary operator with a body that binds a single variable in its body.
@@ -1919,26 +1949,28 @@ class BindingOp(TypedExpr):
         if isinstance(var_or_vtype, TypedTerm):
             if varname is not None:
                 logger.warning("Overriding varname '%s' with '%s'" % (varname, var_or_vtype.op))
-            self.varname = var_or_vtype.op
-            self.vartype = var_or_vtype.type
+            varname = var_or_vtype.op
+            vartype = var_or_vtype.type
         elif isinstance(var_or_vtype, types.TypeConstructor):
             if varname is None:
                 varname = self.default_varname()
-            self.varname = varname
-            self.vartype = var_or_vtype
+            vartype = var_or_vtype
         else:
             raise NotImplementedError
-        if not is_var_symbol(self.varname):
+        if not is_var_symbol(varname):
             raise ValueError("Need variable name (got '%s')" % self.varname)
-        self.type = typ
+        if typ is not None:
+            self.type = typ
         self.derivation = None
         self.type_guessed = False
         self.defer = False
+        self.init_args()
         #assert self.vartype is not None
-        self.var_instance = TypedTerm(self.varname, self.vartype) # normalize class
+        #self.var_instance = TypedTerm(self.varname, self.vartype) # normalize class
+        self.init_var(varname, vartype)
         # set self.op so that hashing and equality comparison work correctly
         # TODO: consider overriding __eq__ and __hash__.
-        self.op = "%s %s:" % (self.canonical_name, repr(self.var_instance))
+        #self.op = "%s %s:" % (self.canonical_name, repr(self.var_instance))
         if assignment is None:
             assignment = {self.varname: self.var_instance}
             store_old_v = None
@@ -1949,14 +1981,15 @@ class BindingOp(TypedExpr):
             else:
                 store_old_v = None
             assignment[self.varname] = self.var_instance
+        self.init_body(self.ensure_typed_expr(body, body_type, assignment=assignment))
+        
         #self.body = typed_expr(body)
         # TODO: this is sort of a mess here
         #print("BindingOp constructor L %s : %s" % (self.varname, repr(body)))
-        self.args = [self.ensure_typed_expr(body, body_type, assignment=assignment)]
         #print("    args[0]: ", repr(self.args[0]))
         #new_body = self.args[0].regularize_type_env(assignment) #, target={self.varname})
         #new_body = self.args[0].copy()
-        new_body = self.args[0]
+        new_body = self.body
         #print("assignment in body: ", assignment)
         #print("    new_body: ", repr(new_body))
         new_body_env = new_body.get_type_env()
@@ -1964,10 +1997,10 @@ class BindingOp(TypedExpr):
         if self.varname in new_body_env.var_mapping: # binding can be vacuous
             if new_body_env.var_mapping[self.varname].type != self.vartype: # propagate type inference to binding expression
                 #print("mapping: ", new_body_env)
-                self.vartype = new_body_env.var_mapping[self.varname].type
-                assert self.vartype is not None
-                self.var_instance = TypedTerm(self.varname, self.vartype)
-                self.op = "%s %s:" % (self.canonical_name, repr(self.var_instance))
+                new_vartype = new_body_env.var_mapping[self.varname].type
+                assert new_vartype is not None
+                #self.var_instance = TypedTerm(self.varname, self.vartype)
+                self.init_var(self.varname, new_vartype)
                 #self.args = [new_body]
                 #print("    Using modified body")
         if store_old_v is not None:
@@ -1975,6 +2008,53 @@ class BindingOp(TypedExpr):
 
     def default_varname(self):
         return "x"
+
+    def init_args(self):
+        try:
+            a = self.args
+        except AttributeError:
+            self.args = list([None, None])
+        assert len(self.args) == 2
+
+    def init_var(self, name=None, typ=None):
+        self.init_args()
+        if name is None:
+            if typ is None:
+                raise ValueError
+            else:
+                var_instance = TypedTerm(self.varname, typ)
+        else:
+            if typ is None:
+                var_instance = TypedTerm(name, self.var_instance.type)
+            else:
+                var_instance = TypedTerm(name, typ)
+        self.args[0] = var_instance
+        #self.op = "%s %s:" % (self.canonical_name, repr(self.var_instance))
+        self.op = "%s:" % (self.canonical_name)
+
+
+    def init_var_by_instance(self, v):
+        self.init_var(v.op, v.type)
+
+    def init_body(self, b):
+        self.init_args()
+        self.args[1] = b
+
+    @property
+    def varname(self):
+        return self.var_instance.term_name
+
+    @property
+    def vartype(self):
+        return self.var_instance.type
+
+    @property
+    def var_instance(self):
+        return self.args[0]
+
+    @property
+    def body(self):
+        return self.args[1]
 
     @classmethod
     def add_op(cls, op):
@@ -2017,24 +2097,20 @@ class BindingOp(TypedExpr):
             BindingOp.op_regex = re.compile(regex)
             BindingOp.init_op_regex = re.compile("^\s*" + regex)
 
-    @property
-    def body(self):
-        return self.args[0]
-
     def copy(self):
         # implement in subclass
         raise NotImplementedError
 
-    def local_copy(self):
-        raise NotImplementedError
+    def local_copy(self, op, var, body):
+        raise NotImplementedError        
 
     def alpha_convert(self, new_varname):
         """Produce an alphabetic variant of the expression w.r.t. the bound variable, with new_varname as the new name.
 
         Returns a copy.  Will not affect types of either the expression or the variables."""
         new_self = self.copy()
-        new_self.args[0] = variable_convert(self.args[0], {self.varname: new_varname})
-        new_self.varname = new_varname
+        new_self.init_body(variable_convert(self.body, {self.varname: new_varname}))
+        new_self.init_var(name=new_varname)
         return new_self
 
 
@@ -2081,52 +2157,55 @@ class BindingOp(TypedExpr):
         return super().bound_variables() | {self.varname}
 
     def calc_type_env(self, recalculate=False):
-        sub_env = self.args[0].get_type_env(force_recalc=recalculate).copy()
+        sub_env = self.body.get_type_env(force_recalc=recalculate).copy()
         sub_env.add_type_to_var_set(self.var_instance.type) # ensure any variable types introduced by the variable show up even if they are not present in the subformula
         if self.varname in sub_env.var_mapping:
             del sub_env.var_mapping[self.varname]
         return sub_env
 
     def type_env(self, constants=False, target=None, free_only=True):
-        sub_env = self.args[0].type_env(constants=constants, target=target, free_only=free_only)
+        sub_env = self.body.type_env(constants=constants, target=target, free_only=free_only)
         if free_only and self.varname in sub_env: # binding can be vacuous
             del sub_env[self.varname]
         return sub_env
 
-    def under_type_assignment(self, mapping):
-        if len(mapping) == 0:
-            return self
-        dirty = False
-        parts = list()
-        copy = self.copy()
-        for part in copy:
-            if isinstance(part, TypedExpr):
-                new_part = part.under_type_assignment(mapping)
-                if new_part is not part:
-                    dirty = True
-                #print(repr(new_part))
-            else:
-                new_part = part
-            parts.append(new_part)
-        copy.type = copy.type.sub_type_vars(mapping)
-        copy.var_instance = copy.var_instance.under_type_assignment(mapping)
-        copy.vartype = copy.var_instance.type
-        #print("asdf0 ", copy.type, copy.type.left, copy.argtype)
-        #print("parts: ", repr(parts))
-        result = copy.local_copy(*parts)
-        #print("asdf", result.type, result.vartype, repr(result.var_instance))
-        #result.var_instance = result.var_instance.under_type_assignment(mapping)
-        #result.vartype = result.var_instance.type
-        result._type_env = TypeEnv(type_mapping=mapping).merge(result.get_type_env())
-        #print("asdf", result._type_env)
-        #result.get_type_env().merge(TypeEnv(type_mapping=mapping))
-        #print("result: ", repr(self))
-        return result
-        # copy = super().under_type_assignment(mapping)
-        # copy.var_instance = copy.var_instance.under_type_assignment(mapping)
-        # copy.vartype = copy.var_instance.type
-        # #copy.type = FunType(copy.vartype, copy.type.right)
-        # return copy
+    # def under_type_assignment(self, mapping):
+    #     if len(mapping) == 0:
+    #         return self
+    #     dirty = False
+    #     parts = list()
+    #     copy = self.copy()
+    #     for part in copy:
+    #         if isinstance(part, TypedExpr):
+    #             print("LFun recursing on ", repr(part), " of ", repr(self))
+    #             new_part = part.under_type_assignment(mapping)
+    #             if new_part is not part:
+    #                 dirty = True
+    #             #print(repr(new_part))
+    #         else:
+    #             new_part = part
+    #         parts.append(new_part)
+    #     # copy.type = copy.type.sub_type_vars(mapping)
+    #     # copy.var_instance = copy.var_instance.under_type_assignment(mapping)
+    #     # copy.vartype = copy.var_instance.type
+
+    #     #print("asdf0 ", copy.type, copy.type.left, copy.argtype)
+    #     #print("parts: ", repr(parts))
+    #     result = copy.local_copy(*parts)
+    #     #print("asdf", result.type, result.vartype, repr(result.var_instance))
+    #     #result.var_instance = result.var_instance.under_type_assignment(mapping)
+    #     #result.vartype = result.var_instance.type
+    #     print("LFun Merge at ", repr(self))
+    #     result._type_env = TypeEnv(type_mapping=mapping).merge(result.get_type_env())
+    #     #print("asdf", result._type_env)
+    #     #result.get_type_env().merge(TypeEnv(type_mapping=mapping))
+    #     #print("result: ", repr(self))
+    #     return result
+    #     # copy = super().under_type_assignment(mapping)
+    #     # copy.var_instance = copy.var_instance.under_type_assignment(mapping)
+    #     # copy.vartype = copy.var_instance.type
+    #     # #copy.type = FunType(copy.vartype, copy.type.right)
+    #     # return copy
 
 
     def vacuous(self):
@@ -2432,8 +2511,8 @@ class ForallUnary(BindingOp):
     def copy(self):
         return ForallUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, arg):
-        return ForallUnary(self.vartype, arg, self.varname)
+    def local_copy(self, op, var, arg):
+        return ForallUnary(var, arg)
 
 BindingOp.add_op(ForallUnary)
 
@@ -2450,8 +2529,8 @@ class ExistsUnary(BindingOp):
     def copy(self):
         return ExistsUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, arg):
-        return ExistsUnary(self.vartype, arg, self.varname)        
+    def local_copy(self, op, var, arg):
+        return ExistsUnary(var, arg)        
 
 BindingOp.add_op(ExistsUnary)
 
@@ -2472,8 +2551,8 @@ class IotaUnary(BindingOp):
     def copy(self):
         return IotaUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, arg):
-        return IotaUnary(self.vartype, arg, self.varname)        
+    def local_copy(self, op, var, arg):
+        return IotaUnary(var, arg)        
 
 
 BindingOp.add_op(IotaUnary)
@@ -2509,8 +2588,8 @@ class LFun(BindingOp):
     def copy(self):
         return LFun(self.argtype, self.body, self.varname)
 
-    def local_copy(self, op, arg):
-        r = LFun(self.argtype, arg, varname=self.varname)
+    def local_copy(self, op, var, arg):
+        r = LFun(var, arg)
         return r
 
     def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
@@ -2560,6 +2639,7 @@ class LFun(BindingOp):
             env.merge(new_body.get_type_env())
             if self.varname in env.var_mapping:
                 del env.var_mapping[self.varname]
+            #print("adjustment calling under_type_assignment at ", self)
             new_fun = new_fun.under_type_assignment(env.type_mapping)
             new_fun._type_env = env
             #print("    Adjusting %s to %s" % (self, new_fun))
