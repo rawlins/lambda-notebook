@@ -661,6 +661,11 @@ class VariableType(TypeConstructor):
             t2_prev = None
         #print("t1: %s, t1 principal: %s, t2: %s, t2 principal: %s" % (self, start, t2, t2_principal))
         new_principal = start
+        if PolyTypeSystem.occurs_check(new_principal, t2_principal):
+            from lamb import meta
+            from lamb.meta import logger
+            logger.error("Failed occurs check: can't unify recursive types %s and %s" % (new_principal, t2_principal))
+            return (None, None)
         if isinstance(start, VariableType):
             if not isinstance(t2_principal, VariableType):
                 t2_principal = t2_principal.sub_type_vars(assignment, trans_closure=True)
@@ -760,9 +765,12 @@ VariableType.max_id = 0
 
 class UnknownType(VariableType):
     max_identifier = 0
-    def __init__(self):
-        UnknownType.max_identifier += 1
-        self.identifier = UnknownType.max_identifier
+    def __init__(self, force_num=None):
+        if force_num is None:
+            UnknownType.max_identifier += 1
+            self.identifier = UnknownType.max_identifier
+        else:
+            self.identifier = force_num
         super().__init__("?", number=self.identifier)
 
     def __str__(self):
@@ -771,6 +779,9 @@ class UnknownType(VariableType):
     def __repr__(self):
         return "?"
 
+    def latex_str(self):
+        return ensuremath("?")
+
     # def __hash__(self):
     #     return hash("?" + str(self.identifier))
 
@@ -778,7 +789,7 @@ class UnknownType(VariableType):
     #     return self.identifer == other.identifier
     
     def copy_local(self):
-        return UnknownType()
+        return UnknownType(force_num=self.identifier)
     
     @classmethod
     def parse(cls, s, i, parse_control_fun):
@@ -1173,7 +1184,7 @@ def compact_type_set(types, unsafe=None):
     keep = set()
     mapping = dict()
     for t in types:
-        if t.number > 3:
+        if t.number > 3 or t.symbol == "I" or t.symbol == "?":
             remap.append(t)
         else:
             keep.add(t)
@@ -1201,10 +1212,20 @@ class UnificationResult(object):
         self.mapping = mapping
         self.trivial = injective(mapping) and not strengthens(mapping)
 
+    def _repr_latex_(self):
+        s = "<table>"
+        s += "<tr><td>Principal type:&nbsp;&nbsp; </td><td>%s</td></tr>" % self.principal.latex_str()
+        s += "<tr><td>Inputs: </td><td>%s and %s</td></tr>" % (self.t1.latex_str(), self.t2.latex_str())
+        s += "<tr><td>Mapping: </td><td>%s</td></tr>" % utils.dict_latex_repr(self.mapping)
+        s += "</table>"
+        return s
+
+
 class PolyTypeSystem(TypeSystem):
     def __init__(self, atomics=None, nonatomics=None):
         super().__init__("polymorphic", atomics=atomics, nonatomics=nonatomics)
         self.add_nonatomic(VariableType)
+        self.add_nonatomic(UnknownType)
 
     def unify(self, t1, t2, assignment=None):
         #from lamb import meta
@@ -1217,6 +1238,7 @@ class PolyTypeSystem(TypeSystem):
         else:
             return result.principal
 
+    @classmethod
     def occurs_check(self, t1, t2):
         if isinstance(t1, VariableType) and not isinstance(t2, VariableType):
             return t1 in t2.bound_type_vars()

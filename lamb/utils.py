@@ -50,6 +50,20 @@ def num_or_str(x, allow_float=False):
                 pass
         return str(x).strip()
 
+def dict_latex_repr(d):
+    r = list()
+    for k in d:
+        try:
+            k_repr = k.latex_str()
+        except AttributeError:
+            k_repr = repr(k)
+        try:
+            val_repr = d[k].latex_str()
+        except AttributeError:
+            val_repr = repr(d[k])
+        r.append("%s: %s" % (k_repr, val_repr))
+    return "{" + ", ".join(r) + "}"
+
 def parens(s):
     # TODO: ensure at most one outer set of parens
     return "(" + s + ")"

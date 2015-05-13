@@ -33,8 +33,8 @@ def inject_into_ipython():
         ip.user_ns["Tree"] = lamb.tree_mini.Tree
         ip.user_ns["MiniLatex"] = lamb.utils.MiniLatex
         ip.user_ns["ltx_print"] = lamb.utils.ltx_print
-        ip.user_ns["te"] = lamb.lang.te
-        ip.user_ns["tp"] = lamb.lang.tp
+        ip.user_ns["te"] = lamb.meta.te
+        ip.user_ns["tp"] = lamb.meta.tp
     except:
         print("Failed to inject lambda notebook variables into the ipython kernel namespace")
         raise

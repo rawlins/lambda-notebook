@@ -118,6 +118,8 @@ def parse_equality_line(s, env=None, transforms=None):
     # TODO should this go by lines....
     if env is None:
         env = dict()
+    if transforms is None:
+        transforms = dict()
     var_env = vars_only(env)
     system = lang.get_system()
     a_ctl = system.assign_controller
@@ -176,6 +178,7 @@ def parse_equality_line(s, env=None, transforms=None):
         except Exception as e:
             meta.logger.error("Parsing of assignment to '%s' failed with exception:" % left_s)
             meta.logger.error(e)
+            raise e
             return (dict(), env)
 
         # variable assignment case

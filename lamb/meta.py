@@ -61,9 +61,17 @@ def tp(s):
     result = ts.type_parser(s)
     return result
 
-def te(s, assignment=None):
+def let_wrapper(s):
+    result = derived(s.compact_type_vars(), s, "Let substitution")
+    result.let = True
+    return result
+
+def te(s, let=True, assignment=None):
     """Convenience wrapper for `lang.TypedExpr.factory`."""
-    return TypedExpr.factory(s, assignment=assignment)
+    result = TypedExpr.factory(s, assignment=assignment)
+    if let:
+        result = let_wrapper(result)
+    return result
 
 def term(s, typ=None, assignment=None):
     """Convenience wrapper for building terms.
@@ -111,6 +119,14 @@ class TypeEnv(object):
             #self.update_type_vars()
         self.update_var_set()
 
+    def _repr_latex_(self):
+        s = "<table>"
+        s += "<tr><td>Term mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" % utils.dict_latex_repr(self.var_mapping)
+        s += "<tr><td>Type mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" % utils.dict_latex_repr(self.type_mapping)
+        #s += "<tr><td>Type variables:&nbsp;&nbsp; </td><td>%s</td></tr>" % repr(self.type_var_set)
+        s += "</table>"
+        return s
+
     def update_var_set(self):
         s = types.vars_in_env(self.var_mapping)
         s = s | set(self.type_mapping.keys())
@@ -129,7 +145,7 @@ class TypeEnv(object):
             assert self.var_mapping[vname].term()
             #unify = ts.unify_details(self.var_mapping[vname].type, typ, assignment=self.type_mapping, typ_env=self.var_mapping)
             #unify = ts.unify_details(self.var_mapping[vname].type, typ, assignment=self.type_mapping)
-            principal = self.try_unify(typ, self.var_mapping[vname].type, update_mapping=True)
+            principal = self.try_unify(self.var_mapping[vname].type, typ, update_mapping=True)
             if principal is None:
                 return None
             #self.type_mapping = unify.mapping
@@ -155,7 +171,8 @@ class TypeEnv(object):
         else:
             if update_mapping:
                 self.type_mapping = result.mapping
-                self.type_var_set = self.type_var_set | self.type_mapping.keys()
+                #self.type_var_set = self.type_var_set | self.type_mapping.keys()
+                self.update_var_set()
             return result.principal
 
     def add_type_to_var_set(self, typ):
@@ -173,19 +190,19 @@ class TypeEnv(object):
         #print("        add_type_mapping: unify %s and %s relative to %s" % (type_var, typ, self.type_mapping))
         if isinstance(typ, types.VariableType):
             if typ in self.type_var_set or type_var in self.type_var_set:
-                if (typ in self.type_mapping and self.type_mapping[typ] == type_var):
-                    principle = type_var
-                elif (type_var in self.type_mapping and self.type_mapping[type_var] == typ):
-                    principal = typ
-                else:
-                    principal = self.try_unify(typ, type_var, update_mapping=True)
+                # if (typ in self.type_mapping and self.type_mapping[typ] == type_var):
+                #     principal = type_var
+                # elif (type_var in self.type_mapping and self.type_mapping[type_var] == typ):
+                #     principal = typ
+                # else:
+                principal = self.try_unify(type_var, typ, update_mapping=True)
             else:
                 principal = type_var
-                self.type_mapping[typ] = type_var
+                self.type_mapping[type_var] = typ
                 self.type_var_set = self.type_var_set | {type_var, typ}                
         else:
-            principal = self.try_unify(typ, type_var, update_mapping=True)
-            self.type_var_set = self.type_var_set | {type_var} | typ.bound_type_vars()
+            principal = self.try_unify(type_var, typ, update_mapping=True)
+            #self.type_var_set = self.type_var_set | {type_var} | typ.bound_type_vars()
         if not defer:
             self.update_type_vars()
 
@@ -212,11 +229,11 @@ class TypeEnv(object):
 
     def copy(self):
         env = TypeEnv(self.var_mapping.copy(), self.type_mapping.copy())
-        env.type_var_set = self.type_var_set.copy()
+        #env.type_var_set = self.type_var_set.copy()
         return env
 
     def __repr__(self):
-        return "TypeEnv: Variables: " + repr(self.var_mapping) + ", Type mapping: " +  repr(self.type_mapping) + ", Type variables: " + repr(self.type_var_set)
+        return "[TypeEnv: Variables: " + repr(self.var_mapping) + ", Type mapping: " +  repr(self.type_mapping) + ", Type variables: " + repr(self.type_var_set) + "]"
 
 
 
@@ -285,6 +302,7 @@ class TypedExpr(object):
         self.type_guessed = False
         self.derivation = None
         self.defer = defer
+        self.let = False
 
         if (len(args) == 0):
             logger.warning("Vacuous container TypedExpr")
@@ -301,14 +319,16 @@ class TypedExpr(object):
         If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
         If it fails completely, it returns None."""
         ts = get_type_system()
-        env = self.get_type_env()
+        env = self.get_type_env().copy()
         #unify_a, unify_base = ts.local_unify(new_type, self.type)
         #unify_target = ts.unify(self.type, new_type)
 
         # if the two are alpha equivalents, the following call with this order should return new_type
         #if self.term():
-        #print("Try adjusting %s to %s" % (repr(self), repr(new_type)))
-        unify_target = env.try_unify(new_type, self.type)
+        #print("Try adjusting %s to %s" % (repr(self), repr(new_type)), " relative to ", env)
+        #vunify_target = env.try_unify(new_type, self.type)
+        unify_target = env.try_unify(self.type, new_type, update_mapping=True)
+        #print("    target ", unify_target)
         #print("new_type %s self type %s unify_a %s unify_target %s" % (new_type, self.type, unify_a, unify_target))
         if unify_target is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
@@ -325,7 +345,7 @@ class TypedExpr(object):
                     #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
                     #return None
                 #new_op_type = types.FunType(self.args[0].type, unify_target)
-                env = env.copy()
+                #env = env.copy()
                 (new_op_type, new_arg_type, new_ret_type) = ts.unify_fr(self.op.type, unify_target, assignment=env.type_mapping)
                 if new_op_type is None:
                     return None
@@ -338,6 +358,7 @@ class TypedExpr(object):
                 self_copy = self.copy()
                 self_copy.op = new_op
                 self_copy.args = [new_arg]
+                self_copy.type = new_ret_type
                 self_copy._type_env = env
                 #self_copy.type = new_op.type.right
                 return derived(self_copy, self, derivation_reason)
@@ -345,8 +366,8 @@ class TypedExpr(object):
                 # should be term?
                 if self.term():
                     new_term = self.copy()
-                    env = env.copy()
-                    principal = env.try_add_var_mapping(self.op, new_type)
+                    #env = env.copy()
+                    principal = env.try_add_var_mapping(new_term.op, new_type)
                     if principal is None:
                         return None
                     new_term._type_env = env
@@ -354,7 +375,7 @@ class TypedExpr(object):
                     if assignment is not None and new_term.op in assignment:
                         assignment[new_term.op] = new_term
                     #print("Adjusting %s to %s, type %s" % (repr(self), repr(new_term), repr(principal)))
-                    #print(env)
+                    #print("    ", env)
                     return derived(new_term, self, derivation_reason)
                 else:
                     logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
@@ -416,7 +437,7 @@ class TypedExpr(object):
             if unify_arg != c.args[0].type:
                 new_arg = c.args[0].try_adjust_type(unify_arg)
                 if new_arg is None:
-                    raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
+                    raise TypeMismatch(s, old, "Type adjustment of part 1 of '%s' to %s" % (repr(self), unify_arg))
                 c.args[0] = new_arg
             c.type = unify_out
         else:
@@ -429,7 +450,7 @@ class TypedExpr(object):
                 if unify_f != c.op.type:
                     new_op = c.op.try_adjust_type(unify_f)
                     if new_op is None:
-                        raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
+                        raise TypeMismatch(s, old, "Type adjustment of part %s of '%s' to %s" % (i, repr(self), unify_arg))
                     c.op = new_op
                 c.type = unify_out
             else:
@@ -742,31 +763,41 @@ class TypedExpr(object):
             if isinstance(args[0], str):
                 if args[0] in op_symbols:
                     return op_expr_factory(*args) # args[0] is a special-cased operator symbol
-            arg0 = cls.ensure_typed_expr(args[0])
+            op = cls.ensure_typed_expr(args[0])
 
             # this is redundant with the constructor, but I can't currently find a way to simplify.
             # after this point, all elements of args will be TypedExprs.
-            args = (arg0,) + tuple([cls.ensure_typed_expr(a) for a in args[1:]])
+            remainder = tuple([cls.ensure_typed_expr(a) for a in args[1:]])
 
             # package longer arg lengths in Tuples.  After this point, len(args) can only be 2.
-            if len(args) > 2:
-                packaged_args = Tuple(args[1:])
-                args = (args[0], packaged_args)
-            if (not args[0].type.functional()) and args[0].type_guessed:
+            if len(remainder) > 1:
+                arg = Tuple(args[1:])
+            else:
+                arg = remainder[0]
+            if (not op.type.functional()) and op.type_guessed:
                 # special case: see if the type of the operator is guessed and coerce accordingly
                 # TODO: should type t be the default return type?
 
                 # prevent future coercion of the argument
-                args[1].type_not_guessed()
-                coerced_op = args[0].try_coerce_new_argument(args[1].type, assignment=assignment)
+                arg.type_not_guessed()
+                coerced_op = op.try_coerce_new_argument(arg.type, assignment=assignment)
                 if coerced_op is not None:
-                    logger.info("Coerced guessed type %s for '%s' into %s, to match argument '%s'" % (args[0].type, repr(args[0]), coerced_op.type, repr(args[1])))
-                    args = (coerced_op,) + args[1:]
+                    logger.info("Coerced guessed type %s for '%s' into %s, to match argument '%s'" % (op.type, repr(op), coerced_op.type, repr(arg)))
+                    op = coerced_op
                 else:
-                    logger.warning("Unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (args[0].type, repr(args[0]), repr(args[1]), args[1].type))
+                    logger.warning("Unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (op.type, repr(op), repr(arg), arg.type))
             # if we get to this point, args[0] should be the operator, and the rest of the list arguments to the operator.
             #return TypedExpr(*args)
-            return ApplicationExpr(*args, assignment=assignment)
+            #original_op = op
+            if op.let:
+                op = derived(op.freshen_type_vars(), op, "Let substitution")
+            if arg.let:
+                arg = derived(arg.freshen_type_vars(), arg, "Let substitution")
+            result = ApplicationExpr(op, arg, assignment=assignment)
+            if result.let:
+                #print("add step")
+                result = derived(result.compact_type_vars(), result, "Let substitution")
+            return result
 
     @classmethod
     def ensure_typed_expr(cls, s, typ=None, assignment=None):
@@ -922,14 +953,15 @@ class TypedExpr(object):
             parts.append(new_part)
         # this may or may not be recalculated by local_copy.  The main case where it isn't is terms.
         copy.type = copy.type.sub_type_vars(mapping)
+        if copy.type == self.type and not dirty:
+            return self
         result = copy.local_copy(*parts)
         #result._type_env = result.get_type_env().merge(TypeEnv(type_mapping=mapping))
         result._type_env = result.get_type_env().intersect_merge(TypeEnv(type_mapping=mapping))
+        #return derived(result, self, desc="Type inference (via assignment)")
+        # need to set a derivation step for this in the calling function.
+        result.derivation = self.derivation
         return result
-
-
-    def alpha_rename_type_vars(self, blocklist, type_assignment=None):
-        pass
 
     def under_assignment(self, assignment):
         """Use `assignment` to replace any appropriate variables in `self`."""
@@ -1026,7 +1058,7 @@ class TypedExpr(object):
             if new_arg_i is not self.args[i-1]:
                 result = self.copy()
                 result.args[i-1] = new_arg_i
-                if len(result.args) == 1 and isinstance(result, BindingOp):
+                if len(result.args) == 2 and isinstance(result, BindingOp):
                     reason = "Reduction of body"
                 else:
                     reason = "Reduction of operand %s" % (i)
@@ -1051,7 +1083,7 @@ class TypedExpr(object):
                     dirty = True
                 next_step = result.copy()
                 next_step.args[i] = new_arg_i
-                if len(result.args) == 1 and isinstance(result, BindingOp):
+                if len(result.args) == 2 and isinstance(result, BindingOp):
                     reason = "Recursive reduction of body"
                 else:
                     reason = "Recursive reduction of operand %s" % (i+1)
@@ -1163,7 +1195,7 @@ class TypedExpr(object):
         Note that there are some special cases to worry about: ListedSets are not guaranteed to hash correctly.
         """
         # TODO: deal with ListedSets
-        return hash(self.op) ^ hash(tuple(self.args))
+        return hash(self.op) ^ hash(tuple(self.args)) ^ hash(self.type)
 
     def __getitem__(self, i):
         """If `i` is a number, returns a part of `self` by index.  
@@ -1220,17 +1252,23 @@ class ApplicationExpr(TypedExpr):
         if fun.type == f_type or defer:
             op = fun
         else:
-            op = fun.try_adjust_type(f_type, derivation_reason="Function argument combination", assignment=assignment)
+            op = fun.try_adjust_type(f_type, derivation_reason="Type inference (external)", assignment=assignment)
             history = True
 
         if a_type == arg.type or defer:
             args = [arg]
         else:
-            args = [arg.try_adjust_type(a_type, derivation_reason="Function argument combination", assignment=assignment)]
+            args = [arg.try_adjust_type(a_type, derivation_reason="Type inference (external)", assignment=assignment)]
             history = True
         super().__init__(op, *args, defer=defer)
+        if fun.let and arg.let:
+            #print("let should percolate")
+            self.let = True
         #self.op = op
         #self.args = args
+        # combination_step = False
+        # if op.derivation is not None:
+        #     add_subexpression_step(self, op, desc="Derivation of function")
 
         if history:
             # bit of a hack: build a derivation with the deferred version as the origin
@@ -1246,10 +1284,12 @@ class ApplicationExpr(TypedExpr):
                 self.type_guessed = False
 
     def copy(self):
-        return ApplicationExpr(self.op, self.args[0], defer=self.defer)
+        return self.local_copy(self.op, self.args[0])
 
     def local_copy(self, fun, arg):
-        return ApplicationExpr(fun, arg, defer=self.defer)
+        result = ApplicationExpr(fun, arg, defer=self.defer)
+        result.let = self.let
+        return result
 
 class Tuple(TypedExpr):
     """TypedExpr wrapper on a tuple.
@@ -1317,6 +1357,7 @@ class TypedTerm(TypedExpr):
         self.op = num_or_str(varname)
         self.derivation = None
         self.defer = False
+        self.let = False
         update_a = False
         if typ is None:
             #if varname == "f2":
@@ -1956,6 +1997,7 @@ class BindingOp(TypedExpr):
                 varname = self.default_varname()
             vartype = var_or_vtype
         else:
+            logger.error("Unknown var_or_vtype: " + repr(var_or_vtype))
             raise NotImplementedError
         if not is_var_symbol(varname):
             raise ValueError("Need variable name (got '%s')" % self.varname)
@@ -1964,6 +2006,7 @@ class BindingOp(TypedExpr):
         self.derivation = None
         self.type_guessed = False
         self.defer = False
+        self.let = False
         self.init_args()
         #assert self.vartype is not None
         #self.var_instance = TypedTerm(self.varname, self.vartype) # normalize class
@@ -2054,7 +2097,7 @@ class BindingOp(TypedExpr):
 
     @property
     def body(self):
-        return self.args[1]
+        return self.args[1]        
 
     @classmethod
     def add_op(cls, op):
@@ -2601,7 +2644,9 @@ class LFun(BindingOp):
 
         #print("LFun: Try adjusting %s to %s" % (repr(self), repr(new_type)))
         env = self.body.get_type_env().copy()
-        unified = env.try_unify(new_type, self.type)
+        #print("LFun try adjusting %s to %s" % (repr(self), repr(new_type)))
+        unified = env.try_unify(self.type, new_type)
+        #print("    target ", unified)
         if unified is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
             return None
@@ -2615,13 +2660,14 @@ class LFun(BindingOp):
                 env.add_var_mapping(self.varname, self.type.left)
             if derivation_reason is None:
                 derivation_reason = "Type adjustment"
-            new_argtype = unified.left
+            #new_argtype = unified.left
             #print("    ", env)
             #print("     Adjusting variable %s to %s" % (self.varname, unified.left))
             left_principal = env.try_add_var_mapping(self.varname, unified.left)
             #print("    ", env)
             if left_principal is None:
                 return None
+            new_argtype = left_principal
             #new_argtype = env.var_mapping[self.varname] # principle type
             if self.argtype != left_principal:
                 # arg type needs to be adjusted, and hence all instances of the bound variable as well.  Do this with beta reduction.
@@ -2640,7 +2686,7 @@ class LFun(BindingOp):
             if self.varname in env.var_mapping:
                 del env.var_mapping[self.varname]
             #print("adjustment calling under_type_assignment at ", self)
-            new_fun = new_fun.under_type_assignment(env.type_mapping)
+            #new_fun = new_fun.under_type_assignment(env.type_mapping)
             new_fun._type_env = env
             #print("    Adjusting %s to %s" % (self, new_fun))
             return derived(new_fun, self, derivation_reason)
@@ -2809,8 +2855,12 @@ def variable_transform_rebuild(expr, dom, fun):
     expr: a TypedExpr
     dom: a set of variable names
     fun: a function from terms to TypedExprs."""
-    # TODO: check for properly named variables?
     # TODO: double check -- what if I recurse into a region where a variable becomes free again??  I think this goes wrong
+    #
+    #  update to last TODO: to fix this problem (which was real) I changed the recursive call to use `targets` rather than `dom`.  This
+    #  seems like it should work (and is theoretically correct) but I'm not confident enough to remove this note.
+    #  `dom` is definitely wrong though.  
+    # 
     targets = dom & expr.free_variables()
     if targets:
         if expr.term() and expr.op in targets:
@@ -2821,7 +2871,7 @@ def variable_transform_rebuild(expr, dom, fun):
         seq = list()
         dirty = False
         if isinstance(expr.op, TypedExpr):
-            new_op = variable_transform_rebuild(expr.op, dom, fun)
+            new_op = variable_transform_rebuild(expr.op, targets, fun)
             if new_op != expr.op:
                 dirty = True
             seq.append(new_op)
@@ -2830,7 +2880,7 @@ def variable_transform_rebuild(expr, dom, fun):
         for i in range(len(expr.args)):
             if isinstance(expr.args[i], TypedExpr):
                 #expr.args[i] = variable_transform(expr.args[i], dom, fun)
-                seq.append(variable_transform_rebuild(expr.args[i], dom, fun))
+                seq.append(variable_transform_rebuild(expr.args[i], targets, fun))
                 if seq[-1] != expr.args[i]:
                     dirty = True
                 #print("transforming %s to %s" % (expr.args[i], seq[-1]))
@@ -3024,6 +3074,9 @@ class DerivationStep(object):
             else:
                 return "(" + (" + ".join([repr(o) for o in self.origin])) + ")"
 
+    def __repr__(self):
+        return "[DerivationStep origin: " + repr(self.origin) + ", result: " + repr(self.result) + ", description: " + self.desc + "]"
+
 class Derivation(object):
     """A derivation sequence, consisting of DerivationSteps."""
     def __init__(self, steps):
@@ -3151,6 +3204,10 @@ def derived(result, origin, desc=None, latex_desc=None, subexpression=None, allo
         if allow_trivial:
             trivial = True
         else:
+            # if result is not origin:
+            #     print("neq: ", repr(result), repr(origin))
+            if result.derivation is None and result is not origin: # a bit hacky, but this scenario has come up
+                result.derivation = origin.derivation
             return result
     if result.derivation is None:
         d = origin.derivation
@@ -3159,7 +3216,27 @@ def derived(result, origin, desc=None, latex_desc=None, subexpression=None, allo
     result.derivation = derivation_factory(result, desc=desc, latex_desc=latex_desc, origin=origin, steps=d, subexpression=subexpression, trivial=trivial)
     return result
 
+def add_derivation_step(te, result, origin, desc=None, latex_desc=None, subexpression=None, allow_trivial=False):
+    trivial = False
+    if result == origin: # may be inefficient?
+        if allow_trivial:
+            trivial = True
+        else:
+            return te
+    if te.derivation is None:
+        d = origin.derivation
+    else:
+        d = te.derivation
+    te.derivation = derivation_factory(result, desc=desc, latex_desc=latex_desc, origin=origin, steps=d, subexpression=subexpression, trivial=trivial)
+    return te
 
+def add_subexpression_step(te, subexpr, desc=None, latex_desc=None):
+    if subexpr.derivation is None or len(subexpr.derivation) == 0:
+        return te
+    start = subexpr.derivation[0].origin[0]
+    end = subexpr.derivation[-1].origin[-1]
+    add_derivation_step(te, end, start, desc=desc, latex_desc=latex_desc, subexpression=subexpr)
+    return te
 
 test_setup()
 
@@ -3175,7 +3252,7 @@ test_setup()
 
 
 def repr_parse(e):
-    result = te(repr(e))
+    result = te(repr(e), let=False)
     return result == e
 
 random_types = [type_t]
