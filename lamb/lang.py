@@ -1996,7 +1996,7 @@ class CompositionSystem(object):
                 if len(new_i_n.results) > 1:
                     typeshifts_changed = True
             if typeshifts_changed:
-                print("Type-shifting: found %i new items to try: %s" % (len(new_items), repr(new_items)))
+                #print("Type-shifting: found %i new items to try: %s" % (len(new_items), repr(new_items)))
                 result = self.compose(*new_items, assignment=assignment, block_typeshift=True)
                 if len(result.results) > 0:
                     return result

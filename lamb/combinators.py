@@ -25,6 +25,10 @@ def function_composition_nopoly(g, f):
     result = (combinator(g)(f)).reduce_all()
     return result
 
+def geach_shift(fun, f_type_left):
+    combinator = geach_combinator(fun.type, types.FunType(f_type_left, fun.type.left))
+    return combinator(fun).reduce_all()
+
 def g_e_shift(fun, assignment=None):
     if not fun.type.functional():
         raise types.TypeMismatch(fun, None, "g-shift for type e")
