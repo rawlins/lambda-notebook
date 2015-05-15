@@ -12,7 +12,7 @@ except:
 
 import lamb
 # note: can't import this from any other module.
-from lamb import utils, types, meta, lang, tree_mini, parsing, magics
+from lamb import utils, types, meta, lang, tree_mini, parsing, magics, combinators
 from lamb.tree_mini import Tree
 
 
@@ -27,6 +27,7 @@ def inject_into_ipython():
         ip.user_ns["lang"] = lamb.lang
         ip.user_ns["parsing"] = lamb.parsing
         ip.user_ns["display"] = lamb.display
+        ip.user_ns["combinators"] = lamb.combinators
 
         # inject some convenience functions
         ip.user_ns["reload_lamb"] = reload_lamb
@@ -48,6 +49,7 @@ def reload_lamb():
     imp.reload(lamb.lang)
     imp.reload(lamb.parsing)
     imp.reload(lamb.display)
+    imp.reload(lamb.combinators)
     lamb.reload_all = reload_lamb
     inject_into_ipython()
 

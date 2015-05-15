@@ -1377,15 +1377,15 @@ class CompositionOp(object):
 
     def _repr_latex_(self):
         if self.latex_desc is None:
-            return "%s <i>%s</i>, built on python function '%s'" % (self.__class__.__name__, self.name, self.operation.__name__)
+            return "%s <i>%s</i>, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
         else:
-            return "%s <i>%s</i>, built on combinator '%s'" % (self.__class__.__name__, self.name, self.latex_desc)
+            return "%s <i>%s</i>, built on combinator '%s'" % (self.description(), self.name, self.latex_desc)
 
     def __repr__(self):
         if self.desc is None:
-            return "%s %s, built on python function '%s'" % (self.__class__.__name__, self.name, self.operation.__name__)
+            return "%s %s, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
         else:
-            return "%s %s, built on combinator '%s'" % (self.__class__.__name__, self.name, self.desc)
+            return "%s %s, built on combinator '%s'" % (self.description(), self.name, self.desc)
 
     @property
     def name(self):
@@ -1401,6 +1401,9 @@ class CompositionOp(object):
     def __call__(self, *a, assignment=None):
         # handle None here, rather than in all individual functions.
         raise NotImplementedError
+
+    def description(self):
+        return self.__class__.__name__
 
 
 class BinaryCompositionOp(CompositionOp):
@@ -1437,6 +1440,9 @@ class BinaryCompositionOp(CompositionOp):
             result = result.reduce_all()
         return result
 
+    def description(self):
+        return "Binary composition rule"
+
 class UnaryCompositionOp(CompositionOp):
     """A unary composition operation."""
     def __init__(self, name, operation, typeshift=False, desc=None, latex_desc=None, composite_name=None, allow_none=False, reduce=False, system=None):
@@ -1469,6 +1475,12 @@ class UnaryCompositionOp(CompositionOp):
         if self.reduce:
             result = result.reduce_all()
         return result
+
+    def description(self):
+        if self.typeshift:
+            return "Typeshift"
+        else:
+            return "Unary composition rule"
 
 
 def tree_binary(t):
@@ -1984,6 +1996,7 @@ class CompositionSystem(object):
                 if len(new_i_n.results) > 1:
                     typeshifts_changed = True
             if typeshifts_changed:
+                print("Type-shifting: found %i new items to try: %s" % (len(new_items), repr(new_items)))
                 result = self.compose(*new_items, assignment=assignment, block_typeshift=True)
                 if len(result.results) > 0:
                     return result

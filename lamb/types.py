@@ -1386,9 +1386,9 @@ class PolyTypeSystem(TypeSystem):
             # choose a non-atomic type and generate a random instantiation of it
             ctrl_fun = lambda *a: self.random_type(max_depth - 1, p_terminate_early, allow_variables)
             if allow_variables:
-                t_class = random.choice(list(self.nonatomics))
+                t_class = random.choice(list(self.nonatomics - {UnknownType}))
             else:
-                t_class = random.choice(list(self.nonatomics - {VariableType}))
+                t_class = random.choice(list(self.nonatomics - {VariableType, UnknownType}))
             return t_class.random(ctrl_fun)
 
     def random_variable_type(self, max_depth, p_terminate_early):
