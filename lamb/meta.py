@@ -154,11 +154,13 @@ class TypeEnv(object):
             # if new_mappee is None:
             #     raise TypeMismatch(self.var_mapping[vname], unify.principal, "Failed to unify types across distinct instances of term")
             assert principal is not None
-            self.var_mapping[vname] = TypedTerm(vname, principal, defer_type_env=True)
+            term = TypedTerm(vname, principal, defer_type_env=True)
+            self.var_mapping[vname] = term
             self.update_type_vars()
         else:
             assert typ is not None
-            self.var_mapping[vname] = TypedTerm(vname, typ, defer_type_env=True)
+            term = TypedTerm(vname, typ, defer_type_env=True)
+            self.var_mapping[vname] = term
         self.add_type_to_var_set(self.var_mapping[vname].type)
         return self.var_mapping[vname].type
 
@@ -184,7 +186,9 @@ class TypeEnv(object):
             #self.var_mapping[k] = self.var_mapping[k].under_type_assignment(self.type_mapping)
 
             # note that the following is not generally safe, but here we are working with TypedTerms that have no TypeEnv
-            self.var_mapping[k].type = self.var_mapping[k].type.sub_type_vars(self.type_mapping)
+            #self.var_mapping[k].type = self.var_mapping[k].type.sub_type_vars(self.type_mapping)
+            new_type = self.var_mapping[k].type.sub_type_vars(self.type_mapping)
+            self.var_mapping[k] = TypedTerm(self.var_mapping[k].op, new_type, defer_type_env=True)
 
     def add_type_mapping(self, type_var, typ, defer=False):
         #print("        add_type_mapping: unify %s and %s relative to %s" % (type_var, typ, self.type_mapping))
@@ -312,6 +316,7 @@ class TypedExpr(object):
         self.args = list(args)
 
     def _type_cache_get(self, t):
+        return False
         try:
             cache = self._type_adjust_cache
         except AttributeError:
@@ -2672,6 +2677,29 @@ class IotaUnary(BindingOp):
     def local_copy(self, op, var, arg):
         return IotaUnary(var, arg)        
 
+    def to_test(self, x):
+        """Return a LFun based on the condition used to describe the set."""
+        return LFun(self.vartype, self.body, self.varname).apply(x)
+
+
+    def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
+        ts = get_type_system()
+        env = self.get_type_env().copy()
+        unified = env.try_unify(self.type, new_type, update_mapping=True)
+        if unified is None:
+            #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
+            return None
+        if self.type == unified:
+            return self
+        else:
+            if derivation_reason is None:
+                derivation_reason = "Type adjustment"
+            sub_var = TypedTerm(self.varname, unified)
+            #new_condition = self.body.apply(sub_var, assignment=assignment)
+            new_condition = self.to_test(sub_var)
+            result = self.local_copy(self.op, sub_var, new_condition).under_type_assignment(env.type_mapping)
+            result._type_env = env
+            return derived(result, self, derivation_reason)
 
 BindingOp.add_op(IotaUnary)
 
@@ -2723,7 +2751,7 @@ class LFun(BindingOp):
         #print("LFun: Try adjusting %s to %s" % (repr(self), repr(new_type)))
         env = self.body.get_type_env().copy()
         #print("LFun try adjusting %s to %s" % (repr(self), repr(new_type)))
-        unified = env.try_unify(self.type, new_type)
+        unified = env.try_unify(self.type, new_type, update_mapping=True)
         #print("    target ", unified)
         if unified is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
@@ -2760,13 +2788,14 @@ class LFun(BindingOp):
                 new_body = self.body
             #if new_body.type != unify_a.right:
             #print("    unified: ", unified)
+
             new_body = new_body.try_adjust_type(unified.right, derivation_reason=derivation_reason, assignment=assignment) # will only make copy if necessary
             new_fun = LFun(new_argtype, new_body, self.varname)
             env.merge(new_body.get_type_env())
             if self.varname in env.var_mapping:
                 del env.var_mapping[self.varname]
-            #print("adjustment calling under_type_assignment at ", self)
-            #new_fun = new_fun.under_type_assignment(env.type_mapping)
+            #print("adjustment calling under_type_assignment at ", self, env.type_mapping)
+            new_fun = new_fun.under_type_assignment(env.type_mapping)
             new_fun._type_env = env
             #print("    Adjusting %s to %s" % (self, new_fun))
             self._type_cache_set(new_type, new_fun)
