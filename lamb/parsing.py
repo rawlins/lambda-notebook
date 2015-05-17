@@ -149,7 +149,8 @@ def parse_equality_line(s, env=None, transforms=None):
         default = a_ctl.default()
         db_env = default.modify(var_env)
         try:
-            right_side = meta.TypedExpr.factory(right_str.strip(), assignment=db_env)
+            #right_side = meta.TypedExpr.factory(right_str.strip(), assignment=db_env)
+            right_side = meta.te(right_str.strip(), assignment=db_env)
             right_side = right_side.regularize_type_env(db_env)
             right_side = right_side.under_assignment(db_env)
         except Exception as e:
@@ -172,7 +173,8 @@ def parse_equality_line(s, env=None, transforms=None):
         return ({lex_name: item}, env)
     else:
         try:
-            right_side = meta.TypedExpr.factory(right_str.strip(), assignment=var_env)
+            #right_side = meta.TypedExpr.factory(right_str.strip(), assignment=var_env)
+            right_side = meta.te(right_str.strip(), assignment=var_env)
             right_side = right_side.regularize_type_env(var_env, constants=True)
             right_side = right_side.under_assignment(var_env)
         except Exception as e:

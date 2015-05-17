@@ -412,8 +412,18 @@ class TypedExpr(object):
                     self._type_cache_set(new_type, new_term)
                     return derived(new_term, self, derivation_reason)
                 else:
-                    logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
-                    return self
+                    result = self.try_adjust_type_local(unify_target, derivation_reason, assignment)
+                    result = result.under_type_assignment(env.type_mapping)
+                    result._type_env = env
+                    if result is None:
+                        logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
+                        return self
+                    else:
+                        self._type_cache_set(unify_target, result)
+                        return derived(result, self, derivation_reason)
+
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment):
+        return None
 
     def get_type_env(self, force_recalc=False):
         if force_recalc:
@@ -2682,24 +2692,27 @@ class IotaUnary(BindingOp):
         return LFun(self.vartype, self.body, self.varname).apply(x)
 
 
-    def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
-        ts = get_type_system()
-        env = self.get_type_env().copy()
-        unified = env.try_unify(self.type, new_type, update_mapping=True)
-        if unified is None:
-            #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
-            return None
-        if self.type == unified:
-            return self
-        else:
-            if derivation_reason is None:
-                derivation_reason = "Type adjustment"
-            sub_var = TypedTerm(self.varname, unified)
-            #new_condition = self.body.apply(sub_var, assignment=assignment)
-            new_condition = self.to_test(sub_var)
-            result = self.local_copy(self.op, sub_var, new_condition).under_type_assignment(env.type_mapping)
-            result._type_env = env
-            return derived(result, self, derivation_reason)
+    # def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
+    #     env = self.get_type_env().copy()
+    #     unified = env.try_unify(self.type, new_type, update_mapping=True)
+    #     if unified is None:
+    #         return None
+    #     if self.type == unified:
+    #         return self
+    #     else:
+    #         if derivation_reason is None:
+    #             derivation_reason = "Type adjustment"
+    #         result = self.try_adjust_type_local(unified).under_type_assignment(env.type_mapping)
+    #         result._type_env = env
+    #         return derived(result, self, derivation_reason)
+
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment):
+        sub_var = TypedTerm(self.varname, unified_type)
+        # TODO: does this need to pass in assignment?
+        new_condition = self.to_test(sub_var)
+        result = self.local_copy(self.op, sub_var, new_condition)
+        return result
+
 
 BindingOp.add_op(IotaUnary)
 
