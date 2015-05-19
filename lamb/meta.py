@@ -362,6 +362,7 @@ class TypedExpr(object):
             self._type_cache_set(new_type, None)
             return None
         if self.type == unify_target:
+            self._type_cache_set(self.type, self)            
             return self
         else:
             if derivation_reason is None:
@@ -977,7 +978,7 @@ class TypedExpr(object):
         if len(tenv) == 0:
             return self
         compacted_map = types.compact_type_set(tenv, unsafe=unsafe)
-        result = self.under_type_assignment(compacted_map)
+        result = self.under_type_assignment(compacted_map, reset=True)
         result._type_env_history = history_env
         if not store_mapping:
             result.get_type_env(force_recalc=True)
@@ -1011,6 +1012,14 @@ class TypedExpr(object):
             result.get_type_env(force_recalc=True)
         return result
 
+    def let_type(self, typ):
+        result = self.try_adjust_type(typ)
+        if result is None:
+            return None
+        if result.let:
+            result = result.compact_type_vars()
+        return result
+
     def has_type_vars(self):
         return len(self.get_type_env().type_var_set) > 0
 
@@ -1023,7 +1032,9 @@ class TypedExpr(object):
         return self
 
 
-    def under_type_assignment(self, mapping):
+    def under_type_assignment(self, mapping, reset=False):
+        # TODO: For somewhat irritating reasons, this is currently a _lot_ slower if reset=True
+
         if len(mapping) == 0:
             return self
         dirty = False
@@ -1032,21 +1043,28 @@ class TypedExpr(object):
         copy = self
         for part in copy:
             if isinstance(part, TypedExpr):
-                new_part = part.under_type_assignment(mapping)
+                new_part = part.under_type_assignment(mapping, reset=reset)
                 if new_part is not part:
                     dirty = True
+                else:
+                    if reset:
+                        new_part = new_part.copy()
+                        new_part.get_type_env(force_recalc=True)
                 #print(repr(new_part))
             else:
                 new_part = part
             parts.append(new_part)
         # this may or may not be recalculated by local_copy.  The main case where it isn't is terms.
         copy_type = copy.type.sub_type_vars(mapping)
+        # Note: we still need to reset the subordinate type environments even in this case.
         if copy_type == self.type and not dirty:
             return self
         result = copy.local_copy(*parts)
         if result.term():
             result.type = copy_type
         #result._type_env = result.get_type_env().merge(TypeEnv(type_mapping=mapping))
+        if reset:
+            result.get_type_env(force_recalc=True)
         result._type_env = result.get_type_env().intersect_merge(TypeEnv(type_mapping=mapping))
         #return derived(result, self, desc="Type inference (via assignment)")
         # need to set a derivation step for this in the calling function.
@@ -2745,10 +2763,13 @@ class LFun(BindingOp):
         return self.type.right
 
     def copy(self):
-        return LFun(self.argtype, self.body, self.varname)
+        r = LFun(self.argtype, self.body, self.varname)
+        r.let = self.let
+        return r
 
     def local_copy(self, op, var, arg):
         r = LFun(var, arg)
+        r.let = self.let
         return r
 
     def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
@@ -2771,6 +2792,7 @@ class LFun(BindingOp):
             self._type_cache_set(new_type, None)
             return None
         if self.type == unified:
+            self._type_cache_set(self.type, self)            
             return self
         else: # either input or output type can be strengthened
             #new_body = self.body.try_adjust_type(unify_a.right) # will only make copy if necessary
@@ -2799,11 +2821,13 @@ class LFun(BindingOp):
                 #print("    new_body: ", new_body)
             else:
                 new_body = self.body
+                new_var = self.var_instance
             #if new_body.type != unify_a.right:
             #print("    unified: ", unified)
 
             new_body = new_body.try_adjust_type(unified.right, derivation_reason=derivation_reason, assignment=assignment) # will only make copy if necessary
-            new_fun = LFun(new_argtype, new_body, self.varname)
+            new_fun = self.local_copy(self.op, new_var, new_body)
+            #LFun(new_argtype, new_body, self.varname)
             env.merge(new_body.get_type_env())
             if self.varname in env.var_mapping:
                 del env.var_mapping[self.varname]
