@@ -92,6 +92,7 @@ def vars_only(env):
 
 def parse_te(line, env=None, use_env=False):
     from lamb import meta
+    line = remove_comments(line)
     reduce = False
     if line.startswith("reduce "):
         line = line[7:]
@@ -180,7 +181,7 @@ def parse_equality_line(s, env=None, transforms=None):
         except Exception as e:
             meta.logger.error("Parsing of assignment to '%s' failed with exception:" % left_s)
             meta.logger.error(e)
-            raise e
+            #raise e
             return (dict(), env)
 
         # variable assignment case

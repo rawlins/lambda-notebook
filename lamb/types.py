@@ -53,6 +53,8 @@ class TypeConstructor(object):
         self.symbol = None
         self.unify_source = None
         self.generic = False
+        #self.type_vars = set()
+        self.init_type_vars()
 
     def __len__(self):
         return 0
@@ -92,18 +94,31 @@ class TypeConstructor(object):
     def random(cls, random_ctrl_fun):
         raise NotImplementedError
 
-    def bound_type_vars(self):
+    def find_type_vars(self):
         """Finds any type variables in the type that are bound.  Reminder: in Hindley-Milner, the way it is normally used, all type variables are bound.
         So in practice, this finds all type variables."""
         accum = set()
         for part in iter(self):
-            accum = accum | part.bound_type_vars()
+            accum.update(part.find_type_vars())
         return accum
+
+    def bound_type_vars(self):
+        return self.type_vars
+
+    def init_type_vars(self):
+        accum = set()
+        for part in iter(self):
+            accum.update(part.type_vars)
+        self.type_vars = accum
+
+
 
     def sub_type_vars(self, assignment, trans_closure=False):
         """Substitute type variables in `self` given the mapping in `assignment`.
 
         This does only one-place substitutions, so it won't follow chains if there are any."""
+        if len(self.type_vars) == 0:
+            return self
         l = list()
         dirty = False
         for i in range(len(self)):
@@ -613,6 +628,7 @@ class VariableType(TypeConstructor):
     max_id = 0
 
     def __init__(self, symbol, number=None):
+        self.number = None
         super().__init__()
         if number is not None:
             self.symbol = symbol[0] #+ str(number)
@@ -627,14 +643,15 @@ class VariableType(TypeConstructor):
             VariableType.max_id = self.number
         self.name = symbol
         self.values = set()
-        self.left = self # ???
-        self.right = self # ???
+        self.init_type_vars()
+        #self.left = self # ???
+        #self.right = self # ???
 
     def internal(self):
         return self.symbol[0] == "I"
 
     def functional(self):
-        return True # ???
+        return False # ???
 
     def copy_local(self):
         return VariableType(self.symbol, self.number)
@@ -687,9 +704,14 @@ class VariableType(TypeConstructor):
         #print("unify assignment: %s, new_principal: %s" % (assignment, new_principal))
         return (new_principal, assignment)
 
-    def bound_type_vars(self):
+    def find_type_vars(self):
         return set((self,))
     
+    def init_type_vars(self):
+        # this will trigger on the initial call to TypeConstructor.__init__, need to defer
+        if self.number is not None:
+            self.type_vars = set((self,))
+        
     def sub_type_vars(self, assignment, trans_closure=False):
         if self in assignment:
             x = assignment[self]
@@ -1141,7 +1163,7 @@ def safe_vars(typ, var_list):
 def vars_in_env(type_env):
     unsafe = set()
     for k in type_env:
-        unsafe = unsafe | type_env[k].type.bound_type_vars()
+        unsafe = unsafe | type_env[k].bound_type_vars()
     return unsafe
 
 def vars_in_mapping(type_mapping):
@@ -1277,13 +1299,6 @@ class PolyTypeSystem(TypeSystem):
             logger.error("Failed occurs check: can't unify recursive types %s and %s" % (t1,t2))
             return (None, None)
         if isinstance(t1, VariableType):
-            # TODO: revisit this logic
-            # if t1.internal() and isinstance(t2, VariableType):
-            #     if t2.internal() and t2.number > t1.number:
-            #         return t1.unify(t2, self.unify_r, assignment)
-            #     else:
-            #         return t2.unify(t1, self.unify_r, assignment)
-            # else:
             if isinstance(t2, VariableType):
                 return t2.unify(t1, self.unify_r, assignment)
             else:
@@ -1294,17 +1309,6 @@ class PolyTypeSystem(TypeSystem):
             (result, r_assign) = t1.unify(t2, self.unify_r, assignment)
             if result is None:
                 return (None, None)
-            # if len(result) > 1:
-            #     #print("before: ", result, r_assign)
-            #     # enforce changes present in assignment on all parts of the result
-            #     # TODO: could do this incrementally?
-            #     l = list()
-            #     for i in range(len(result)):
-            #         l.append(result[i].sub_type_vars(r_assign, trans_closure=True))
-            #     #l.append(result[-1])
-            #     #print(l)
-            #     result = result.copy_local(*l)
-            #     #print("after: ", result)
             return (result, r_assign)
 
     def unify_fr(self, fun, ret, assignment=None):
@@ -1331,24 +1335,13 @@ class PolyTypeSystem(TypeSystem):
 
         if assignment is None:
             assignment = dict()
-        #unsafe_set = arg.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env)
-        #output_var = safe_var_in_set(unsafe_set, internal=False)
         output_var = VariableType.fresh()
         hyp_fun = FunType(arg, output_var)
-        #print("hyp fun: ", hyp_fun)
-        #print("unify_fa: ", fun, hyp_fun, type_env, unsafe_set)
-        #result = self.unify_details(fun, hyp_fun) # use reverse order to try to keep variables in fun preferentially
         result = self.unify_details(hyp_fun, fun, assignment=assignment)
-        #print("principal: ", result.principal)
-        #print(self.unify(fun, hyp_fun))
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:
-            # if result.trivial: # no need to introduce spurious alpha renaming
-            #     return (fun, fun.left, fun.right)
-            # else:
             return (result.principal, result.principal.left, result.principal.right)
-
 
     # There's really got to be a better way to do this...
     def alpha_equiv(self, t1, t2):
