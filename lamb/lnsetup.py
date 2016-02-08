@@ -2,13 +2,13 @@ import os, os.path, shutil, json
 
 try:
     import IPython
-    from IPython.html import notebookapp
+    from notebook import notebookapp
     from IPython.terminal.ipapp import TerminalIPythonApp
-    from IPython.kernel import kernelspec
-    from IPython.config import Config
+    from jupyter_client import kernelspec
+    from traitlets.config import Config
 
 except:
-    print("Warning: Failed to load IPython.  Some features disabled.")
+    print("Warning: Failed to load IPython/Jupyter.  Some features disabled.")
 
 import lamb
 # note: can't import this from any other module.
