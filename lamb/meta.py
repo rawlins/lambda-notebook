@@ -2202,25 +2202,25 @@ class BindingOp(TypedExpr):
     op_name_uni = None
     op_name_latex = None
 
-    # @classmethod
-    # def binding_op_factory(self, op_class, var_list, body, assignment=None):
-    #     for i in range(len(var_list)):
-    #         if not is_var_symbol(var_list[i][0]):
-    #             raise parsing.ParseError("Need variable name in binding operator expression (received '%s')" % var_list[i][0], None)
-    #         if var_list[i][1] is None:
-    #             # TODO: flag as a guessed type somehow?
-    #             var_list[i] = (var_list[i][0], default_variable_type(var_list[i][0]))
-    #     if op_class.allow_multivars or op_class.allow_novars:
-    #         # use alternate constructor
-    #         if (not op_class.allow_multivars) and len(var_list) > 1:
-    #             raise parsing.ParseError("Operator class '%s' does not allow >1 variables" % (op_class.canonical_name), None)                
-    #         if (not op_class.allow_novars) and len(var_list) == 0:
-    #             raise parsing.ParseError("Operator class '%s' does not allow 0 variables" % (op_class.canonical_name), None)                
-    #         return op_class(var_list, body, assignment=assignment)
-    #     else:
-    #         if len(var_list) != 1:
-    #             raise parsing.ParseError("Operator class '%s' does not allow %i variables" % (op_class.canonical_name, len(var_list)), None)
-    #         return op_class(var_or_vtype=var_list[0][1], varname=var_list[0][0], body=body, assignment=assignment)
+    @classmethod
+    def binding_op_factory(self, op_class, var_list, body, assignment=None):
+        for i in range(len(var_list)):
+            if not is_var_symbol(var_list[i][0]):
+                raise parsing.ParseError("Need variable name in binding operator expression (received '%s')" % var_list[i][0], None)
+            if var_list[i][1] is None:
+                # TODO: flag as a guessed type somehow?
+                var_list[i] = (var_list[i][0], default_variable_type(var_list[i][0]))
+        if op_class.allow_multivars or op_class.allow_novars:
+            # use alternate constructor
+            if (not op_class.allow_multivars) and len(var_list) > 1:
+                raise parsing.ParseError("Operator class '%s' does not allow >1 variables" % (op_class.canonical_name), None)                
+            if (not op_class.allow_novars) and len(var_list) == 0:
+                raise parsing.ParseError("Operator class '%s' does not allow 0 variables" % (op_class.canonical_name), None)                
+            return op_class(var_list, body, assignment=assignment)
+        else:
+            if len(var_list) != 1:
+                raise parsing.ParseError("Operator class '%s' does not allow %i variables" % (op_class.canonical_name, len(var_list)), None)
+            return op_class(var_or_vtype=var_list[0][1], varname=var_list[0][0], body=body, assignment=assignment)
 
     def __init__(self, var_or_vtype, typ, body, varname=None, body_type = None, assignment=None, type_check=True):
         # NOTE: not calling superclass
@@ -2571,13 +2571,18 @@ class BindingOp(TypedExpr):
         #print(new_struc)
         if assignment is None: 
             assignment = dict()
-        if v in assignment:
-            store_old_v = assignment[v]
-        else:
-            # create a new one to avoid side effects
-            #assignment = dict(assignment)
-            store_old_v = None
-        assignment[v] = TypedTerm(v, t)
+        for var_tuple in var_list:
+            (v,t) = var_tuple
+            assignment[v] = TypedTerm(v, t)
+            if v in assignment:
+                assert(len(var_list) == 1)
+                store_old_v = assignment[v]
+            else:
+                # create a new one to avoid side effects
+                assignment = dict(assignment)
+                store_old_v = None
+                #assignment = dict(assignment)
+        #assignment[v] = TypedTerm(v, t)
         body = None
         try:
             body = TypedExpr.try_parse_paren_struc_r(new_struc, assignment=assignment, locals=locals, vprefix=vprefix)
@@ -2589,10 +2594,10 @@ class BindingOp(TypedExpr):
                 raise parsing.ParseError("Binding operator expression has unparsable body", parsing.flatten_paren_struc(struc), None, e=e)
         if body is None:
             raise parsing.ParseError("Can't create body-less binding operator expression", parsing.flatten_paren_struc(struc), None)
-        #return BindingOp.binding_op_factory(op_class, var_list, body, assignment=assignment)
+        result = BindingOp.binding_op_factory(op_class, var_list, body, assignment=assignment)
         #return op_class(var_or_vtype=t, varname=v, body=body)
         #print("a: ", assignment, op_class)
-        result = op_class(var_or_vtype=t, varname=v, body=body, assignment=assignment)
+        #result = op_class(var_or_vtype=t, varname=v, body=body, assignment=assignment)
         if store_old_v is not None:
             assignment[v] = store_old_v
         else:
