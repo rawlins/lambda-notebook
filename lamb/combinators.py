@@ -83,3 +83,59 @@ def z_shift(fun, assignment=None):
         raise types.TypeMismatch(fun, None, "z-shift")
     result = z_combinator(fun.type)(fun.content.under_assignment(assignment)).reduce_all()
     return lang.UnaryComposite(fun, result)
+
+def continuize_combinator_fun(typ):
+    cont_type = types.FunType(typ, types.type_t)
+    comb = lang.te("L x_%s : L f_%s : f(x)" % (repr(typ), repr(cont_type)))
+    return comb
+
+def continuize_app_combinator(ftype, argtype):
+    try:
+        b = ftype.left.left
+    except: # note that exceptions other than TypeMismatch will halt composition; a TypeMismatch just signals that a particular attempt won't succeed.
+        raise types.TypeMismatch(ftype, None, "Not a continuized function type")
+    try:
+        abar = types.FunType(b.right, types.type_t)
+    except:
+        raise types.TypeMismatch(ftype, None, "Not a continuized function type")
+    try:
+        c = argtype.left.left
+    except:
+        raise types.TypeMismatch(argtype, None, "Not a continuation type")
+    comb_s = ("L f_%s : L arg_%s : L abar_%s : f(L b_%s : arg(L c_%s : abar(b(c))))" % (repr(ftype), repr(argtype), repr(abar), repr(b), repr(c)))
+    comb = te(comb_s) # parse the combinator string
+    return comb
+
+def continuized_apply(a1, a2, assignment=None):
+    comb = continuize_app_combinator(a1.type, a2.type)
+    result = comb(a1.content.under_assignment(assignment))(a2.content.under_assignment(assignment))
+    return lang.BinaryComposite(a1, a2, result)
+
+ca_op = lang.BinaryCompositionOp("CA", continuized_apply, reduce=True)
+
+# assumes already continuized types
+def continuize_app_combinator2(ftype, argtype):
+    try:
+        b = ftype.left.left
+    except:
+        raise types.TypeMismatch(ftype, None, "Not a continuation type")
+    try:
+        abar = types.FunType(b.right, types.type_t)
+    except:
+        raise types.TypeMismatch(ftype, None, "Not a continuized function type")
+    try:
+        c = argtype.left.left
+    except:
+        raise types.TypeMismatch(argtype, None, "Not a continuation type")
+    comb_s = ("L f_%s : L arg_%s : L abar_%s : arg(L c_%s : f(L b_%s : abar(b(c))))" % (repr(ftype), repr(argtype), repr(abar), repr(c), repr(b)))
+    comb = te(comb_s)
+    return comb
+
+
+def continuized_apply2(a1, a2, assignment=None):
+    comb = continuize_app_combinator2(a1.type, a2.type)
+    result = comb(a1.content.under_assignment(assignment))(a2.content.under_assignment(assignment))
+    return lang.BinaryComposite(a1, a2, result)
+
+ca2_op = lang.BinaryCompositionOp("CA2", continuized_apply2, reduce=True)
+
