@@ -1653,7 +1653,7 @@ def binary_factory(meta_fun, name, reduce=True, combinator_source=None):
         latex_desc = combinator_source._repr_latex_()
     return BinaryCompositionOp(name, op_fun, reduce=reduce, desc=desc, latex_desc=latex_desc)
 
-def binary_factory_curried(meta_fun, name, reduce=True):
+def binary_factory_curried(meta_fun, name, reduce=True, commutative=False):
     """Factory function to construct a binary composition operation given some (curried) function.
 
     This is extremely useful for building operations from meta-language combinators.  For example, PM can be implemented using just:
@@ -1667,7 +1667,7 @@ def binary_factory_curried(meta_fun, name, reduce=True):
     if isinstance(meta_fun, meta.TypedExpr):
         desc = repr(meta_fun)
         latex_desc = meta_fun._repr_latex_()
-    return BinaryCompositionOp(name, op_fun, reduce=reduce, desc=desc, latex_desc=latex_desc)
+    return BinaryCompositionOp(name, op_fun, commutative=commutative, reduce=reduce, desc=desc, latex_desc=latex_desc)
 
 
 
@@ -1786,8 +1786,8 @@ class CompositionSystem(object):
         self.add_rule(rule)
         return rule
 
-    def add_binary_rule(self, combinator, name, reduce=True):
-        rule = binary_factory_curried(combinator, name, reduce=reduce)
+    def add_binary_rule(self, combinator, name, reduce=True, commutative=False):
+        rule = binary_factory_curried(combinator, name, reduce=reduce, commutative=commutative)
         self.add_rule(rule)
         return rule
 
