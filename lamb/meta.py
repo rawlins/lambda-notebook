@@ -123,7 +123,7 @@ class TypeEnv(object):
         s = "<table>"
         s += "<tr><td>Term mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" % utils.dict_latex_repr(self.var_mapping)
         s += "<tr><td>Type mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" % utils.dict_latex_repr(self.type_mapping)
-        #s += "<tr><td>Type variables:&nbsp;&nbsp; </td><td>%s</td></tr>" % repr(self.type_var_set)
+        s += "<tr><td>Type variables:&nbsp;&nbsp; </td><td>%s</td></tr>" % utils.set_latex_repr(self.type_var_set)
         s += "</table>"
         return s
 
@@ -134,18 +134,24 @@ class TypeEnv(object):
             s  = s | self.type_mapping[m].bound_type_vars()
         self.type_var_set = s
 
+    def term_by_name(self, vname):
+        if vname in self.var_mapping:
+            return TypedTerm(vname, self.var_mapping[vname], defer_type_env=True)
+        else:
+            return None
+
     def add_var_mapping(self, vname, typ):
         result = self.try_add_var_mapping(vname, typ)
         if result is None:
-            raise TypeMismatch(self.var_mapping[vname], typ, "Failed to unify types across distinct instances of term")
+            raise TypeMismatch(self.term_by_name(vname), typ, "Failed to unify types across distinct instances of term")
+        return result
 
     def try_add_var_mapping(self, vname, typ):
         ts = get_type_system()
         if vname in self.var_mapping:
-            assert self.var_mapping[vname].term()
             #unify = ts.unify_details(self.var_mapping[vname].type, typ, assignment=self.type_mapping, typ_env=self.var_mapping)
             #unify = ts.unify_details(self.var_mapping[vname].type, typ, assignment=self.type_mapping)
-            principal = self.try_unify(self.var_mapping[vname].type, typ, update_mapping=True)
+            principal = self.try_unify(self.var_mapping[vname], typ, update_mapping=True)
             if principal is None:
                 return None
             #self.type_mapping = unify.mapping
@@ -154,15 +160,14 @@ class TypeEnv(object):
             # if new_mappee is None:
             #     raise TypeMismatch(self.var_mapping[vname], unify.principal, "Failed to unify types across distinct instances of term")
             assert principal is not None
-            term = TypedTerm(vname, principal, defer_type_env=True)
-            self.var_mapping[vname] = term
+            self.var_mapping[vname] = principal
             self.update_type_vars()
         else:
             assert typ is not None
-            term = TypedTerm(vname, typ, defer_type_env=True)
-            self.var_mapping[vname] = term
-        self.add_type_to_var_set(self.var_mapping[vname].type)
-        return self.var_mapping[vname].type
+            self.var_mapping[vname] = typ
+            principal = typ
+        self.add_type_to_var_set(principal)
+        return principal
 
     def try_unify(self, t1, t2, update_mapping=False):
         ts = get_type_system()
@@ -187,10 +192,10 @@ class TypeEnv(object):
 
             # note that the following is not generally safe, but here we are working with TypedTerms that have no TypeEnv
             #self.var_mapping[k].type = self.var_mapping[k].type.sub_type_vars(self.type_mapping)
-            new_type = self.var_mapping[k].type.sub_type_vars(self.type_mapping)
-            self.var_mapping[k] = TypedTerm(self.var_mapping[k].op, new_type, defer_type_env=True)
+            new_type = self.var_mapping[k].sub_type_vars(self.type_mapping)
+            self.var_mapping[k] = new_type
 
-    def add_type_mapping(self, type_var, typ, defer=False):
+    def try_add_type_mapping(self, type_var, typ, defer=False):
         #print("        add_type_mapping: unify %s and %s relative to %s" % (type_var, typ, self.type_mapping))
         if isinstance(typ, types.VariableType):
             if typ in self.type_var_set or type_var in self.type_var_set:
@@ -209,7 +214,14 @@ class TypeEnv(object):
             #self.type_var_set = self.type_var_set | {type_var} | typ.bound_type_vars()
         if not defer:
             self.update_type_vars()
+        return principal
 
+    def add_type_mapping(self, type_var, typ, defer=False):
+        principal = self.try_add_type_mapping(type_var, typ, defer=defer)
+        if principal is None:
+            raise TypeMismatch(self.type_mapping[type_var], typ, "Failed to unify type variable %s across contexts" % type_var)
+        return principal
+          
 
     def merge(self, tenv):
         #print("    merging %s and %s" % (self, tenv))
@@ -219,7 +231,8 @@ class TypeEnv(object):
             #print("    interim: ", self.type_mapping)
         self.update_type_vars()
         for v in tenv.var_mapping:
-            self.add_var_mapping(v, tenv.var_mapping[v].type)
+            self.add_var_mapping(v, tenv.var_mapping[v])
+        self.type_var_set |= tenv.type_var_set
         return self
 
     def intersect_merge(self, tenv):
@@ -228,12 +241,12 @@ class TypeEnv(object):
                 self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
         self.update_type_vars()
         for v in tenv.var_mapping:
-            self.add_var_mapping(v, tenv.var_mapping[v].type)
+            self.add_var_mapping(v, tenv.var_mapping[v])
         return self
 
     def copy(self):
         env = TypeEnv(self.var_mapping.copy(), self.type_mapping.copy())
-        #env.type_var_set = self.type_var_set.copy()
+        env.type_var_set = self.type_var_set.copy()
         return env
 
     def __repr__(self):
@@ -316,14 +329,14 @@ class TypedExpr(object):
         self.args = list(args)
 
     def _type_cache_get(self, t):
-        return False
+        #return False
         try:
             cache = self._type_adjust_cache
         except AttributeError:
             self._type_adjust_cache = dict()
             return False
         if t in cache:
-            return cache[t]
+            return cache[t] #.deep_copy()
         else:
             return False
 
@@ -336,6 +349,18 @@ class TypedExpr(object):
         cache[t] = result
 
 
+    def try_adjust_type_caching(self, new_type, derivation_reason=None, assignment=None, let_step=None):
+        cached = self._type_cache_get(new_type)
+        if cached is not False:
+            return cached
+        if let_step is not None:
+            result = let_step.try_adjust_type(new_type, derivation_reason=derivation_reason, assignment=assignment)
+            # TODO: freshen variables again here?
+        else:
+            result = self.try_adjust_type(new_type, derivation_reason=derivation_reason, assignment=assignment)
+        self._type_cache_set(new_type, result)
+        return result
+
     def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
         """Attempts to adjust the type of `self` to be compatible with `new_type`.  
         If the types already match, it return self.
@@ -344,47 +369,38 @@ class TypedExpr(object):
         If it fails completely, it returns None."""
         ts = get_type_system()
         env = self.get_type_env().copy()
-        #unify_a, unify_base = ts.local_unify(new_type, self.type)
-        #unify_target = ts.unify(self.type, new_type)
-
-        # if the two are alpha equivalents, the following call with this order should return new_type
-        #if self.term():
-        cached = self._type_cache_get(new_type)
-        if cached is not False:
-            return cached
-        #print("Try adjusting %s to %s" % (repr(self), repr(new_type))) #, " relative to ", env)
-        #vunify_target = env.try_unify(new_type, self.type)
+        # cached = self._type_cache_get(new_type)
+        # if cached is not False:
+        #     return cached
+        
         unify_target = env.try_unify(self.type, new_type, update_mapping=True)
-        #print("    target ", unify_target)
-        #print("new_type %s self type %s unify_a %s unify_target %s" % (new_type, self.type, unify_a, unify_target))
         if unify_target is None:
             #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
-            self._type_cache_set(new_type, None)
+            #self._type_cache_set(new_type, None)
             return None
+
         if self.type == unify_target:
+            self._type_cache_set(self.type, self)            
             return self
         else:
             if derivation_reason is None:
                 derivation_reason = "Type adjustment"
             if isinstance(self.op, TypedExpr):
-                if len(self.args) != 1:
-                    # TODO improve
-                    raise ValueError("Wrong number of arguments on type adjustment")
-                    #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
-                    #return None
-                #new_op_type = types.FunType(self.args[0].type, unify_target)
-                #env = env.copy()
+                assert len(self.args) == 1
+                # if len(self.args) != 1:
+                #     raise ValueError("Wrong number of arguments on type adjustment")
+
                 (new_op_type, new_arg_type, new_ret_type) = ts.unify_fr(self.op.type, unify_target, assignment=env.type_mapping)
                 if new_op_type is None:
-                    self._type_cache_set(new_type, None)
+                    #self._type_cache_set(new_type, None)
                     return None
                 new_op = self.op.try_adjust_type(new_op_type, derivation_reason=derivation_reason, assignment=assignment)
                 if new_op is None:
-                    self._type_cache_set(new_type, None)
+                    #self._type_cache_set(new_type, None)
                     return None
                 new_arg = self.args[0].try_adjust_type(new_arg_type, derivation_reason=derivation_reason, assignment=assignment)
                 if new_arg is None:
-                    self._type_cache_set(new_type, None)
+                    #self._type_cache_set(new_type, None)
                     return None
                 self_copy = self.copy()
                 self_copy.op = new_op
@@ -392,7 +408,7 @@ class TypedExpr(object):
                 self_copy.type = new_ret_type
                 self_copy._type_env = env
                 #self_copy.type = new_op.type.right
-                self._type_cache_set(new_type, self_copy)
+                #self._type_cache_set(new_type, self_copy)
                 return derived(self_copy, self, derivation_reason)
             else:
                 # should be term?
@@ -401,7 +417,7 @@ class TypedExpr(object):
                     #env = env.copy()
                     principal = env.try_add_var_mapping(new_term.op, new_type)
                     if principal is None:
-                        self._type_cache_set(new_type, None)
+                        #self._type_cache_set(new_type, None)
                         return None
                     new_term._type_env = env
                     new_term.type = principal
@@ -409,20 +425,20 @@ class TypedExpr(object):
                         assignment[new_term.op] = new_term
                     #print("Adjusting %s to %s, type %s" % (repr(self), repr(new_term), repr(principal)))
                     #print("    ", env)
-                    self._type_cache_set(new_type, new_term)
+                    #self._type_cache_set(new_type, new_term)
                     return derived(new_term, self, derivation_reason)
                 else:
-                    result = self.try_adjust_type_local(unify_target, derivation_reason, assignment)
+                    result = self.try_adjust_type_local(unify_target, derivation_reason, assignment, env)
                     result = result.under_type_assignment(env.type_mapping)
                     result._type_env = env
                     if result is None:
                         logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
                         return self
                     else:
-                        self._type_cache_set(unify_target, result)
+                        #self._type_cache_set(unify_target, result)
                         return derived(result, self, derivation_reason)
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment):
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
         return None
 
     def get_type_env(self, force_recalc=False):
@@ -780,6 +796,7 @@ class TypedExpr(object):
                 v, typ = cls.try_parse_typed_term(s, assignment=assignment, strict=True)
             else:
                 v = s
+            v = num_or_str(v)
             if typ is not None:
                 type_vars = typ.bound_type_vars()
                 #if len(type_vars) > 0 and not v in assignment:
@@ -867,10 +884,10 @@ class TypedExpr(object):
             # if we get to this point, args[0] should be the operator, and the rest of the list arguments to the operator.
             #return TypedExpr(*args)
             #original_op = op
-            if op.let:
-                op = derived(op.freshen_type_vars(), op, "Let substitution")
-            if arg.let:
-                arg = derived(arg.freshen_type_vars(), arg, "Let substitution")
+            # if op.let:
+            #     op = derived(op.freshen_type_vars(), op, "Let substitution")
+            # if arg.let:
+            #     arg = derived(arg.freshen_type_vars(), arg, "Let substitution")
             result = ApplicationExpr(op, arg, assignment=assignment)
             if result.let:
                 #print("add step")
@@ -939,8 +956,17 @@ class TypedExpr(object):
         #     raise Exception(c, self)
         return c
 
-    def local_copy(self, *args):
+    def local_copy(self, *args, type_check=True):
         raise NotImplementedError
+
+    def deep_copy(self):
+        accum = list()
+        for p in self:
+            if isinstance(p, TypedExpr):
+                accum.append(p.deep_copy())
+            else:
+                accum.append(p)
+        return self.local_copy(*accum, type_check=False)
 
     def type_env(self, constants=False, target=None, free_only=True):
         env = dict()
@@ -956,7 +982,7 @@ class TypedExpr(object):
         #env = merge_type_envs(self.type_env(constants=constants, target=target), assignment, target=target)
         # if env and len(env) > 0:
         #print("        regularize: ", repr(env))
-        return self.under_type_assignment(env.type_mapping)
+        return self.under_type_assignment(env.type_mapping, merge_intersect=False)
 
 
     def compact_type_vars(self, target=None, unsafe=None, used_vars_only=True, store_mapping=False):
@@ -970,6 +996,8 @@ class TypedExpr(object):
         # note: the following is already triggered by copy.  If this behavior changes, this needs updating.
         #env = c.get_type_env(force_recalc=True)
         env = c.get_type_env()
+        if len(env.type_var_set) == 0:
+            return c
         if used_vars_only:
             tenv = env.type_var_set - set(env.type_mapping.keys())#types.vars_in_mapping(env.type_mapping) | types.vars_in_env(env.var_mapping)
         else:
@@ -977,7 +1005,8 @@ class TypedExpr(object):
         if len(tenv) == 0:
             return self
         compacted_map = types.compact_type_set(tenv, unsafe=unsafe)
-        result = self.under_type_assignment(compacted_map)
+        #result = self.under_type_assignment(compacted_map, reset=True)
+        result = self.under_type_injection(compacted_map)
         result._type_env_history = history_env
         if not store_mapping:
             result.get_type_env(force_recalc=True)
@@ -1005,16 +1034,25 @@ class TypedExpr(object):
         if len(tenv) == 0:
             return self
         fresh_map = types.freshen_type_set(tenv, unsafe=unsafe)
-        result = self.under_type_assignment(fresh_map)
+        #result = self.under_type_assignment(fresh_map)
+        result = self.under_type_injection(fresh_map)
         result._type_env_history = history_env
         if not store_mapping:
             result.get_type_env(force_recalc=True)
         return result
 
+    def let_type(self, typ):
+        result = self.try_adjust_type(typ)
+        if result is None:
+            return None
+        if result.let:
+            result = result.compact_type_vars()
+        return result
+
     def has_type_vars(self):
         return len(self.get_type_env().type_var_set) > 0
 
-    def _under_type_injection(self, mapping):
+    def _unsafe_under_type_injection(self, mapping):
         if len(mapping) == 0:
             return self
         for i in range(len(self)):
@@ -1022,8 +1060,24 @@ class TypedExpr(object):
         self.type = self.type.sub_type_vars(mapping)
         return self
 
+    def under_type_injection(self, mapping):
+        accum = list()
+        for p in self:
+            if isinstance(p, TypedExpr):
+                accum.append(p.under_type_injection(mapping))
+            else:
+                accum.append(p)
+        r = self.local_copy(*accum, type_check=False)
+        r.type = r.type.sub_type_vars(mapping)
+        if r.term():
+            r.get_type_env(force_recalc=True)
+        return r
 
-    def under_type_assignment(self, mapping):
+
+
+    def under_type_assignment(self, mapping, reset=False, merge_intersect=True):
+        # TODO: For somewhat irritating reasons, this is currently a _lot_ slower if reset=True
+
         if len(mapping) == 0:
             return self
         dirty = False
@@ -1032,22 +1086,32 @@ class TypedExpr(object):
         copy = self
         for part in copy:
             if isinstance(part, TypedExpr):
-                new_part = part.under_type_assignment(mapping)
+                new_part = part.under_type_assignment(mapping, reset=reset)
                 if new_part is not part:
                     dirty = True
+                else:
+                    if reset:
+                        new_part = new_part.copy()
+                        new_part.get_type_env(force_recalc=True)
                 #print(repr(new_part))
             else:
                 new_part = part
             parts.append(new_part)
         # this may or may not be recalculated by local_copy.  The main case where it isn't is terms.
         copy_type = copy.type.sub_type_vars(mapping)
+        # Note: we still need to reset the subordinate type environments even in this case.
         if copy_type == self.type and not dirty:
             return self
         result = copy.local_copy(*parts)
         if result.term():
             result.type = copy_type
         #result._type_env = result.get_type_env().merge(TypeEnv(type_mapping=mapping))
-        result._type_env = result.get_type_env().intersect_merge(TypeEnv(type_mapping=mapping))
+        if reset:
+            result.get_type_env(force_recalc=True)
+        if merge_intersect:
+            result._type_env = result.get_type_env().intersect_merge(TypeEnv(type_mapping=mapping))
+        else:
+            result._type_env = result.get_type_env().merge(TypeEnv(type_mapping=mapping))
         #return derived(result, self, desc="Type inference (via assignment)")
         # need to set a derivation step for this in the calling function.
         result.derivation = self.derivation
@@ -1325,31 +1389,27 @@ class TypedExpr(object):
     def __pow__(self, other):    return self.factory('**', self, other)
 
 class ApplicationExpr(TypedExpr):
-    def __init__(self, fun, arg, defer=False, assignment=None):
-        ts = get_type_system()
-        fun = self.ensure_typed_expr(fun)
-        arg = self.ensure_typed_expr(arg)
+    def __init__(self, fun, arg, defer=False, assignment=None, type_check=True):
+        #fun = self.ensure_typed_expr(fun)
+        #arg = self.ensure_typed_expr(arg)
 
-        history = False
         #self.derivation = None
         #self.type_guessed = False
         #self.defer = defer
-        (f_type, a_type, out_type) = ts.unify_fa(fun.type, arg.type)
-        if f_type is None:
-            raise TypeMismatch(fun, arg, "Function argument combination (unification failed)")
-
-        self.type = out_type
-        if fun.type == f_type or defer:
+        if type_check and not defer:
+            tc_result = self.fa_type_inference(fun, arg, assignment)
+            if tc_result is None:
+                raise TypeMismatch(fun, arg, "Function argument combination (unification failed)")
+            fun, arg, out_type, history = tc_result
             op = fun
-        else:
-            op = fun.try_adjust_type(f_type, derivation_reason="Type inference (external)", assignment=assignment)
-            history = True
-
-        if a_type == arg.type or defer:
             args = [arg]
+            self.type = out_type
         else:
-            args = [arg.try_adjust_type(a_type, derivation_reason="Type inference (external)", assignment=assignment)]
-            history = True
+            history = False
+            op = fun
+            args = [arg]
+            # note: fun.type MUST be functional!
+            self.type = fun.type.right
         super().__init__(op, *args, defer=defer)
         if fun.let and arg.let:
             #print("let should percolate")
@@ -1376,10 +1436,41 @@ class ApplicationExpr(TypedExpr):
     def copy(self):
         return self.local_copy(self.op, self.args[0])
 
-    def local_copy(self, fun, arg):
-        result = ApplicationExpr(fun, arg, defer=self.defer)
+    def local_copy(self, fun, arg, type_check=True):
+        result = ApplicationExpr(fun, arg, defer=self.defer, type_check=type_check)
         result.let = self.let
+        result.type_guessed = self.type_guessed
         return result
+
+    @classmethod
+    def fa_type_inference(cls, fun, arg, assignment):
+        ts = get_type_system()
+        #fun_env = fun.get_type_env()
+        #arg_env = arg.get_type_env()
+        old_fun = None
+        old_arg = None
+        if fun.let:
+            fun = fun.freshen_type_vars()
+        if arg.let:
+            arg = arg.freshen_type_vars()
+        history = False
+        (f_type, a_type, out_type) = ts.unify_fa(fun.type, arg.type)
+        if f_type is None:
+            return None
+            #raise TypeMismatch(fun, arg, "Function argument combination (unification failed)")
+
+        #self.type = out_type
+        if fun.type != f_type:
+            fun = fun.try_adjust_type_caching(f_type, derivation_reason="Type inference (external)", assignment=assignment)
+            history = True
+
+        if a_type != arg.type:
+            arg = arg.try_adjust_type_caching(a_type, derivation_reason="Type inference (external)", assignment=assignment)
+            history = True
+
+        return (fun, arg, out_type, history)
+
+
 
 class Tuple(TypedExpr):
     """TypedExpr wrapper on a tuple.
@@ -1404,7 +1495,7 @@ class Tuple(TypedExpr):
     def copy(self):
         return Tuple(self.args)
 
-    def local_copy(self, op, *args):
+    def local_copy(self, op, *args, type_check=True):
         return Tuple(args, typ=self.type)
 
     def index(self, i):
@@ -1442,9 +1533,10 @@ class TypedTerm(TypedExpr):
     In general, these cover variables and constants.  The name of the term is 'op', and 'args' is empty.
 
     The attribute 'type_guessed' is flagged if the type was not specified; this may result in coercion as necessary."""
-    def __init__(self, varname, typ=None, latex_op_str=None, assignment=None, defer_type_env=False):
+    def __init__(self, varname, typ=None, latex_op_str=None, assignment=None, defer_type_env=False, type_check=True):
         # NOTE: does not call super
-        self.op = num_or_str(varname)
+        #self.op = num_or_str(varname)
+        self.op = varname
         self.derivation = None
         self.defer = False
         self.let = False
@@ -1461,13 +1553,13 @@ class TypedTerm(TypedExpr):
         else:
             self.type_guessed = False
             self.type = typ
-        if not defer_type_env: # note: cannot change type in place safely with this code here
+        if type_check and not defer_type_env: # note: cannot change type in place safely with this code here
             env = self.calc_type_env()
             #print("before: ", env)
             if assignment is not None:
                 if self.op in assignment and typ is not None:
                     env.add_var_mapping(self.op, assignment[self.op].type)
-            self.type = env.var_mapping[self.op].type
+            self.type = env.var_mapping[self.op]
             self._type_env = env
             #print("after: ", env)
 
@@ -1495,8 +1587,10 @@ class TypedTerm(TypedExpr):
     def copy(self):
         return TypedTerm(self.op, typ=self.type)
 
-    def local_copy(self, op):
-        result = TypedTerm(op, typ=self.type, latex_op_str = self.latex_op_str)
+    def local_copy(self, op, type_check=True):
+        result = TypedTerm(op, typ=self.type, latex_op_str = self.latex_op_str, type_check=type_check)
+        if not type_check:
+            result._type_env = self._type_env.copy()
         #result.type = self.type
         result.type_guessed = self.type_guessed
         return result
@@ -1713,7 +1807,7 @@ class UnaryOpExpr(TypedExpr):
         #return UnaryOpExpr(self.type, self.op, self.args[0], self.op_name, self.op_name_latex)
         return op_expr_factory(self.op, *self.args)
 
-    def local_copy(self, op, *args):
+    def local_copy(self, op, *args, type_check=True):
         return op_expr_factory(self.op, *args)
 
     def type_constraints(self):
@@ -1779,7 +1873,7 @@ class BinaryOpExpr(TypedExpr):
         #return UnaryOpExpr(self.type, self.op, self.args[0], self.op_name, self.op_name_latex)
         return op_expr_factory(self.op, *self.args)
 
-    def local_copy(self, op, *args):
+    def local_copy(self, op, *args, type_check=True):
         return op_expr_factory(self.op, *args)
 
     def type_constraints(self):
@@ -1933,7 +2027,7 @@ class SetContains(BinaryOpExpr):
     def copy(self):
         return SetContains(self.args[0], self.args[1])
 
-    def local_copy(self, op, arg1, arg2):
+    def local_copy(self, op, arg1, arg2, type_check=True):
         return SetContains(arg1, arg2)
 
     def reduce(self):
@@ -1970,7 +2064,7 @@ class TupleIndex(BinaryOpExpr):
     def copy(self):
         return TupleIndex(self.args[0], self.args[1])
 
-    def local_copy(self, op, arg1, arg2):
+    def local_copy(self, op, arg1, arg2, type_check=True):
         return TupleIndex(arg1, arg2)
 
     def __str__(self):
@@ -2069,7 +2163,7 @@ class BindingOp(TypedExpr):
     op_name_uni = None
     op_name_latex = None
 
-    def __init__(self, var_or_vtype, typ, body, varname=None, body_type = None, assignment=None):
+    def __init__(self, var_or_vtype, typ, body, varname=None, body_type = None, assignment=None, type_check=True):
         # NOTE: not calling superclass
         # Warning: can't assume in general that typ is not None.  I.e. may be set in subclass after a call
         # to this function.  Subclass is responsible for doing this properly...
@@ -2104,40 +2198,30 @@ class BindingOp(TypedExpr):
         # set self.op so that hashing and equality comparison work correctly
         # TODO: consider overriding __eq__ and __hash__.
         #self.op = "%s %s:" % (self.canonical_name, repr(self.var_instance))
-        if assignment is None:
-            assignment = {self.varname: self.var_instance}
+        if type_check:
             store_old_v = None
-        else:
-            #assignment = assignment.copy()
-            if self.varname in assignment:
-                store_old_v = assignment[self.varname]
+            if assignment is None:
+                assignment = {self.varname: self.var_instance}
             else:
-                store_old_v = None
-            assignment[self.varname] = self.var_instance
-        self.init_body(self.ensure_typed_expr(body, body_type, assignment=assignment))
+                #assignment = assignment.copy()
+                if self.varname in assignment:
+                    store_old_v = assignment[self.varname]
+                assignment[self.varname] = self.var_instance
+            self.init_body(self.ensure_typed_expr(body, body_type, assignment=assignment))
+            body_env = self.body.get_type_env()
+            if self.varname in body_env.var_mapping: # binding can be vacuous
+                if body_env.var_mapping[self.varname] != self.vartype: # propagate type inference to binding expression
+                    new_vartype = body_env.var_mapping[self.varname]
+                    assert new_vartype is not None
+                    self.init_var(self.varname, new_vartype)
+            self.init_body(self.body.regularize_type_env())
+            self.init_var_by_instance(self.var_instance.under_type_assignment(body_env.type_mapping, merge_intersect=False))
+            if store_old_v is not None:
+                assignment[self.varname] = store_old_v
+        else:
+            self.init_body(body)
+
         
-        #self.body = typed_expr(body)
-        # TODO: this is sort of a mess here
-        #print("BindingOp constructor L %s : %s" % (self.varname, repr(body)))
-        #print("    args[0]: ", repr(self.args[0]))
-        #new_body = self.args[0].regularize_type_env(assignment) #, target={self.varname})
-        #new_body = self.args[0].copy()
-        new_body = self.body
-        #print("assignment in body: ", assignment)
-        #print("    new_body: ", repr(new_body))
-        new_body_env = new_body.get_type_env()
-        #print("    hi ", new_body_env)
-        if self.varname in new_body_env.var_mapping: # binding can be vacuous
-            if new_body_env.var_mapping[self.varname].type != self.vartype: # propagate type inference to binding expression
-                #print("mapping: ", new_body_env)
-                new_vartype = new_body_env.var_mapping[self.varname].type
-                assert new_vartype is not None
-                #self.var_instance = TypedTerm(self.varname, self.vartype)
-                self.init_var(self.varname, new_vartype)
-                #self.args = [new_body]
-                #print("    Using modified body")
-        if store_old_v is not None:
-            assignment[self.varname] = store_old_v
 
     def default_varname(self):
         return "x"
@@ -2234,7 +2318,7 @@ class BindingOp(TypedExpr):
         # implement in subclass
         raise NotImplementedError
 
-    def local_copy(self, op, var, body):
+    def local_copy(self, op, var, body, type_check=True):
         raise NotImplementedError        
 
     def alpha_convert(self, new_varname):
@@ -2469,8 +2553,8 @@ class ConditionSet(BindingOp):
     def copy(self):
         return ConditionSet(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, arg):
-        return ConditionSet(self.vartype, arg, self.varname)
+    def local_copy(self, op, var, body, type_check=True):
+        return ConditionSet(var.type, body, varname=var.op)
 
     def structural_singleton(self):
         pass
@@ -2491,27 +2575,35 @@ class ConditionSet(BindingOp):
         """Return a LFun based on the condition used to describe the set."""
         return LFun(self.vartype, self.body, self.varname)
 
-    def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
-        """Attempts to adjust the type of self to be compatible with new_type.  
-        If the types already match, it return self.
-        If it succeeds, it returns a modified _copy_ of self.  
-        If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
-        If it fails completely, it returns None."""
-        ts = get_type_system()
-        unified = ts.unify(new_type, self.type)
-        if unified is None:
-            #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
-            return None
-        if self.type == unified:
-            return self
-        else:
-            if derivation_reason is None:
-                derivation_reason = "Type adjustment"
-            inner_type = unified.content_type
-            char = self.to_characteristic()
-            sub_var = TypedTerm(self.varname, inner_type)
-            new_condition = char.apply(sub_var, assignment=assignment)
-            return derived(ConditionSet(inner_type, new_condition, self.varname), self, derivation_reason)
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
+        inner_type = unified_type.content_type
+        char = self.to_characteristic()
+        sub_var = TypedTerm(self.varname, inner_type)
+        new_condition = char.apply(sub_var, assignment=assignment)
+        return self.local_copy(self.op, sub_var, new_condition)
+
+
+    # def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
+    #     """Attempts to adjust the type of self to be compatible with new_type.  
+    #     If the types already match, it return self.
+    #     If it succeeds, it returns a modified _copy_ of self.  
+    #     If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
+    #     If it fails completely, it returns None."""
+    #     ts = get_type_system()
+    #     unified = ts.unify(new_type, self.type)
+    #     if unified is None:
+    #         #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
+    #         return None
+    #     if self.type == unified:
+    #         return self
+    #     else:
+    #         if derivation_reason is None:
+    #             derivation_reason = "Type adjustment"
+    #         inner_type = unified.content_type
+    #         char = self.to_characteristic()
+    #         sub_var = TypedTerm(self.varname, inner_type)
+    #         new_condition = char.apply(sub_var, assignment=assignment)
+    #         return derived(ConditionSet(inner_type, new_condition, self.varname), self, derivation_reason)
 
 BindingOp.add_op(ConditionSet)
 
@@ -2547,7 +2639,7 @@ class ListedSet(TypedExpr):
     def copy(self):
         return ListedSet(self.args)
 
-    def local_copy(self, op, *args):
+    def local_copy(self, op, *args, type_check=True):
         return ListedSet(args)
 
     def term(self):
@@ -2609,25 +2701,32 @@ class ListedSet(TypedExpr):
         inner = ", ".join([a.latex_str() for a in self.args])
         return ensuremath("\{" + inner + "\}")
 
-    def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
-        """Attempts to adjust the type of self to be compatible with new_type.  
-        If the types already match, it return self.
-        If it succeeds, it returns a modified _copy_ of self.  
-        If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
-        If it fails completely, it returns None."""
-        ts = get_type_system()
-        unified = ts.unify(new_type, self.type)
-        if unified is None:
-            #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
-            return None
-        if self.type == unified:
-            return self
-        else:
-            if derivation_reason is None:
-                derivation_reason = "Type adjustment"
-            inner_type = unified.content_type
-            content = [a.try_adjust_type(inner_type, derivation_reason=derivation_reason, assignment=assignment) for a in self.args]
-            return derived(ListedSet(content), self, derivation_reason)
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
+        inner_type = unified_type.content_type
+        content = [a.try_adjust_type(inner_type, derivation_reason=derivation_reason, assignment=assignment) for a in self.args]
+        result = self.local_copy(self.op, *content)
+        return result
+
+
+    # def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
+    #     """Attempts to adjust the type of self to be compatible with new_type.  
+    #     If the types already match, it return self.
+    #     If it succeeds, it returns a modified _copy_ of self.  
+    #     If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
+    #     If it fails completely, it returns None."""
+    #     ts = get_type_system()
+    #     unified = ts.unify(new_type, self.type)
+    #     if unified is None:
+    #         #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
+    #         return None
+    #     if self.type == unified:
+    #         return self
+    #     else:
+    #         if derivation_reason is None:
+    #             derivation_reason = "Type adjustment"
+    #         inner_type = unified.content_type
+    #         content = [a.try_adjust_type(inner_type, derivation_reason=derivation_reason, assignment=assignment) for a in self.args]
+    #         return derived(ListedSet(content), self, derivation_reason)
 
 #BindingOp.add_op(ListedSet)
 
@@ -2637,15 +2736,15 @@ class ForallUnary(BindingOp):
     op_name_uni = "∀"
     op_name_latex = "\\forall{}"
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
-        body = self.ensure_typed_expr(body, assignment=assignment)
-        super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment)
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
+        #body = self.ensure_typed_expr(body, assignment=assignment)
+        super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment, type_check=type_check)
 
     def copy(self):
         return ForallUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, var, arg):
-        return ForallUnary(var, arg)
+    def local_copy(self, op, var, arg, type_check=True):
+        return ForallUnary(var, arg, type_check=type_check)
 
 BindingOp.add_op(ForallUnary)
 
@@ -2655,15 +2754,15 @@ class ExistsUnary(BindingOp):
     op_name_uni="∃"
     op_name_latex="\\exists{}"
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
-        body = self.ensure_typed_expr(body, assignment=assignment)
-        super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment)
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
+        #body = self.ensure_typed_expr(body, assignment=assignment)
+        super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment, type_check=type_check)
 
     def copy(self):
         return ExistsUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, var, arg):
-        return ExistsUnary(var, arg)        
+    def local_copy(self, op, var, arg, type_check=True):
+        return ExistsUnary(var, arg, type_check=type_check)        
 
 BindingOp.add_op(ExistsUnary)
 
@@ -2674,18 +2773,18 @@ class IotaUnary(BindingOp):
     op_name_latex="\\iota{}"
     secondary_names = {"ι"}
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
-        body = self.ensure_typed_expr(body, assignment=assignment)
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
+        #body = self.ensure_typed_expr(body, assignment=assignment)
         #if body.type != types.type_t:
         #    raise TypeMismatch
-        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment)
+        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment, type_check=type_check)
         self.type = self.vartype
 
     def copy(self):
         return IotaUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, var, arg):
-        return IotaUnary(var, arg)        
+    def local_copy(self, op, var, arg, type_check=True):
+        return IotaUnary(var, arg, type_check=type_check)        
 
     def to_test(self, x):
         """Return a LFun based on the condition used to describe the set."""
@@ -2706,7 +2805,7 @@ class IotaUnary(BindingOp):
     #         result._type_env = env
     #         return derived(result, self, derivation_reason)
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment):
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
         sub_var = TypedTerm(self.varname, unified_type)
         # TODO: does this need to pass in assignment?
         new_condition = self.to_test(sub_var)
@@ -2725,14 +2824,13 @@ class LFun(BindingOp):
     op_name_uni="λ"
     op_name_latex="\\lambda{}"
 
-    def __init__(self, var_or_vtype, body, varname=None, let=False, assignment=None):
-        #print("a: ", assignment, body.__class__)
-        body = self.ensure_typed_expr(body, assignment=assignment)
+    def __init__(self, var_or_vtype, body, varname=None, let=False, assignment=None, type_check=True):
+        #body = self.ensure_typed_expr(body, assignment=assignment)
         # Use placeholder typ argument of None.  This is because the input type won't be known until
         # the var_or_vtype argument is parsed, which is done in the superclass constructor.
         # sort of a hack, this could potentially cause odd side effects if BindingOp.__init__ is changed without
         # taking this into account.
-        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=body.type, assignment=assignment)
+        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=body.type, assignment=assignment, type_check=type_check)
         self.type = FunType(self.vartype, body.type)
         self.let = let
 
@@ -2745,74 +2843,107 @@ class LFun(BindingOp):
         return self.type.right
 
     def copy(self):
-        return LFun(self.argtype, self.body, self.varname)
-
-    def local_copy(self, op, var, arg):
-        r = LFun(var, arg)
+        r = LFun(self.argtype, self.body, self.varname, type_check=False)
+        r.let = self.let
         return r
 
-    def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
-        """Attempts to adjust the type of self to be compatible with new_type.  
-        If the types already match, it return self.
-        If it succeeds, it returns a modified _copy_ of self.  
-        If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
-        If it fails completely, it returns None."""
+    def local_copy(self, op, var, arg, type_check=True):
+        r = LFun(var, arg, type_check=type_check)
+        r.let = self.let
+        return r
 
-        cached = self._type_cache_get(new_type)
-        if cached is not False:
-            return cached
-        #print("LFun: Try adjusting %s to %s" % (repr(self), repr(new_type)))
-        env = self.body.get_type_env().copy()
-        #print("LFun try adjusting %s to %s" % (repr(self), repr(new_type)))
-        unified = env.try_unify(self.type, new_type, update_mapping=True)
-        #print("    target ", unified)
-        if unified is None:
-            #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
-            self._type_cache_set(new_type, None)
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
+        vacuous = False
+        env.add_var_mapping(self.varname, self.argtype) # env will not start with bound variable in it
+        left_principal = env.try_add_var_mapping(self.varname, unified_type.left) # update mapping with new type
+        if left_principal is None:
             return None
-        if self.type == unified:
-            return self
-        else: # either input or output type can be strengthened
-            #new_body = self.body.try_adjust_type(unify_a.right) # will only make copy if necessary
-            vacuous = False
-            if not self.varname in env.var_mapping:
-                vacuous = True
-                env.add_var_mapping(self.varname, self.type.left)
-            if derivation_reason is None:
-                derivation_reason = "Type adjustment"
-            #new_argtype = unified.left
-            #print("    ", env)
-            #print("     Adjusting variable %s to %s" % (self.varname, unified.left))
-            left_principal = env.try_add_var_mapping(self.varname, unified.left)
-            #print("    ", env)
-            if left_principal is None:
-                self._type_cache_set(new_type, None)
-                return None
-            new_argtype = left_principal
-            #new_argtype = env.var_mapping[self.varname] # principle type
-            if self.argtype != left_principal:
-                # arg type needs to be adjusted, and hence all instances of the bound variable as well.  Do this with beta reduction.
-                assert left_principal is not None
-                new_var = TypedTerm(self.varname, left_principal)
-                #print("     new_var: ", new_var)
-                new_body = self.apply(new_var)
-                #print("    new_body: ", new_body)
-            else:
-                new_body = self.body
-            #if new_body.type != unify_a.right:
-            #print("    unified: ", unified)
+        new_body = self.body
+        if self.argtype != left_principal:
+            # arg type needs to be adjusted.
+            new_var = TypedTerm(self.varname, left_principal)
+            # used to do this with beta reduction.  This is redundant with the call to under_type_assignment below.
+            #new_body = self.apply(new_var)
+        else:
+            new_var = self.var_instance
 
-            new_body = new_body.try_adjust_type(unified.right, derivation_reason=derivation_reason, assignment=assignment) # will only make copy if necessary
-            new_fun = LFun(new_argtype, new_body, self.varname)
-            env.merge(new_body.get_type_env())
-            if self.varname in env.var_mapping:
-                del env.var_mapping[self.varname]
-            #print("adjustment calling under_type_assignment at ", self, env.type_mapping)
-            new_fun = new_fun.under_type_assignment(env.type_mapping)
-            new_fun._type_env = env
-            #print("    Adjusting %s to %s" % (self, new_fun))
-            self._type_cache_set(new_type, new_fun)
-            return derived(new_fun, self, derivation_reason)
+        if self.type.right != unified_type.right:
+            new_body = new_body.try_adjust_type(unified_type.right, derivation_reason=derivation_reason, assignment=assignment) # will only make copy if necessary
+        new_fun = self.local_copy(self.op, new_var, new_body)
+        env.merge(new_body.get_type_env())
+        if self.varname in env.var_mapping:
+            del env.var_mapping[self.varname]
+        #print("adjustment calling under_type_assignment at ", self, env.type_mapping)
+        new_fun = new_fun.under_type_assignment(env.type_mapping)
+        #print("    Adjusting %s to %s" % (self, new_fun))
+        return new_fun
+
+
+    # def try_adjust_type(self, new_type, derivation_reason=None, assignment=None):
+    #     """Attempts to adjust the type of self to be compatible with new_type.  
+    #     If the types already match, it return self.
+    #     If it succeeds, it returns a modified _copy_ of self.  
+    #     If unify suggests a strengthened type, but it can't get there, it returns self and prints a warning.
+    #     If it fails completely, it returns None."""
+
+    #     cached = self._type_cache_get(new_type)
+    #     if cached is not False:
+    #         return cached
+    #     #print("LFun: Try adjusting %s to %s" % (repr(self), repr(new_type)))
+    #     env = self.body.get_type_env().copy()
+    #     #print("LFun try adjusting %s to %s" % (repr(self), repr(new_type)))
+    #     unified = env.try_unify(self.type, new_type, update_mapping=True)
+    #     #print("    target ", unified)
+    #     if unified is None:
+    #         #print("Warning: unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_a))
+    #         self._type_cache_set(new_type, None)
+    #         return None
+    #     if self.type == unified:
+    #         self._type_cache_set(self.type, self)            
+    #         return self
+    #     else: # either input or output type can be strengthened
+    #         #new_body = self.body.try_adjust_type(unify_a.right) # will only make copy if necessary
+    #         vacuous = False
+    #         if not self.varname in env.var_mapping:
+    #             vacuous = True
+    #             env.add_var_mapping(self.varname, self.type.left)
+    #         if derivation_reason is None:
+    #             derivation_reason = "Type adjustment"
+    #         #new_argtype = unified.left
+    #         #print("    ", env)
+    #         #print("     Adjusting variable %s to %s" % (self.varname, unified.left))
+    #         left_principal = env.try_add_var_mapping(self.varname, unified.left)
+    #         #print("    ", env)
+    #         if left_principal is None:
+    #             self._type_cache_set(new_type, None)
+    #             return None
+    #         new_argtype = left_principal
+    #         #new_argtype = env.var_mapping[self.varname] # principle type
+    #         if self.argtype != left_principal:
+    #             # arg type needs to be adjusted, and hence all instances of the bound variable as well.  Do this with beta reduction.
+    #             assert left_principal is not None
+    #             new_var = TypedTerm(self.varname, left_principal)
+    #             #print("     new_var: ", new_var)
+    #             new_body = self.apply(new_var)
+    #             #print("    new_body: ", new_body)
+    #         else:
+    #             new_body = self.body
+    #             new_var = self.var_instance
+    #         #if new_body.type != unify_a.right:
+    #         #print("    unified: ", unified)
+
+    #         new_body = new_body.try_adjust_type(unified.right, derivation_reason=derivation_reason, assignment=assignment) # will only make copy if necessary
+    #         new_fun = self.local_copy(self.op, new_var, new_body)
+    #         #LFun(new_argtype, new_body, self.varname)
+    #         env.merge(new_body.get_type_env())
+    #         if self.varname in env.var_mapping:
+    #             del env.var_mapping[self.varname]
+    #         #print("adjustment calling under_type_assignment at ", self, env.type_mapping)
+    #         new_fun = new_fun.under_type_assignment(env.type_mapping)
+    #         new_fun._type_env = env
+    #         #print("    Adjusting %s to %s" % (self, new_fun))
+    #         self._type_cache_set(new_type, new_fun)
+    #         return derived(new_fun, self, derivation_reason)
         
 
     def apply(self,arg):
@@ -2897,25 +3028,18 @@ def beta_reduce_ts_old(t, varname, s):
     return t
 
 
-def beta_reduce_ts(t, varname, s):
-    if not is_var_symbol(varname):
-        raise ValueError("Beta reduction passed non-variable '%s'" % varname)
+def beta_reduce_ts(t, varname, subst):
     if varname in t.free_variables():
-        subst = TypedExpr.ensure_typed_expr(s)            
-        ts = get_type_system()
-        #print("asdf %s, %s" % (varname, repr(t)))
+        #ts = get_type_system()
         if (t.term() and t.op == varname):
-            if not ts.eq_check(subst.type,t.type):
-                raise TypeMismatch(t, subst, "Beta reduction") # TODO make less cryptic
-            #print("substituting with %s" % subst)
+            #if not ts.eq_check(subst.type,t.type):
+            #    raise TypeMismatch(t, subst, "Beta reduction") # TODO make less cryptic
             return subst # TODO copy??
-        # we will be changing something in this expression, but not at this level of recursion, so make a copy.
-        # TODO: use local_copy
-        #t = t.copy()
+        # we will be changing something in this expression, but not at this level of recursion.
         parts = list()
         for p in t:
             if isinstance(p, TypedExpr):
-                parts.append(beta_reduce_ts(p, varname, s))
+                parts.append(beta_reduce_ts(p, varname, subst))
             else:
                 parts.append(p)
         t = t.local_copy(*parts)
@@ -3100,7 +3224,8 @@ false_term = TypedTerm("False", types.type_t)
 
 def test_setup():
     global ident, ia, ib, P, Q, p, y, t, testf, body, pmw_test1, pmw_test1b, t2
-    ident = LFun(type_e, "x", "x")
+    #ident = LFun(type_e, "x", "x")
+    ident = te("L x_e : x")
     ia = TypedExpr.factory(ident, "y")
     ib = LFun(type_e, ia, "y")
     P = TypedTerm("P", FunType(type_e, type_t))
@@ -3547,7 +3672,7 @@ def test_repr_parse_abstract(self, depth):
 
 class MetaTest(unittest.TestCase):
     def setUp(self):
-        self.ident = LFun(type_e, "x", "x")
+        self.ident = te("L x_e : x") #LFun(type_e, "x", "x")
         self.ia = TypedExpr.factory(self.ident, "y")
         self.ib = LFun(type_e, self.ia, "y")
         self.P = TypedTerm("P", FunType(type_e, type_t))

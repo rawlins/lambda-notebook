@@ -1482,6 +1482,42 @@ class UnaryCompositionOp(CompositionOp):
         else:
             return "Unary composition rule"
 
+class CombinatorCompositionOp(CompositionOp):
+    def __init__(self, name, combinator, arity=1, typeshift=False, commutative=False, desc=None, latex_desc=None,  composite_name=None, allow_none=False, reduce=False, system=None):
+        """Build a composition operation given some function.  See also `binary_factory` and `binary_factory_curried`.
+
+        `name`: the name of the operation, e.g. "FA".
+        `operation`: a function implementing the operation.  Must take two Composables and an optional assignment.
+        `commutative`: should the operation be tried in both orders?
+        `composite_name`: an optional function to determine the node name from the operands.
+        `allow_none`: can either of the arguments to `operation` have content None?  (See e.g. the PA rule.)
+        `reduce`:  should `reduce_all` be called on the result?
+        `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
+        """
+        self.combinator = combinator
+        self._arity = arity
+        if arity == 1:
+            fun = self.unary_call
+        elif arity == 2:
+            fun = self.binary_call
+        else:
+            raise NotImplementedError
+        super().__init__(name, fun, desc=desc, latex_desc=latex_desc, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system)
+        self.commutative = commutative
+        self.typeshift = typeshift
+
+    @property
+    def arity(self):
+        return self._arity
+
+    def unary_call(self, i1, assignment=None):
+        result = self.combinator(arg.content.under_assignment(assignment))
+        return UnaryComposite(arg, result)
+
+    def op_fun(arg1, arg2, assignment=None):
+        result = self.combinator(arg1.content.under_assignment(assignment))(arg2.content.under_assignment(assignment))
+        return BinaryComposite(arg1, arg2, result)
+
 
 def tree_binary(t):
     """Returns true just in case `t` is locally binary branching."""

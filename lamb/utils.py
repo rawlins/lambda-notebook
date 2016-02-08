@@ -64,6 +64,17 @@ def dict_latex_repr(d):
         r.append("%s: %s" % (k_repr, val_repr))
     return "{" + ", ".join(r) + "}"
 
+def set_latex_repr(d):
+    r = list()
+    for k in list(d):
+        try:
+            k_repr = k.latex_str()
+        except AttributeError:
+            k_repr = repr(k)
+        r.append("%s" % (k_repr))
+    return "{" + ", ".join(r) + "}"
+
+
 def parens(s):
     # TODO: ensure at most one outer set of parens
     return "(" + s + ")"
