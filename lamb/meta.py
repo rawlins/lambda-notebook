@@ -3789,9 +3789,9 @@ class MetaTest(unittest.TestCase):
         # test for accidental collisions from alpha conversions, added Apr 2015
         test3 = TypedExpr.factory("(L xbar_<e,t> : L x_e : xbar(x))(L z_e : P_<(e,e,e),t>(x_e,z_e, x1_e))")
         test3 = test3.reduce_all()
-        self.assertNotEqual(test3[1][1][1], test3[1][1][2])
-        self.assertNotEqual(test3[1][1][1], test3[1][1][3])
-        self.assertNotEqual(test3[1][1][2], test3[1][1][3])
+        self.assertNotEqual(test3[2][1][1], test3[2][1][2])
+        self.assertNotEqual(test3[2][1][1], test3[2][1][3])
+        self.assertNotEqual(test3[2][1][2], test3[2][1][3])
 
     # each of these generates 1000 random expressions with the specified depth, and checks whether their repr 
     # parses as equal to the original expression
