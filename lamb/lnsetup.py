@@ -2,17 +2,17 @@ import os, os.path, shutil, json
 
 try:
     import IPython
-    from IPython.html import notebookapp
+    from notebook import notebookapp
     from IPython.terminal.ipapp import TerminalIPythonApp
-    from IPython.kernel import kernelspec
-    from IPython.config import Config
+    from jupyter_client import kernelspec
+    from traitlets.config import Config
 
 except:
-    print("Warning: Failed to load IPython.  Some features disabled.")
+    print("Warning: Failed to load IPython/Jupyter.  Some features disabled.")
 
 import lamb
 # note: can't import this from any other module.
-from lamb import utils, types, meta, lang, tree_mini, parsing, magics
+from lamb import utils, types, meta, lang, tree_mini, parsing, magics, combinators
 from lamb.tree_mini import Tree
 
 
@@ -27,14 +27,15 @@ def inject_into_ipython():
         ip.user_ns["lang"] = lamb.lang
         ip.user_ns["parsing"] = lamb.parsing
         ip.user_ns["display"] = lamb.display
+        ip.user_ns["combinators"] = lamb.combinators
 
         # inject some convenience functions
         ip.user_ns["reload_lamb"] = reload_lamb
         ip.user_ns["Tree"] = lamb.tree_mini.Tree
         ip.user_ns["MiniLatex"] = lamb.utils.MiniLatex
         ip.user_ns["ltx_print"] = lamb.utils.ltx_print
-        ip.user_ns["te"] = lamb.lang.te
-        ip.user_ns["tp"] = lamb.lang.tp
+        ip.user_ns["te"] = lamb.meta.te
+        ip.user_ns["tp"] = lamb.meta.tp
     except:
         print("Failed to inject lambda notebook variables into the ipython kernel namespace")
         raise
@@ -48,6 +49,7 @@ def reload_lamb():
     imp.reload(lamb.lang)
     imp.reload(lamb.parsing)
     imp.reload(lamb.display)
+    imp.reload(lamb.combinators)
     lamb.reload_all = reload_lamb
     inject_into_ipython()
 

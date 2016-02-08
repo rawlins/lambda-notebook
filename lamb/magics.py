@@ -116,15 +116,7 @@ class LambMagics(Magics):
 
     @line_magic
     def te(self, line):
-        reduce = False
-        if line.startswith("reduce "):
-            line = line[7:]
-            reduce = True
-        result = lang.te(line)
-        if reduce:
-            result = result.reduce_all()
-        accum = dict()
-        accum["_llast"] = result
+        (result, accum) = parsing.parse_te(line, self.env)
         self.shell.push(accum)
         return result
 

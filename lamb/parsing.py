@@ -90,11 +90,37 @@ def vars_only(env):
     env2 = {key: env[key] for key in env.keys() if isinstance(env[key], meta.TypedExpr)}
     return env2
 
+def parse_te(line, env=None, use_env=False):
+    from lamb import meta
+    line = remove_comments(line)
+    reduce = False
+    if line.startswith("reduce "):
+        line = line[7:]
+        reduce = True
+    if env is None or not use_env:
+        env = dict()
+    var_env = vars_only(env)
+    try:
+        result = meta.te(line, assignment=var_env)
+        result = result.regularize_type_env(var_env, constants=True)
+        if reduce:
+            result = result.reduce_all()
+    except Exception as e:
+        meta.logger.error("Parsing of typed expression failed with exception:")
+        meta.logger.error(e)
+        return (None, dict())
+
+    accum = dict()
+    accum["_llast"] = result
+    return (result, accum)
+
 def parse_equality_line(s, env=None, transforms=None):
     from lamb import meta, lang, types
     # TODO should this go by lines....
     if env is None:
         env = dict()
+    if transforms is None:
+        transforms = dict()
     var_env = vars_only(env)
     system = lang.get_system()
     a_ctl = system.assign_controller
@@ -123,8 +149,16 @@ def parse_equality_line(s, env=None, transforms=None):
     if match:
         default = a_ctl.default()
         db_env = default.modify(var_env)
-        right_side = meta.TypedExpr.factory(right_str.strip(), assignment=db_env)
-        right_side = right_side.under_assignment(db_env)
+        try:
+            #right_side = meta.TypedExpr.factory(right_str.strip(), assignment=db_env)
+            right_side = meta.te(right_str.strip(), assignment=db_env)
+            right_side = right_side.regularize_type_env(db_env)
+            right_side = right_side.under_assignment(db_env)
+        except Exception as e:
+            meta.logger.error("Parsing of assignment to '%s' failed with exception:" % left_s)
+            meta.logger.error(e)
+            return (dict(), env)
+
         #print("assignment is " + str(db_env))
         #print("default is " + str(db_env))
         #print("env is " + str(var_env))
@@ -139,8 +173,16 @@ def parse_equality_line(s, env=None, transforms=None):
         env[lex_name] = item
         return ({lex_name: item}, env)
     else:
-        right_side = meta.TypedExpr.factory(right_str.strip(), assignment=var_env)
-        right_side = right_side.under_assignment(var_env)
+        try:
+            #right_side = meta.TypedExpr.factory(right_str.strip(), assignment=var_env)
+            right_side = meta.te(right_str.strip(), assignment=var_env)
+            right_side = right_side.regularize_type_env(var_env, constants=True)
+            right_side = right_side.under_assignment(var_env)
+        except Exception as e:
+            meta.logger.error("Parsing of assignment to '%s' failed with exception:" % left_s)
+            meta.logger.error(e)
+            #raise e
+            return (dict(), env)
 
         # variable assignment case
         # don't pass assignment here, to allow for redefinition.  TODO: revisit
@@ -148,17 +190,17 @@ def parse_equality_line(s, env=None, transforms=None):
         if not term.variable():
             raise ParseError("Assignment to non-variable term '%s'" % term)
         ts = meta.get_type_system()
-        (unify_l, unify_r) = ts.local_unify(term.type, right_side.type)
+        u_result = ts.unify(term.type, right_side.type)
         # there are two ways in which unify could fail.  One is the built-in ad hoc type_guessed flag, and one is a genuine type mismatch.
         # we want to silently override guessed types here.
-        if unify_l is None:
+        if u_result is None:
             if term.type_guessed:
                 term.type = right_side.type
             else:
                 raise types.TypeMismatch(term, right_side, "Variable assignment")
         else:
             # brute force
-            term.type = unify_r
+            term.type = u_result
         if transform:
             right_side = transform(right_side)
         # NOTE side-effect here
@@ -181,15 +223,19 @@ def parse_line(s, env=None, transforms=None):
         else:
             return (dict(), env)
     except Exception as e:
+        from lamb import meta
+        meta.logger.error("Parsing failed with exception:")
+        meta.logger.error(e)
+        
         #print(e)
         #traceback.print_exc()
-        try:
-            exec(s, globals(), env)
-        except Exception as e2:
-            print("Parsing failed with exception:")
-            print(e)
-            print("Exec failed also:")
-            traceback.print_exc()
+        # try:
+        #     exec(s, globals(), env)
+        # except Exception as e2:
+        #     print("Parsing failed with exception:")
+        #     print(e)
+        #     print("Exec failed also:")
+        #     traceback.print_exc()
         return (dict(), env)
 
 

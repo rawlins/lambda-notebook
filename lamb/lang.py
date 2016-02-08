@@ -1351,9 +1351,64 @@ class Item(TreeComposite):
             #return display.RecursiveDerivationLeaf(self.short_str_latex(), ensuremath(self.content.latex_str()))
             return super().build_display_tree(derivations=derivations, recurse=recurse, style=style)
 
-class BinaryCompositionOp(object):
+class CompositionOp(object):
+    """A unary composition operation."""
+    def __init__(self, name, operation, desc=None, latex_desc=None, composite_name=None, allow_none=False, reduce=False, system=None):
+        """Build a composition operation given some function.  See also `unary_factory`.
+
+        `name`: the name of the operation, e.g. "FA".
+        `operation`: a function implementing the operation.  Must take one Composables and an optional assignment.
+        `commutative`: should the operation be tried in both orders?
+        `composite_name`: an optional function to determine the node name from the operands.
+        `allow_none`: can the argument to `operation` have content None?
+        `reduce`:  should `reduce_all` be called on the result?
+        `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
+        """
+        self.operation = operation
+        self.__name__ = name
+        self.allow_none = allow_none
+        if composite_name is not None:
+            self.composite_name = composite_name
+        if system is not None:
+            self.system = system
+        self.reduce = reduce # shadows builtin
+        self.desc = desc
+        self.latex_desc = latex_desc
+
+    def _repr_latex_(self):
+        if self.latex_desc is None:
+            return "%s <i>%s</i>, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
+        else:
+            return "%s <i>%s</i>, built on combinator '%s'" % (self.description(), self.name, self.latex_desc)
+
+    def __repr__(self):
+        if self.desc is None:
+            return "%s %s, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
+        else:
+            return "%s %s, built on combinator '%s'" % (self.description(), self.name, self.desc)
+
+    @property
+    def name(self):
+        return self.__name__
+
+    @property
+    def arity(self):
+        raise NotImplementedError
+
+    def composite_name(self, i1):
+        raise NotImplementedError
+
+    def __call__(self, *a, assignment=None):
+        # handle None here, rather than in all individual functions.
+        raise NotImplementedError
+
+    def description(self):
+        return self.__class__.__name__
+
+
+class BinaryCompositionOp(CompositionOp):
     """A composition operation on two Composables."""
-    def __init__(self, name, operation, commutative=False, composite_name=None, allow_none=False, reduce=False, system=None):
+    def __init__(self, name, operation, commutative=False, desc=None, latex_desc=None,  composite_name=None, allow_none=False, reduce=False, system=None):
         """Build a composition operation given some function.  See also `binary_factory` and `binary_factory_curried`.
 
         `name`: the name of the operation, e.g. "FA".
@@ -1364,20 +1419,9 @@ class BinaryCompositionOp(object):
         `reduce`:  should `reduce_all` be called on the result?
         `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
         """
-        self.operation = operation
-        self.__name__ = name
+        super().__init__(name, operation, desc=desc, latex_desc=latex_desc, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system)
         self.commutative = commutative
-        self.allow_none = allow_none
-        if composite_name is not None:
-            self.composite_name = composite_name
-        if system is not None:
-            self.system = system
         self.typeshift = False
-        self.reduce = reduce # shadows built in function
-
-    @property
-    def name(self):
-        return self.__name__
 
     @property
     def arity(self):
@@ -1396,9 +1440,12 @@ class BinaryCompositionOp(object):
             result = result.reduce_all()
         return result
 
-class UnaryCompositionOp(object):
+    def description(self):
+        return "Binary composition rule"
+
+class UnaryCompositionOp(CompositionOp):
     """A unary composition operation."""
-    def __init__(self, name, operation, composite_name=None, allow_none=False, reduce=False, system=None,typeshift=False):
+    def __init__(self, name, operation, typeshift=False, desc=None, latex_desc=None, composite_name=None, allow_none=False, reduce=False, system=None):
         """Build a composition operation given some function.  See also `unary_factory`.
 
         `name`: the name of the operation, e.g. "FA".
@@ -1409,19 +1456,8 @@ class UnaryCompositionOp(object):
         `reduce`:  should `reduce_all` be called on the result?
         `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
         """
-        self.operation = operation
-        self.__name__ = name
-        self.allow_none = allow_none
-        if composite_name is not None:
-            self.composite_name = composite_name
-        if system is not None:
-            self.system = system
+        super().__init__(name, operation, desc=desc, latex_desc=latex_desc, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system)
         self.typeshift = typeshift
-        self.reduce = reduce # shadows builtin
-
-    @property
-    def name(self):
-        return self.__name__
 
     @property
     def arity(self):
@@ -1439,6 +1475,48 @@ class UnaryCompositionOp(object):
         if self.reduce:
             result = result.reduce_all()
         return result
+
+    def description(self):
+        if self.typeshift:
+            return "Typeshift"
+        else:
+            return "Unary composition rule"
+
+class CombinatorCompositionOp(CompositionOp):
+    def __init__(self, name, combinator, arity=1, typeshift=False, commutative=False, desc=None, latex_desc=None,  composite_name=None, allow_none=False, reduce=False, system=None):
+        """Build a composition operation given some function.  See also `binary_factory` and `binary_factory_curried`.
+
+        `name`: the name of the operation, e.g. "FA".
+        `operation`: a function implementing the operation.  Must take two Composables and an optional assignment.
+        `commutative`: should the operation be tried in both orders?
+        `composite_name`: an optional function to determine the node name from the operands.
+        `allow_none`: can either of the arguments to `operation` have content None?  (See e.g. the PA rule.)
+        `reduce`:  should `reduce_all` be called on the result?
+        `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
+        """
+        self.combinator = combinator
+        self._arity = arity
+        if arity == 1:
+            fun = self.unary_call
+        elif arity == 2:
+            fun = self.binary_call
+        else:
+            raise NotImplementedError
+        super().__init__(name, fun, desc=desc, latex_desc=latex_desc, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system)
+        self.commutative = commutative
+        self.typeshift = typeshift
+
+    @property
+    def arity(self):
+        return self._arity
+
+    def unary_call(self, i1, assignment=None):
+        result = self.combinator(arg.content.under_assignment(assignment))
+        return UnaryComposite(arg, result)
+
+    def op_fun(arg1, arg2, assignment=None):
+        result = self.combinator(arg1.content.under_assignment(assignment))(arg2.content.under_assignment(assignment))
+        return BinaryComposite(arg1, arg2, result)
 
 
 def tree_binary(t):
@@ -1548,12 +1626,59 @@ class LexiconOp(TreeCompositionOp):
         #    raise NotImplementedError()
         return den
 
+def unary_factory(meta_fun, name, typeshift=False, reduce=True):
+    """Factory function to construct a unary composition operation given some function.
+
+    This is extremely useful for building unary operations and type-shifts from meta-language combinators.
+    """
+    def op_fun(arg, assignment=None):
+        result = meta_fun(arg.content.under_assignment(assignment))
+        return UnaryComposite(arg, result)
+    desc = None
+    latex_desc = None
+    if isinstance(meta_fun, meta.TypedExpr):
+        desc = repr(meta_fun)
+        latex_desc = meta_fun._repr_latex_()
+    return UnaryCompositionOp(name, op_fun, typeshift=typeshift, reduce=reduce, desc=desc, latex_desc=latex_desc)
+
+def binary_factory(meta_fun, name, reduce=True, combinator_source=None):
+    """Factory function to construct a binary composition operation given some function."""
+    def op_fun(arg1, arg2, assignment=None):
+        result = meta_fun(arg1.content.under_assignment(assignment), arg2.content.under_assignment(assignment))
+        return BinaryComposite(arg1, arg2, result)
+    desc = None
+    latex_desc = None
+    if combinator_source is not None:
+        desc = repr(combinator_source)
+        latex_desc = combinator_source._repr_latex_()
+    return BinaryCompositionOp(name, op_fun, reduce=reduce, desc=desc, latex_desc=latex_desc)
+
+def binary_factory_curried(meta_fun, name, reduce=True):
+    """Factory function to construct a binary composition operation given some (curried) function.
+
+    This is extremely useful for building operations from meta-language combinators.  For example, PM can be implemented using just:
+    >lang.binary_factory_curried(lang.pm_op, "PM")
+    """
+    def op_fun(arg1, arg2, assignment=None):
+        result = meta_fun(arg1.content.under_assignment(assignment))(arg2.content.under_assignment(assignment))
+        return BinaryComposite(arg1, arg2, result)
+    desc = None
+    latex_desc = None
+    if isinstance(meta_fun, meta.TypedExpr):
+        desc = repr(meta_fun)
+        latex_desc = meta_fun._repr_latex_()
+    return BinaryCompositionOp(name, op_fun, reduce=reduce, desc=desc, latex_desc=latex_desc)
+
+
+
 
 class PlaceholderTerm(meta.TypedTerm):
     """This class represents a placeholder for some denotation  that is unknown or not yet composed.  The primary use
     is in incrementally doing top-down composition."""
     def __init__(self, varname, placeholder_for, system=None):
-        meta.TypedTerm.__init__(self, varname, types.undetermined_type)
+        #meta.TypedTerm.__init__(self, varname, types.VariableType("X"))
+        meta.TypedTerm.__init__(self, varname, types.UnknownType())
+        self.let = True
         self.placeholder_for = placeholder_for
         if system is None:
             self.system = get_system()
@@ -1599,7 +1724,16 @@ class PlaceholderTerm(meta.TypedTerm):
         return self(arg)
 
     def copy(self):
-        return PlaceholderTerm(self.op, self.placeholder_for, system=self.system)
+        #result = PlaceholderTerm(self.op, self.placeholder_for, system=self.system)
+        return self.local_copy(self.op)
+
+    def local_copy(self, op):
+        result = PlaceholderTerm(op, self.placeholder_for, system=self.system)
+        result.let = self.let
+        result.type = self.type # type may have changed, e.g. via alphabetic conversion to a fresh type
+        #print("self: ", repr(meta.TypedTerm.local_copy(self, self.op)))
+        #print("result: ", repr(meta.TypedTerm.local_copy(result, result.op)))
+        return result
 
 
 
@@ -1646,6 +1780,26 @@ class CompositionSystem(object):
             self.ruledict[r.name] = r
         self.rules.append(r)
         self.update_typeshifts()
+
+    def add_unary_rule(self, combinator, name, reduce=True):
+        rule = unary_factory(combinator, name, reduce=reduce)
+        self.add_rule(rule)
+        return rule
+
+    def add_binary_rule(self, combinator, name, reduce=True):
+        rule = binary_factory_curried(combinator, name, reduce=reduce)
+        self.add_rule(rule)
+        return rule
+
+    def add_binary_rule_uncurried(self, fun, name, reduce=True, combinator_source=None):
+        rule = binary_factory(fun, name, reduce=reduce, combinator_source=combinator_source)
+        self.add_rule(rule)
+        return rule
+
+    def add_typeshift(self, combinator, name, reduce=True):
+        rule = unary_factory(combinator, name, typeshift=True, reduce=reduce)
+        self.add_rule(rule)
+        return rule
 
     def remove_rule(self, r):
         """Remove a composition rule by name."""
@@ -1706,8 +1860,14 @@ class CompositionSystem(object):
             s += "<br />"
         else:
             s += "\n"
-        s += "Operations: "
-        s += ", ".join([x.name for x in self.rules])
+        s += "Operations: {"
+        if latex:
+            s += "<br />"
+            for x in self.rules:
+                s += "&nbsp;&nbsp;&nbsp;&nbsp;" + x._repr_latex_() + "<br />"
+            s += "}"
+        else:
+            s += ", ".join([x.name for x in self.rules]) + "}"
         return s
 
     def _repr_latex_(self):
@@ -1872,6 +2032,7 @@ class CompositionSystem(object):
                 if len(new_i_n.results) > 1:
                     typeshifts_changed = True
             if typeshifts_changed:
+                #print("Type-shifting: found %i new items to try: %s" % (len(new_items), repr(new_items)))
                 result = self.compose(*new_items, assignment=assignment, block_typeshift=True)
                 if len(result.results) > 0:
                     return result
@@ -2141,8 +2302,8 @@ def tree_fa_fun_abstract(f, a, assignment=None):
     if not ts.fun_arg_check_bool(f, a):
         return None
     result = (f.content.under_assignment(assignment))(a.content.under_assignment(assignment))
-    if not a.type.undetermined:
-        result = result.reduce()
+    # if not a.type.undetermined:
+    #     result = result.reduce()
     return result
 
 def tree_left_fa_fun(t, assignment=None):
@@ -2209,9 +2370,6 @@ def tree_pm_fun_wrong(t, assignment=None):
     body1 = c1.apply(meta.TypedTerm(varname, types.type_e))
     body2 = c2.apply(meta.TypedTerm(varname, types.type_e))
     conjoined_c = meta.LFun(type_e, body1 & body2, varname)
-    # TODO: does this overgenerate uncertainty?
-    if body1.type.undetermined or body2.type.undetermined:
-        conjoined_c.type = types.UndeterminedType(conjoined_c.type)
     return BinaryComposite(t[0], t[1], conjoined_c, source=t)
 
 
@@ -2278,33 +2436,6 @@ def pm_fun(fun1, fun2, assignment=None):
 
 
 
-def unary_factory(meta_fun, name, typeshift=False, reduce=True):
-    """Factory function to construct a unary composition operation given some function.
-
-    This is extremely useful for building unary operations and type-shifts from meta-language combinators.
-    """
-    def op_fun(arg, assignment=None):
-        result = meta_fun(arg.content.under_assignment(assignment))
-        return UnaryComposite(arg, result)
-    return UnaryCompositionOp(name, op_fun, typeshift=typeshift, reduce=reduce)
-
-def binary_factory(meta_fun, name, reduce=True):
-    """Factory function to construct a binary composition operation given some function."""
-    def op_fun(arg1, arg2, assignment=None):
-        result = meta_fun(arg1.content.under_assignment(assignment), arg2.content.under_assignment(assignment))
-        return BinaryComposite(arg1, arg2, result)
-    return BinaryCompositionOp(name, op_fun, reduce=reduce)
-
-def binary_factory_curried(meta_fun, name, reduce=True):
-    """Factory function to construct a binary composition operation given some (curried) function.
-
-    This is extremely useful for building operations from meta-language combinators.  For example, PM can be implemented using just:
-    >lang.binary_factory_curried(lang.pm_op, "PM")
-    """
-    def op_fun(arg1, arg2, assignment=None):
-        result = meta_fun(arg1.content.under_assignment(assignment))(arg2.content.under_assignment(assignment))
-        return BinaryComposite(arg1, arg2, result)
-    return BinaryCompositionOp(name, op_fun, reduce=reduce)
 
 
 

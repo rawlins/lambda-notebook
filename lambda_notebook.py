@@ -6,7 +6,7 @@ import sys, os, signal
 
 try:
 	import IPython
-	from IPython.html import notebookapp
+	from notebook import notebookapp
 	import lamb
 except ImportError:
 	print("You don't seem to have IPython installed, or the dependencies of ")

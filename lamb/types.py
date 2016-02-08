@@ -48,15 +48,37 @@ class SimpleIntegerSet(OntoSet):
     def infcheck(self,x):
         return isinstance(x,int)
 
-class AbstractType(object):
+class TypeConstructor(object):
     def __init__(self):
         self.symbol = None
+        self.unify_source = None
+        self.generic = False
+        #self.type_vars = set()
+        self.init_type_vars()
+
+    def __len__(self):
+        return 0
+
+    def __getitem__(self, i):
+        raise IndexError
+
+    def __iter__(self):
+        return iter(list())
 
     def functional(self):
         raise NotImplementedError
 
     def check(self, x):
         raise NotImplementedError
+
+    def copy_local(self, *parts):
+        """Return a copy of the type with any local properties preserved, but *parts substituted appropriately.
+
+        Note that for complex types, this acts much like a factory function."""
+        raise NotImplementedError
+
+    def copy(self):
+        return self.copy_local(*list(iter(self)))
 
     def __repr__(self):
         return re.sub(r'[\s]+', '', self.__str__())
@@ -72,9 +94,62 @@ class AbstractType(object):
     def random(cls, random_ctrl_fun):
         raise NotImplementedError
 
+    def find_type_vars(self):
+        """Finds any type variables in the type that are bound.  Reminder: in Hindley-Milner, the way it is normally used, all type variables are bound.
+        So in practice, this finds all type variables."""
+        accum = set()
+        for part in iter(self):
+            accum.update(part.find_type_vars())
+        return accum
+
+    def bound_type_vars(self):
+        return self.type_vars
+
+    def init_type_vars(self):
+        accum = set()
+        for part in iter(self):
+            accum.update(part.type_vars)
+        self.type_vars = accum
 
 
-class OntoType(AbstractType):
+
+    def sub_type_vars(self, assignment, trans_closure=False):
+        """Substitute type variables in `self` given the mapping in `assignment`.
+
+        This does only one-place substitutions, so it won't follow chains if there are any."""
+        if len(self.type_vars) == 0:
+            return self
+        l = list()
+        dirty = False
+        for i in range(len(self)):
+            l.append(self[i].sub_type_vars(assignment,trans_closure=trans_closure))
+            if l[i] is not self[i]:
+                dirty = True
+        if dirty:
+            return self.copy_local(*l)
+        else:
+            return self
+
+
+
+
+
+    def unify(self, other, unify_control_fun, data):
+        """General function for type unification.  Not intended to be called directly.  See `TypeSystem.unify`."""
+        if not isinstance(self, other.__class__):
+            return (None, None)
+        if len(self) != len(other):
+            return (None, None)
+        sig = list()
+        for i in range(len(self)):
+            (part_result, data) = unify_control_fun(self[i], other[i], data)
+            if part_result is None:
+                return (None, None)
+            sig.append(part_result)
+        return (self.copy_local(*sig), data)
+
+
+class BasicType(TypeConstructor):
     """Class for atomic types.  The core atomic type interface:
 
     symbol: the name of the type.
@@ -84,6 +159,7 @@ class OntoType(AbstractType):
     values: an object implementing the OntoSet interface representing the set that this type characterizes.
     """
     def __init__(self, symbol, values=None, name=None):
+        super().__init__()
         self.symbol = symbol
         if name is None:
             self.name = symbol
@@ -93,7 +169,6 @@ class OntoType(AbstractType):
             self.values = SimpleInfiniteSet("c" + symbol)
         else:
             self.values = values
-        self.undetermined = False
         # pre-escape because of the use of "?" for undetermined type
         self.regex = re.compile(re.escape(self.symbol))
 
@@ -109,13 +184,12 @@ class OntoType(AbstractType):
         except AttributeError:
             return False
 
+    def copy_local(self):
+        return BasicType(self.symbol, self.values, self.name)
+
     def equal(self, other):
-        if isinstance(other, UndeterminedType):
-            return other.equal(self)
-        elif other.undetermined:
-            return Maybe
-        else:
-            return self.__eq__(other)
+        raise NotImplementedError
+        return self.__eq__(other)
 
     def __hash__(self):
         return hash(self.symbol)
@@ -138,14 +212,16 @@ class OntoType(AbstractType):
     def add_internal_argument(self, arg_type):
         return FunType(arg_type, self)
 
-    def unify(self, other, unify_control_fun):
+    def unify(self, other, unify_control_fun, data):
         if self == other:
-            return (self, other)
+            return (self, data)
         else:
             return (None, None)
 
 
-class FunType(AbstractType):
+
+
+class FunType(TypeConstructor):
     """Class for non-atomic (functional) binary types.  These characterize a set of functions.
     The core functional type interface:
 
@@ -156,10 +232,22 @@ class FunType(AbstractType):
     def __init__(self, left, right):
         self.left = left
         self.right = right
-        self.undetermined = (left.undetermined or right.undetermined)
+        TypeConstructor.__init__(self)
+
+    def __len__(self):
+        return 2
+
+    def __getitem__(self, i):
+        return (self.left, self.right)[i]
+
+    def __iter__(self):
+        return iter((self.left, self.right))
 
     def functional(self):
         return True
+
+    def copy_local(self, l, r):
+        return FunType(l, r)
 
     def check(self, x):
         raise NotImplementedError()
@@ -174,15 +262,9 @@ class FunType(AbstractType):
             return False
 
     def equal(self, other):
-        #if self.undetermined or other.undetermined:
-        #    return self.left.equal(other.left) and self.right.equal(other.right)
-        #else:
-        #    return self.__eq__(other)
+        raise NotImplementedError
         if not other.functional():
-            if other.undetermined:
-                return Maybe
-            else:
-                return False
+            return False
         r1 = self.left.equal(other.left)
         r2 = self.right.equal(other.right)
         if r1 == False or r2 == False:
@@ -210,6 +292,14 @@ class FunType(AbstractType):
     def add_internal_argument(self, arg_type):
         return FunType(self.left, self.right.add_internal_argument(arg_type))
 
+    # def sub_type_vars(self, assignment):
+    #     left_sub = self.left.sub_type_vars(assignment)
+    #     right_sub = self.right.sub_type_vars(assignment)
+    #     if left_sub is not self.left or right_sub is not self.right:
+    #         return types.FunType(left_sub, right_sub)
+    #     else:
+    #         return self
+
     @classmethod
     def parse(cls, s, i, parse_control_fun):
         next = parsing.consume_char(s, i, "<")
@@ -223,25 +313,25 @@ class FunType(AbstractType):
             i = parsing.consume_char(s, i, ">", "Unmatched <")
             return (FunType(left, right), i)
 
-    @classmethod
-    def local_unify(cls, a, b):
-        if a.functional():
-            if b.functional():
-                if a.left.equal(b.left) == True and a.right.equal(b.right) == True:
-                    return (a, b)
-        return (None, None)
+    # @classmethod
+    # def local_unify(cls, a, b):
+    #     if a.functional():
+    #         if b.functional():
+    #             if a.left.equal(b.left) == True and a.right.equal(b.right) == True:
+    #                 return (a, b)
+    #     return (None, None)
 
-    def unify(self, other, unify_control_fun):
-        if isinstance(other, FunType):
-            s_left, o_left = unify_control_fun(self.left, other.left)
-            s_right, o_right = unify_control_fun(self.right, other.right)
-            if s_left is None or s_right is None:
-                return (None, None)
-            result_a = FunType(s_left, s_right)
-            result_b = FunType(o_left, o_right)
-            return (result_a, result_b)
-        else:
-            return (None, None)
+    # def unify(self, other, unify_control_fun):
+    #     if isinstance(other, FunType):
+    #         s_left, o_left = unify_control_fun(self.left, other.left)
+    #         s_right, o_right = unify_control_fun(self.right, other.right)
+    #         if s_left is None or s_right is None:
+    #             return (None, None)
+    #         result_a = FunType(s_left, s_right)
+    #         result_b = FunType(o_left, o_right)
+    #         return (result_a, result_b)
+    #     else:
+    #         return (None, None)
 
     @classmethod
     def random(cls, random_ctrl_fun):
@@ -249,11 +339,23 @@ class FunType(AbstractType):
 
 
 
-class SetType(AbstractType):
+class SetType(TypeConstructor):
     """Type for sets.  See `lang.ConditionSet` and `lang.ListedSet`."""
     def __init__(self, ctype):
         self.content_type = ctype
-        self.undetermined = False
+        TypeConstructor.__init__(self)
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, i):
+        return (self.content_type,)[i]
+
+    def __iter__(self):
+        return iter((self.content_type,))
+
+    def copy_local(self, ctype):
+        return SetType(ctype)
 
     def functional(self):
         return False
@@ -277,21 +379,30 @@ class SetType(AbstractType):
         return hash("Set") ^ hash(self.content_type)
 
     def equal(self, other):
+        raise NotImplementedError
         # TODO: is this too rigid?
         if isinstance(other, SetType):
             return self.content_type.equal(other.content_type)
         else:
             return False
 
-    def unify(self, other, unify_control_fun):
-        if isinstance(other, SetType):
-            result_s, result_o = unify_control_fun(self.content_type, other.content_type)
-            if result_s is None:
-                return (None, None)
-            else:
-                return (SetType(result_s), SetType(result_o))
-        else:
-            return (None, None)
+    # def unify(self, other, unify_control_fun):
+    #     if isinstance(other, SetType):
+    #         result_s, result_o = unify_control_fun(self.content_type, other.content_type)
+    #         if result_s is None:
+    #             return (None, None)
+    #         else:
+    #             return (SetType(result_s), SetType(result_o))
+    #     else:
+    #         return (None, None)
+
+    # def sub_type_vars(self, assignment):
+    #     sub = self.content_type.sub_type_vars(assignment)
+    #     if sub is not self.content_type:
+    #         return SetType(sub)
+    #     else:
+    #         return self
+
 
     @classmethod
     def parse(cls, s, i, parse_control_fun):
@@ -309,13 +420,16 @@ class SetType(AbstractType):
         return SetType(random_ctrl_fun())
 
 
-class TupleType(AbstractType):
+class TupleType(TypeConstructor):
     """Type for tuples.  See `lang.Tuple`."""
     def __init__(self, *signature):
         if len(signature) == 0:
             raise ValueError("Tuple type can't be 0 length")
         self.signature = tuple(signature)
-        self.undetermined = False
+        TypeConstructor.__init__(self)
+
+    def copy_local(self, *sig):
+        return TupleType(*sig)
 
     def functional(self):
         return False
@@ -344,16 +458,18 @@ class TupleType(AbstractType):
     def __len__(self):
         return len(self.signature)
 
+    def __getitem__(self, i):
+        return self.signature[i]
+
+    def __iter__(self):
+        return iter(self.signature)
+
+
     def equal(self, other):
-        #if self.undetermined or other.undetermined:
-        #    return self.left.equal(other.left) and self.right.equal(other.right)
-        #else:
-        #    return self.__eq__(other)
+        raise NotImplementedError
         try:
             othersig = other.signature
         except:
-            if other.undetermined:
-                return Maybe
             return False
         if len(self.signature) != len(othersig):
             return False
@@ -373,23 +489,32 @@ class TupleType(AbstractType):
     def __call__(self, other):
         return FunType(self, other)
 
-    def __getitem__(self, i):
-        return self.signature[i]
-
     def _repr_latex_(self):
         return self.latex_str()
 
-    def unify(self, other, unify_control_fun):
-        if isinstance(other, TupleType) and len(self.signature) == len(other.signature):
-            l = [unify_control_fun(self.signature[i], other.signature[i]) for i in range(len(self.signature))]
-            self_result = [x[0] for x in l]
-            other_result = [x[1] for x in l]
-            if None in (set(self_result)) or None in set(other_result):
-                return (None, None)
-            else:
-                return (TupleType(*self_result), TupleType(*other_result))
-        else:
-            return (None, None)
+    # def unify(self, other, unify_control_fun):
+    #     if isinstance(other, TupleType) and len(self.signature) == len(other.signature):
+    #         l = [unify_control_fun(self.signature[i], other.signature[i]) for i in range(len(self.signature))]
+    #         self_result = [x[0] for x in l]
+    #         other_result = [x[1] for x in l]
+    #         if None in (set(self_result)) or None in set(other_result):
+    #             return (None, None)
+    #         else:
+    #             return (TupleType(*self_result), TupleType(*other_result))
+    #     else:
+    #         return (None, None)
+
+    # def sub_type_vars(self, assignment):
+    #     l = list()
+    #     dirty = False
+    #     for i in range(len(self)):
+    #         l.append(self.signature[i].sub_type_vars(assignment))
+    #         if l[i] is not self.signature[i]:
+    #             dirty = True
+    #     if dirty:
+    #         return TupleType(*l)
+    #     else:
+    #         return self
 
     @classmethod
     def parse(cls, s, i, parse_control_fun):
@@ -419,188 +544,290 @@ class TupleType(AbstractType):
         args = tuple([random_ctrl_fun() for i in range(0,tuple_len)])
         return TupleType(*args)
 
+vartype_regex_str = r"[XYZ]('+|([0-9]*))"
+vartype_regex = re.compile(vartype_regex_str)
+vartype_regex_full = re.compile( "^" + vartype_regex_str + "$")
 
-# TODO make real singleton
-class UndeterminedType(OntoType):
-    """Class for a singleton placeholder type."""
-    def __init__(self, contained=None):
-        super().__init__(symbol="?", values=set(), name="undetermined-type")
-        self.undetermined = True
-        c = contained
-        while isinstance(c, UndeterminedType):
-            c = c.contained
-        if c is None:
-            self.left = self
-            self.right = self
-        elif c.functional():
-            self.left = c.left
-            self.right = c.right
+def is_vartype_symbol(x):
+    m = vartype_regex_full.match(x)
+    if m:
+        return True
+    else:
+        return False
+
+def parse_vartype(x):
+    m = vartype_regex_full.match(x)
+    if not m:
+        return (None, None)
+    symbol = x[0]
+    if len(x) > 1:
+        if x[1] == "'":
+            return (symbol, len(x)-1)
         else:
-            pass # leave left and right unset...TODO is this right?
-        self.contained = c
+            return (symbol, int(x[1:]))
+    else:
+        return (symbol, 0)
 
-    #Note: __eq__ is still inherited from OntoType, and differs from 'equal'.
+def transitive_add(v, end, assignment):
+    visited = set()
+    while v in assignment:
+        if v in visited or v == end:
+            from lamb import meta
+            from lamb.meta import logger
+            logger.error("breaking loop (v: '%s', end: '%s', visited: '%s', assignment: '%s')" % (v, end, visited, assignment))
+            break
+        visited |= {v}
+        next_v = assignment[v]
+        assignment[v] = end
+        v = next_v
+    return assignment
+
+def transitive_find_end(v, assignment):
+    # TODO: delete the loop checking from these functions once it's solid
+    start_v = v
+    visited = set()
+    last_v = None
+    while isinstance(v, VariableType) and v in assignment:
+        if v in visited:
+            from lamb import meta
+            from lamb.meta import logger
+            logger.error("breaking loop (start_v: '%s', v: '%s', visited: '%s', assignment: '%s')" % (start_v, v, visited, assignment))
+            break
+        visited |= {v}
+        last_v = v
+        v = assignment[v]
+    return (v, last_v)
+
+def replace_in_assign(var, value, assign):
+    #print("input: %s, var: %s, value: %s" %  (assign, var, value))
+    if var in assign:
+        if isinstance(value, VariableType):
+            if value in assign:
+                print("%s already in assignment %s?" % (value, assign))
+            if value != assign[var]:
+                assign[value] = assign[var]
+            else:
+                del assign[value]
+        del assign[var]
+    dellist = list()
+    for k in assign.keys():
+        if isinstance(assign[k], VariableType) and assign[k] == var:
+            if k != value:
+                assign[k] = value
+            else:
+                dellist.append(k)
+        else:
+            try_subst = assign[k].sub_type_vars({var: value}, trans_closure=False)
+            assign[k] = try_subst
+    for d in dellist:
+        del assign[d]
+    #print("output: ", assign)
+    return assign
+
+class VariableType(TypeConstructor):
+    max_id = 0
+
+    def __init__(self, symbol, number=None):
+        self.number = None
+        super().__init__()
+        if number is not None:
+            self.symbol = symbol[0] #+ str(number)
+            self.number = number
+        else:
+            (symbol, number) = parse_vartype(symbol)
+            if symbol is None:
+                raise parsing.ParseError("Can't parse variable type", s=symbol)
+            self.symbol = symbol
+            self.number = number
+        if self.number > VariableType.max_id:
+            VariableType.max_id = self.number
+        self.name = symbol
+        self.values = set()
+        self.init_type_vars()
+        #self.left = self # ???
+        #self.right = self # ???
+
+    def internal(self):
+        return self.symbol[0] == "I"
 
     def functional(self):
-        if self.contained is None:
-            return False # TODO is this right?
+        return False # ???
+
+    def copy_local(self):
+        return VariableType(self.symbol, self.number)
+    
+    def equal(self, other):
+        raise NotImplementedError
+        return Maybe
+    
+    def unify(self, t2, unify_control_fun, assignment):
+        if self == t2:
+            return (self, assignment)
+        # find the principal type in the equivalence class identified by self.  May return self if there's a loop.
+        #  (Other sorts of loops should be ruled out?)
+        if self in assignment:
+            (start, prev) = transitive_find_end(self, assignment)
         else:
-            return self.contained.functional()
+            start = self
+            prev = None
+        # find the principal type in the equivalence class identified by t2.
+        if isinstance(t2, VariableType) and t2 in assignment:
+            (t2_principal, t2_prev) = transitive_find_end(t2, assignment)
+        else:
+            t2_principal = t2
+            t2_prev = None
+        #print("t1: %s, t1 principal: %s, t2: %s, t2 principal: %s" % (self, start, t2, t2_principal))
+        new_principal = start
+        if PolyTypeSystem.occurs_check(new_principal, t2_principal):
+            from lamb import meta
+            from lamb.meta import logger
+            logger.error("Failed occurs check: can't unify recursive types %s and %s" % (new_principal, t2_principal))
+            return (None, None)
+        if isinstance(start, VariableType):
+            if not isinstance(t2_principal, VariableType):
+                t2_principal = t2_principal.sub_type_vars(assignment, trans_closure=True)
+            assignment = replace_in_assign(start, t2_principal, assignment)
+            if start != t2_principal:
+                assignment[start] = t2_principal
+                new_principal = t2_principal
+        if isinstance(t2_principal, VariableType):
+            if not isinstance(start, VariableType):
+                start = start.sub_type_vars(assignment, trans_closure=True)
+            assignment = replace_in_assign(t2_principal, start, assignment)
+            if t2_principal != start:
+                assignment[t2_principal] = start
+                new_principal = start
+        if not (isinstance(start, VariableType) or isinstance(t2_principal, VariableType)):
+            new_principal, assignment = unify_control_fun(start, t2_principal, assignment)
+            if new_principal is None:
+                return (None, None)
+        #print("unify assignment: %s, new_principal: %s" % (assignment, new_principal))
+        return (new_principal, assignment)
+
+    def find_type_vars(self):
+        return set((self,))
+    
+    def init_type_vars(self):
+        # this will trigger on the initial call to TypeConstructor.__init__, need to defer
+        if self.number is not None:
+            self.type_vars = set((self,))
+        
+    def sub_type_vars(self, assignment, trans_closure=False):
+        if self in assignment:
+            x = assignment[self]
+            if trans_closure:
+                visited = {self}
+                while x in assignment:
+                    if x in visited:
+                        from lamb import meta
+                        from lamb.meta import logger
+                        logger.error("breaking loop in substitution (x: '%s', visited: '%s', , assignment: '%s')" % (x, visited, assignment))
+                        break
+                    visited |= {x}
+                    x = assignment[x]
+                #print("substituting %s for %s" % (x, self))
+            return x
+        else:
+            return self
+
+    def key_str(self):
+        return self.symbol + str(self.number)
 
     def __hash__(self):
-        if self.contained is None:
-            return hash(self.symbol)
-        else:
-            return hash(self.contained) ^ hash(self.symbol)
+        return hash(self.key_str())
 
     def __eq__(self, other):
-        """This implements strict equality.  Two undetermined types are equal only if they contain the same type (or both contain None).
-        An undetermined type is not equal to a regular type.
+        """This implements token equality.  This is _not_ semantic equality due to type variable binding.
         """
-        if isinstance(other, UndeterminedType):
-            if self.contained is None and other.contained is None:
-                return True
-            else:
-                return self.contained == other.contained
+        if isinstance(other, VariableType):
+            return self.symbol == other.symbol and self.number == other.number
         else:
             return False
-
-    # @property
-    # def symbol(self):
-    #     if self.contained is None:
-    #         return "?"
-    #     elif isinstance(self.contained, OntoType):
-    #         return self.contained.symbol + "?"
-    #     elif isinstance(self.contained, FunType):
-    #         # not sure about this...
-    #         return str(self.contained) + "?"
-    #     else:
-    #         raise NotImplementedError
-
-    def equal(self, other):
-        """This implements trivalent equality.  In this case, is guaranteed to return either Maybe or False."""
-        # Note that this _must never_ call any of the basic class' __eq__ function with this object, 
-        #  or infinite recursion will result.  (TODO: better way around this?)
-        if self.contained is None:
-            return Maybe
+    
+    def __repr__(self):
+        if self.number > 3:
+            return self.symbol + str(self.number)
         else:
-            result = self.contained.equal(other)
-            # downgrade a true result to a maybe
-            if result == True or result == Maybe:
-                return Maybe
-            else:
-                return False
-
-    @classmethod
-    def fun_arg_ok(cls, fun, arg):
-        if fun.type.functional():
-            return flexible_equal(fun.type.left, arg.type)
-            # TODO: this logic is not fully general -- doesn't cover embedded undetermined types in arg or fun.left
-            #if isinstance(arg.type, UndeterminedType) or isinstance(fun.type.left, UndeterminedType) or fun.type.left == arg.type:
-            #    return True
-            #else:
-            #    return False
-        elif isinstance(fun.type, UndeterminedType):
-            return True
-        else:
-            return False
-
-    def latex_str(self):
-        if self.contained is None:
-            return OntoType.latex_str(self)
-        else:
-            c_str = self.contained.latex_str()
-            return ensuremath(c_str + "_{?}")
+            return self.symbol + "'" * self.number
 
     def __str__(self):
-        if self.contained is None:
-            return OntoType.__str__(self)
+        return self.__repr__()
+    
+    def latex_str(self):
+        if self.number > 3:
+            return ensuremath(self.symbol + "_{" + str(self.number) + "}")
         else:
-            c_str = str(self.contained)
-            return "?" + c_str
-
-    def unify(self, other, unify_control_fun):
-        if self.contained is None:
-            return (UndeterminedType(other), other)
-        else:
-            if isinstance(other, UndeterminedType):
-                # probably inefficient but simplifying recursion -- switch perspective to the other
-                (r_b, r_a) = other.unify(self.contained, unify_control_fun)
-                # switch the order back
-                if r_a is not None:
-                    # weak unification: flag with uncertainty
-                    r_a = UndeterminedType(r_a)
-                return (r_a, r_b)
-            else:
-                (r_a, r_b) = unify_control_fun(self.contained, other)
-                if r_a is not None:
-                    r_a = UndeterminedType(r_a)
-                return (r_a, r_b)
-
-
+            return ensuremath(self.symbol + "'" * self.number)
+    
+    def _repr_latex_(self):
+        return self.latex_str()
+    
     @classmethod
     def parse(cls, s, i, parse_control_fun):
-        next = parsing.consume_char(s, i, "?")
-        if next is None:
-            return (None, i)
-        try:
-            result, next = parse_control_fun(s, next)
-        except:
-            result = None
-        if result is None:
-            # TODO, double check that this is sufficiently general...
-            # basically, aggressively consume a ? if can't find a type right after it
-            #return (UndeterminedType(), i+1)
+        (m_group, new_i) = parsing.consume_pattern(s, i, vartype_regex)
+        if m_group is None:
             return (None, i)
         else:
-            return (UndeterminedType(result), next)
+            return (VariableType(m_group), new_i)
 
     @classmethod
     def random(cls, random_ctrl_fun):
-        return UndeterminedType(random_ctrl_fun())
+        primes = random.randint(0, 5)
+        var = random.choice(("X", "Y", "Z"))
+        return VariableType(var, number=primes)
+
+    @classmethod
+    def fresh(cls):
+        #return VariableType("X", number=cls.max_id + 1)
+        return VariableType("I", number=cls.max_id + 1)
 
 
+# ensure that this gets reset on reload
+VariableType.max_id = 0
 
-# used while parsing to defer type evaluation
-undetermined_type = UndeterminedType()
-
-def determine_type(t):
-    if isinstance(t, UndeterminedType):
-        if t == undetermined_type:
-            return t
+class UnknownType(VariableType):
+    max_identifier = 0
+    def __init__(self, force_num=None):
+        if force_num is None:
+            UnknownType.max_identifier += 1
+            self.identifier = UnknownType.max_identifier
         else:
-            return t.contained
-    else:
-        return t
+            self.identifier = force_num
+        super().__init__("?", number=self.identifier)
 
+    def __str__(self):
+        return "?"
 
-class TypeConstraints(set):
-    def __init__(self, *init):
-        set.__init__(self, *init)
+    def __repr__(self):
+        return "?"
 
-    def check(self, typed_object):
-        for c in self:
-            r = c.equal(typed_object)
-            if r == False:
-                return False
-            # Maybe or True: we are ok.
-        return True
+    def latex_str(self):
+        return ensuremath("?")
 
-    def consistent(self):
-        if len(self) > 1:
-            raise NotImplementedError  #TODO: implement consistency checking
+    # def __hash__(self):
+    #     return hash("?" + str(self.identifier))
+
+    # def __eq__(self, other):
+    #     return self.identifer == other.identifier
+    
+    def copy_local(self):
+        return UnknownType(force_num=self.identifier)
+    
+    @classmethod
+    def parse(cls, s, i, parse_control_fun):
+        new_i = parsing.consume_char(s, i, "?")
+        if new_i is None:
+            return (None, i)
         else:
-            return True
+            return (UnknownType(), new_i)
 
-    def most_certain_type(self):
-        if len(self) > 1:
-            raise NotImplementedError # TODO: implement >1 constraint
-        elif len(self) == 1:
-            return next(iter(self))
-        else:
-            # no constraints: completely undetermined type
-            return undetermined_type
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        return UnknownType()
 
+    @classmethod
+    def fresh(cls):
+        return UnknownType()
 
 
 
@@ -612,18 +839,6 @@ def flexible_equal(t1, t2):
         return False
 
 
-# TODO: finish implementing this...hard
-# class VariableType(OntoType):
-#     def __init__(self, symbol):
-#         self.symbol = symbol
-#         self.name = "variable-type"
-#         self.values = set()
-#         self.left = self
-#         self.right = self
-
-#     def type_compare(self, other, assignment=None):
-#         pass
-
 
 class TypeMismatch(Exception):
     """Exception for type mismatches of all sorts."""
@@ -634,11 +849,11 @@ class TypeMismatch(Exception):
         try:
             self.type1 = self.i1.type
         except AttributeError:
-            self.type1 = undetermined_type
+            self.type1 = "?"
         try:
             self.type2 = self.i2.type
         except AttributeError:
-            self.type2 = undetermined_type
+            self.type2 = "?"
         if mode is None:
             self.mode = "unknown"
         else:
@@ -647,13 +862,13 @@ class TypeMismatch(Exception):
     def item_str(self, i, t, latex=False):
         if i is None:
             return None
-        if isinstance(i, AbstractType):
+        if isinstance(i, TypeConstructor):
             if latex:
                 return "type %s" % i.latex_str()
             else:
                 return "type %s" % repr(i)
         elif isinstance(i, str):
-            if t is None or t is undetermined_type:
+            if t is None or t is "?":
                 return "'" + i + "'"
             else:
                 if latex:
@@ -661,7 +876,7 @@ class TypeMismatch(Exception):
                 else:
                     return "'%s'/%s" % (i, repr(t))
         else:
-            if t is None or t is undetermined_type:
+            if t is None or t is "?":
                 if latex:
                     return "'" + i.latex_str() + "'"
                 else:
@@ -772,87 +987,45 @@ class TypeSystem(object):
         (r, i) = self.type_parser_recursive(s)
         return r
 
-    def fun_arg_check_bool_old(self, fun, arg):
-        return (fun.type.functional() and 
-                self.type_allowed(fun.type) and
-                self.type_allowed(arg.type) and
-                fun.type.left == arg.type)
-
     def fun_arg_check_bool(self, fun, arg):
         return (fun.type.functional() and
                 self.type_allowed(fun.type) and
                 self.type_allowed(arg.type) and
                 self.eq_check(fun.type.left, arg.type))
 
-    def local_unify_old(self, a, b):
-        """Unify two types via some scheme.  
-        If a and b are compatible, return (possibly changed) versions of a and b as a tuple.
-        If a and b are incompatible, return (None, None).
-        The default implementation simply checks strict equality.
-        """
-        if a == b:
-            # TODO: should check whether type is allowed here?
-            return (a,b)
-        else:
-            return (None, None)
-
-    def unify_old(self, a, b):
-        if a.functional():
-            if b.functional():
-                left_a, left_b = self.unify(a.left, b.left)
-                right_a, right_b = self.unify(a.right, b.right)
-                if left_a is None or right_a is None:
-                    return (None, None)
-                result_a = FunType(left_a, right_a)
-                result_b = FunType(left_b, right_b)
-                return (result_a, result_b)
-        # at least one of the two is not functional
-        # this will handle undetermined_type appropriately
-        return self.local_unify(a, b)
-
-    def local_unify(self, a, b):
-        return self.unify(a,b)
-
     def check_type(self, t):
         return (t in self.atomics or t.__class__ in self.nonatomics)
 
     def unify(self, a, b):
         if not (self.check_type(a) and self.check_type(b)):
-            return (None, None)
-        (attempt1_a, attempt1_b) = a.unify(b, self.unify)
-        # try in the other order, reverse results
-        (attempt2_b, attempt2_a) = b.unify(a, self.unify)
-        if attempt1_a is None:
-            if attempt2_a is None:
-                return (None, None)
-            else:
-                return (attempt2_a, attempt2_b)
-        else:
-            if attempt2_a is None:
-                return (attempt1_a, attempt1_b)
-            else:
-                # TODO: both attempts succeeded, what to do??
-                if attempt1_a == attempt2_a and attempt1_b == attempt2_b:
-                    return (attempt1_a, attempt1_b)
-                else:
-                    raise ValueError("Does this get raised??")
+            return None
+        (result, r_assign) = a.unify(b, self.unify, None)
+        return result
 
-    def local_unify_fa(self, fun, arg):
-        return self.unify_fa(fun, arg)
+    def unify_ar(self, arg, ret):
+        return FunType(arg, ret)
+
+    def unify_fr(self, fun, ret):
+        if fun.functional():
+            r = self.unify(fun.right, ret)
+            if r is None:
+                return (None, None, None)
+            else:
+                return (fun, fun.left, r)
+        else:
+            return (None, None, None)
 
     def unify_fa(self, fun, arg):
         """Try unifying the input type of the function with the argument's type.
         If it succeeds, it returns a (possibly changed) tuple of the function's type, the argument's type, and the output type.
-        If this fails, returns (None, None, None).
-        The default implementation tries unification with local_unify and reports the result."""
-        #r = self.fun_arg_check_bool(fun, arg)
-        # TODO: this doesn't handle undetermined function types....
+        If this fails, returns (None, None, None)."""
+
         if fun.functional():
-            a,b = self.unify(fun.left, arg)
+            a = self.unify(fun.left, arg)
             if a is None:
                 return (None, None, None)
             else:
-                return (FunType(a, fun.right), b, fun.right)
+                return (fun, a, fun.right)
         else:
             return (None, None, None)
 
@@ -862,8 +1035,8 @@ class TypeSystem(object):
 
     def eq_check(self, a, b):
         #return (a == b)
-        r_a, r_b = self.unify(a,b)
-        return (r_a is not None)
+        result = self.unify(a,b)
+        return (result is not None)
 
     def type_allowed(self, a):
          return True
@@ -892,29 +1065,33 @@ class TypeSystem(object):
     def _repr_latex_(self):
         return self.latex_str()
 
-    def random_type(self, max_depth, p_terminate_early, undetermined=False):
+    def random_type(self, max_depth, p_terminate_early):
         term = random.random()
         #print(max_depth)
         if max_depth == 0 or term < p_terminate_early:
             #print(term, p_terminate_early, term > p_terminate_early)
             # choose an atomic type
             t = random.choice(list(self.atomics))
-            if not undetermined:
-                while isinstance(t, UndeterminedType):
-                    t = random.choice(list(self.atomics))
             return t
         else:
             # choose a non-atomic type and generate a random instantiation of it
             ctrl_fun = lambda *a: self.random_type(max_depth - 1, p_terminate_early)
             t_class = random.choice(list(self.nonatomics))
-            if not undetermined:
-                while t_class == UndeterminedType:
-                    t_class = random.choice(list(self.nonatomics))
             return t_class.random(ctrl_fun)
 
     def repr_check(self, t):
         return (t == self.type_parser(repr(t)))
 
+    def repr_unify_check(self, t):
+        result = self.unify(t, self.type_parser(repr(t)))
+        return (result is not None)
+
+    def unify_check(self, t1, t2):
+        result = self.unify(t1, t2)
+        return (result is not None)
+
+    def parse_unify_check(self, t1, t2):
+        return self.unify_check(self.type_parser(t1), self.type_parser(t2))
 
 class StrictTypeSystem(TypeSystem):
     def __init__(self, atomics, nonatomics):
@@ -938,242 +1115,289 @@ class StrictTypeSystem(TypeSystem):
         if not self.fun_arg_check_bool(fun, arg):
             raise TypeMismatch(fun.type, arg.type, self.raisemsg)
 
-class SimpleUnderTypeSystem(TypeSystem):
-    """This type system allows a type to be completely undetermined, or one of the regular atomic types"""
-    def __init__(self, atomics=None, nonatomics=None):
-        super().__init__(name="simple undetermined", atomics=atomics, nonatomics=nonatomics)
-        self.add_atomic(undetermined_type)
 
-    def fun_arg_check_bool(self, fun, arg):
-        # this was the first logic for undetermined types that I tries: no inference really.
-        return fun.type == undetermined_type or arg.type == undetermined_type or super().fun_arg_check_bool(fun, arg)
 
-    def local_unify(self, a, b):
-        r = a.equal(b)
-        if r == True:
-            return (a, b)
-        elif r == False:
-            return (None, None)
-        else: #Maybe
-            if a == undetermined_type:
-                if b == undetermined_type:
-                    return (a, b)
-                else:
-                    return (undetermined_type, b)
-            else:
-                if b == undetermined_type:
-                    return (a, undetermined_type)
-                else:
-                    return (a,b)
 
-    def eq_check(self, a, b):
-        return flexible_equal(a,b)
+def injective(d):
+    """Is `d` an injective assignment?  I.e. does it map any keys onto the same value?"""
+    v = d.values()
+    v_set = set(v)
+    return len(v) == len(v_set)
 
-class UnderTypeSystem(TypeSystem):
-    """Allows for rich undetermined types. TODO: expand"""
-    def __init__(self, atomics=None, nonatomics=None):
-        super().__init__("undetermined", atomics=atomics, nonatomics=nonatomics)
-        self.add_atomic(undetermined_type)
-        self.add_nonatomic(UndeterminedType)
+def invert(d):
+    i = dict()
+    for k in d.keys():
+        if d[k] in i:
+            raise Exception("can't invert non-injective dict")
+        i[d[k]] = k
+    return i
 
-    def fun_arg_check_bool(self, fun, arg):
-        if fun.type.functional():
-            return flexible_equal(fun.type.left, arg.type)
-            # TODO: this logic is not fully general -- doesn't cover embedded undetermined types in arg or fun.left
-            #if isinstance(arg.type, UndeterminedType) or isinstance(fun.type.left, UndeterminedType) or fun.type.left == arg.type:
-            #    return True
-            #else:
-            #    return False
-        elif isinstance(fun.type, UndeterminedType):
+def strengthens(d):
+    """Check for any strengthening assignments in `d`.  A strengthening assignment is one that maps a variable to a non-variable."""
+    for key in d:
+        if not isinstance(d[key], VariableType):
             return True
-        else:
-            return False
+    return False
 
-    def fun_arg_check_types_bool(self, ftype, atype):
-        if ftype.functional():
-            return flexible_equal(ftype.left, atype)
+def safe_vars(typ, var_list):
+    """Returns a mapping from type variables in `typ` to variable names that are safe from collision from `var_list`."""
+    unsafe = typ.bound_type_vars()
+    base_nums = dict()
+    result = dict()
+    for base in var_list:
+        if base in unsafe:
+            base_letter = base.symbol[0]
+            if base_letter not in base_nums:
+                base_nums[base_letter] = 0
+            # TODO this is not very efficient
+            vt = VariableType(base_letter, number=base_nums[base_letter])
+            while vt in unsafe:
+                base_nums[base_letter] += 1
+                vt = VariableType(base_letter, number=base_nums[base_letter])
+            result[base] = vt
+            unsafe = unsafe | {vt}
         else:
-            return False
+            unsafe = unsafe | {base}
+    return result
 
-    # a, a   -> a, a
-    # a, ?a  -> a, a
-    # a, ?   -> a, a
-    # ?a, a  -> a, a
-    # ?a, ?a -> a, a
-    # ?a, ?  -> a, a
-    # ?, a   -> a, a
-    # ?, ?a  -> a, a
-    # ?, ?   -> ?, ?
-    def local_unify_strong(self, a, b):
-        r = a.equal(b)
-        if r == True:
-            return (a, b)
-        elif r == False:
+def vars_in_env(type_env):
+    unsafe = set()
+    for k in type_env:
+        unsafe = unsafe | type_env[k].bound_type_vars()
+    return unsafe
+
+def vars_in_mapping(type_mapping):
+    result = set()
+    for m in type_mapping:
+        result = result | {m}
+        result = result | type_mapping[m].bound_type_vars()
+    return result
+
+def safe_var_in_set(unsafe, internal=False):
+    n = 0
+    if internal:
+        symbol = "I"
+    else:
+        symbol = "X"
+    vt = VariableType(symbol, n)
+    while vt in unsafe:
+        n += 1
+        vt = VariableType(symbol, n)
+    #print("safe var: ", vt, unsafe)
+    return vt
+
+def make_safe(typ1, typ2, unsafe=None):
+    """Return a version of typ1 that is completely safe w.r.t. variables in typ2.
+
+    Note that this will work in either order to avoid variable name collisions, but preserves variable names in typ2 over typ1.
+    """
+    if unsafe is None:
+        unsafe = list()
+    else:
+        unsafe = list(unsafe)
+    assignment = safe_vars(typ2, list(typ1.bound_type_vars()) + unsafe)
+    #return (typ1.sub_type_vars(assignment), invert(assignment))
+    return typ1.sub_type_vars(assignment)
+
+def compact_type_set(types, unsafe=None):
+    if unsafe is None:
+        unsafe = set()
+    remap = list()
+    keep = set()
+    mapping = dict()
+    for t in types:
+        if t.number > 3 or t.symbol == "I" or t.symbol == "?":
+            remap.append(t)
+        else:
+            keep.add(t)
+    remap.sort(key=VariableType.key_str) # for deterministic behavior
+    for t in remap:
+        m = safe_var_in_set(keep | unsafe)
+        assert t not in m
+        mapping[t] = m
+        keep.add(m)
+    return mapping
+
+def freshen_type_set(types, unsafe=None):
+    if unsafe is None:
+        unsafe = set()
+    mapping = dict()
+    for v in types:
+        mapping[v] = VariableType.fresh()
+    return mapping
+
+class UnificationResult(object):
+    def __init__(self, principal, t1, t2, mapping):
+        self.principal = principal
+        self.t1 = t1
+        self.t2 = t2
+        self.mapping = mapping
+        self.trivial = injective(mapping) and not strengthens(mapping)
+
+    def _repr_latex_(self):
+        s = "<table>"
+        s += "<tr><td>Principal type:&nbsp;&nbsp; </td><td>%s</td></tr>" % self.principal.latex_str()
+        s += "<tr><td>Inputs: </td><td>%s and %s</td></tr>" % (self.t1.latex_str(), self.t2.latex_str())
+        s += "<tr><td>Mapping: </td><td>%s</td></tr>" % utils.dict_latex_repr(self.mapping)
+        s += "</table>"
+        return s
+
+
+class PolyTypeSystem(TypeSystem):
+    def __init__(self, atomics=None, nonatomics=None):
+        super().__init__("polymorphic", atomics=atomics, nonatomics=nonatomics)
+        self.add_nonatomic(VariableType)
+        self.add_nonatomic(UnknownType)
+
+    def unify(self, t1, t2, assignment=None):
+        #from lamb import meta
+        #from lamb.meta import logger
+        #logger.warning("Unify(%s, %s)" % (t1,t2))
+        assignment = dict()
+        result = self.unify_details(t1, t2, assignment=assignment)
+        if result is None:
+            return None
+        else:
+            return result.principal
+
+    @classmethod
+    def occurs_check(self, t1, t2):
+        if isinstance(t1, VariableType) and not isinstance(t2, VariableType):
+            return t1 in t2.bound_type_vars()
+        if isinstance(t2, VariableType) and not isinstance(t1, VariableType):
+            return t2 in t1.bound_type_vars()
+        return False
+
+    def unify_details(self, t1, t2, assignment=None):
+        if assignment is None:
+            assignment = dict()
+        else:
+            assignment = assignment.copy() # ugh
+        #t1safe = make_safe(t1, t2, set(assignment.keys()) | set(assignment.values()))
+        # if self.occurs_check(t1, t2) or self.occurs_check(t2, t1):
+        #     #print("occurs check fail: ", t1, t2)
+        #     return None
+        (result, r_assign) = self.unify_r(t1, t2, assignment)
+        if result is None:
+            return None
+        # a principal type has been found, but may not be fully represented by result.
+        # enforce the mapping everywhere in result.
+        l = list()
+        for i in range(len(result)):
+            l.append(result[i].sub_type_vars(r_assign, trans_closure=True))
+        #l.append(result[-1])
+        #print(l)
+        result = result.copy_local(*l)
+        return UnificationResult(result, t1, t2, r_assign)
+
+    def unify_r(self, t1, t2, assignment):
+        # nearly the same as for strict types: just enforces that if either type is a variable, we call
+        # that type's unify function (since only it knows what to do with variables.)
+        if self.occurs_check(t1, t2):
+            from lamb import meta
+            from lamb.meta import logger
+            logger.error("Failed occurs check: can't unify recursive types %s and %s" % (t1,t2))
             return (None, None)
-        else: #Maybe
-            if a == undetermined_type:
-                if b == undetermined_type:
-                    return (a, b)
-                else:
-                    d = determine_type(b)
-                    return (d, d)
+        if isinstance(t1, VariableType):
+            if isinstance(t2, VariableType):
+                return t2.unify(t1, self.unify_r, assignment)
             else:
-                d = determine_type(a)
-                return (a,a)
-
-    # a, a   -> a, a
-    # a, ?a  -> a, ?a
-    # a, ?   -> a, ?a
-    # ?a, a  -> ?a, a
-    # ?a, ?a -> ?a, ?a
-    # ?a, ?  -> ?a, ?a
-    # ?, a   -> ?a, a
-    # ?, ?a  -> ?a, ?a
-    # ?, ?   -> ?, ?
-    def local_unify_weak(self, a, b):
-        r = a.equal(b)
-        if r == True:
-            return (a, b)
-        elif r == False:
-            return (None, None)
-        else: #Maybe
-            if a == undetermined_type:
-                if b == undetermined_type:
-                    return (a, b)
-                else:
-                    return (UndeterminedType(b), b)
-            else:
-                if b == undetermined_type:
-                    return (a, UndeterminedType(a))
-                else:
-                    return (a,b)
-
-    def local_unify_old(self, a, b):
-        return self.local_unify_weak(a,b)
-
-    def unify_old(self, a, b):
-        if a.functional():
-            if b.functional():
-                left_a, left_b = self.unify(a.left, b.left)
-                right_a, right_b = self.unify(a.right, b.right)
-                if left_a is None or right_a is None:
-                    return (None, None)
-                result_a = FunType(left_a, right_a)
-                result_b = FunType(left_b, right_b)
-                if left_a.undetermined or right_a.undetermined:
-                    result_a = UndeterminedType(result_a)
-                if left_b.undetermined or right_b.undetermined:
-                    result_b = UndeterminedType(result_b)
-                return (result_a, result_b)
-        # at least one of the two is not functional
-        # this will handle undetermined_type appropriately
-        return self.local_unify(a, b)
-
-
-
-
-
-    # implements the following scheme for resolving uncertainty:
-    # <?,y>,  ?  -> <?,y>, ?, y
-    # <?x,y>, ?  -> <x,y>, x, y
-    # <x,y>,  ?  -> <x,y>, x, y
-    # <?,y>,  ?x -> <x,y>, x, y
-    # <?x,y>, ?x -> <x,y>, x, y
-    # <x,y>,  ?x -> <x,y>, x, y
-    # <?,y>,  x  -> <x,y>, x, y
-    # <?x,y>, x  -> <x,y>, x, y
-    # <x,y>,  x  -> <x,y>, x, y
-    # ?, ?       -> <?,?>, ?, ?
-    # ?, ?x      -> <x,?>, x, ?
-    # ?, x       -> <x,?>, x, ?
-    # always collapse recursive uncertainty
-    def local_unify_fa_strong(self, fun, arg):
-        if fun.functional():
-            new_f_left, new_a = self.local_unify_strong(fun.left, arg)
-            if new_f_left is None:
-                return (None, None, None)
-            new_out = fun.right
-            new_f = FunType(new_f_left, new_out)
-            return (new_f, new_a, new_out)
-        elif fun == undetermined_type:
-            new_a = determine_type(arg)
-            new_f = FunType(new_a, undetermined_type)
-            return (new_f, new_a, undetermined_type)
+                return t1.unify(t2, self.unify_r, assignment)            
+        elif isinstance(t2, VariableType):
+            return t2.unify(t1, self.unify_r, assignment)
         else:
+            (result, r_assign) = t1.unify(t2, self.unify_r, assignment)
+            if result is None:
+                return (None, None)
+            return (result, r_assign)
+
+    def unify_fr(self, fun, ret, assignment=None):
+        if assignment is None:
+            assignment = dict()
+        #input_var = safe_var_in_set(ret.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env), internal=False)
+        input_var = VariableType.fresh()
+        hyp_fun = FunType(input_var, ret)
+        #result = self.unify_details(fun, hyp_fun)
+        result = self.unify_details(hyp_fun, fun, assignment=assignment)
+        if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
-
-
-    # implements the following scheme for resolving uncertainty:
-    # <?,y>,  ?  -> <?,y>, ?, ?y
-    # <?x,y>, ?  -> <?x,y>, ?x, ?y
-    # <x,y>,  ?  -> <x,y>, ?x, ?y
-    # <?,y>,  ?x -> <?x,y>, ?x, ?y
-    # <?x,y>, ?x -> <?x,y>, ?x, ?y
-    # <x,y>,  ?x -> <x,y>, ?x, ?y
-    # <?,y>,  x  -> <?x,y>, x, ?y
-    # <?x,y>, x  -> <?x,y>, x, ?y
-    # <x,y>,  x  -> <x,y>, x, y
-    # ?, ?       -> ?<?,?>, ?, ?
-    # ?, ?x      -> ?<?x,?>, ?x, ?
-    # ?, x       -> ?<x,?>, x, ?
-    # always preserve recursive uncertainty (TODO: what is best in practice?)
-    # output is uncertain if there is uncertainty in x, y, or the function's type.
-    def local_unify_fa_weak(self, fun, arg):
-        if fun.functional():
-            new_f_left, new_a = self.local_unify_weak(fun.left, arg)
-            if new_f_left is None:
-                return (None, None, None)
-            if (isinstance(fun, UndeterminedType) or 
-                        isinstance(fun.left, UndeterminedType) or
-                        isinstance(fun.right, UndeterminedType) or
-                        isinstance(arg, UndeterminedType)):
-                new_out = UndeterminedType(fun.right)
-            else:
-                new_out = fun.right
-            new_f = FunType(new_f_left, fun.right)
-            if isinstance(fun, UndeterminedType):
-                new_f = UndeterminedType(new_f)
-        elif fun == undetermined_type:
-            new_a = arg
-            new_f = UndeterminedType(FunType(new_a, undetermined_type))
-            new_out = undetermined_type
         else:
+            # if result.trivial: # no need to introduce spurious alpha renaming
+            #     return (fun, fun.left, fun.right)
+            # else:
+            return (result.principal, result.principal.left, result.principal.right)
+
+
+    def unify_fa(self, fun, arg, assignment=None):
+        """Try unifying the input type of the function with the argument's type.
+        If it succeeds, it returns a (possibly changed) tuple of the function's type, the argument's type, and the output type.
+        If this fails, returns (None, None, None)."""
+
+        if assignment is None:
+            assignment = dict()
+        output_var = VariableType.fresh()
+        hyp_fun = FunType(arg, output_var)
+        result = self.unify_details(hyp_fun, fun, assignment=assignment)
+        if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
-        return (new_f, new_a, new_out)
-
-    def local_unify_fa(self, f, a):
-        return self.local_unify_fa_weak(f,a)
-
-    def unify_fa_weak(self, fun, arg):
-        """The main distinguishing property of this is that the type of the whole inherits some
-        uncertainty from any uncertain parts."""
-        if fun.functional():
-            new_f_left, new_a = self.unify(fun.left, arg)
-            if new_f_left is None:
-                return (None, None, None)
-            if (isinstance(fun, UndeterminedType) or 
-                        isinstance(fun.left, UndeterminedType) or
-                        isinstance(fun.right, UndeterminedType) or
-                        isinstance(arg, UndeterminedType)):
-                new_out = UndeterminedType(fun.right)
-            else:
-                new_out = fun.right
-            new_f = FunType(new_f_left, fun.right)
-            if isinstance(fun, UndeterminedType):
-                new_f = UndeterminedType(new_f)
-        elif fun == undetermined_type:
-            new_a = arg
-            new_f = UndeterminedType(FunType(new_a, undetermined_type))
-            new_out = undetermined_type
         else:
-            return (None, None, None)
-        return (new_f, new_a, new_out)
+            return (result.principal, result.principal.left, result.principal.right)
 
-    def unify_fa(self, f, a):
-        return self.unify_fa_weak(f, a)
+    # There's really got to be a better way to do this...
+    def alpha_equiv(self, t1, t2):
+        assignment = dict()
+        t1safe = make_safe(t1, t2, set(assignment.keys()) | set(assignment.values()))
+        (result, r_assign) = self.unify_r(t1safe, t2, assignment)
+        return injective(r_assign) and not strengthens(r_assign)
 
-    def eq_check(self, a, b):
-        return flexible_equal(a,b)
+    def compact_type_vars(self, t1, unsafe=None):
+        types = t1.bound_type_vars()
+        mapping = compact_type_set(types, unsafe)
+        return t1.sub_type_vars(mapping)
+
+
+    def unify_sym_check(self, t1, t2):
+        r1 = self.unify(t1, t2)
+        r2 = self.unify(t2, t1)
+        if r1 is None and r2 is None:
+            return True
+        if (r1 is None or r2 is None):
+            return False
+        #print("equiv: ", r1, r2)
+        return self.alpha_equiv(r1, r2)
+
+
+    def random_type(self, max_depth, p_terminate_early, allow_variables=True):
+        term = random.random()
+        #print(max_depth)
+        if max_depth == 0 or term < p_terminate_early:
+            #print(term, p_terminate_early, term > p_terminate_early)
+            # choose an atomic type
+            t = random.choice(list(self.atomics))
+            return t
+        else:
+            # choose a non-atomic type and generate a random instantiation of it
+            ctrl_fun = lambda *a: self.random_type(max_depth - 1, p_terminate_early, allow_variables)
+            if allow_variables:
+                t_class = random.choice(list(self.nonatomics - {UnknownType}))
+            else:
+                t_class = random.choice(list(self.nonatomics - {VariableType, UnknownType}))
+            return t_class.random(ctrl_fun)
+
+    def random_variable_type(self, max_depth, p_terminate_early):
+        """Use only variable types in place of atomic types"""
+        term = random.random()
+        #print(max_depth)
+        ctrl_fun = lambda *a: self.random_variable_type(max_depth - 1, p_terminate_early)
+        if max_depth == 0 or term < p_terminate_early:
+            #print(term, p_terminate_early, term > p_terminate_early)
+            # choose a variable type
+            t = VariableType.random(ctrl_fun)
+            return t
+        else:
+            # choose a non-variable type and generate a random instantiation of it
+            t_class = random.choice(list(self.nonatomics - {VariableType}))
+            return t_class.random(ctrl_fun)
 
 class TypeParseError(Exception):
     def __init__(self, msg, s, i):
@@ -1253,15 +1477,16 @@ def type_parser(s):
 
 
 def setup_type_constants():
-    global type_e, type_t, type_n, type_property, type_transitive, basic_system, under_system
+    global type_e, type_t, type_n, type_property, type_transitive, basic_system, poly_system
 
-    type_e = OntoType("e", SimpleInfiniteSet("c"))
-    type_t = OntoType("t", OntoSet(0,[0,1]))
-    type_n = OntoType("n", SimpleIntegerSet())
+    type_e = BasicType("e", SimpleInfiniteSet("c"))
+    type_t = BasicType("t", OntoSet(0,[0,1]))
+    type_n = BasicType("n", SimpleIntegerSet())
     type_property = FunType(type_e, type_t)
     type_transitive = FunType(type_e, type_property)
     basic_system = TypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType})
-    under_system = UnderTypeSystem(atomics={type_e, type_t, type_n, undetermined_type}, nonatomics={FunType, TupleType, UndeterminedType, SetType})
+    #under_system = UnderTypeSystem(atomics={type_e, type_t, type_n, undetermined_type}, nonatomics={FunType, TupleType, UndeterminedType, SetType})
+    poly_system = PolyTypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType, SetType})
 
 setup_type_constants()
 
@@ -1271,6 +1496,46 @@ class TypeTest(unittest.TestCase):
     def setUp(self):
         setup_type_constants()
 
-    def test_parser(self):
+    def test_parser_simple(self):
         for i in range(0, 1000):
-            self.assertTrue(under_system.repr_check(under_system.random_type(5, 0.2, True)))
+            self.assertTrue(basic_system.repr_check(basic_system.random_type(5, 0.2)))
+
+    def test_parser_poly(self):
+        for i in range(0, 1000):
+            self.assertTrue(poly_system.repr_check(poly_system.random_type(5, 0.2)))
+
+    def test_parser_poly(self):
+        for i in range(0, 1000):
+            self.assertTrue(poly_system.repr_unify_check(poly_system.random_type(5, 0.2)))
+
+    def test_parser_poly_varsonly(self):
+        for i in range(0, 1000):
+            self.assertTrue(poly_system.repr_unify_check(poly_system.random_variable_type(5, 0.2)))
+
+    def test_symmetry(self):
+        """Ensure that unify is symmetric for variable types."""
+        for depth in range (1,5):
+            for i in range(0, 200):
+                t1 = poly_system.random_variable_type(depth, 0.2)
+                t2 = poly_system.random_variable_type(depth, 0.2)
+                #print(t1, t2)
+                self.assertTrue(poly_system.unify_sym_check(t1, t2))
+
+
+    def test_var_cases(self):
+        self.assertTrue(poly_system.parse_unify_check("e", "e"))
+        self.assertTrue(poly_system.parse_unify_check("<e,t>", "<e,t>"))
+        self.assertTrue(poly_system.parse_unify_check("X", "X"))
+        self.assertTrue(poly_system.parse_unify_check("X", "Y"))
+        self.assertTrue(poly_system.parse_unify_check("<X,Y>", "<Y,Z>"))
+        self.assertTrue(poly_system.parse_unify_check("<X,X>", "<Y,Z>"))
+        self.assertTrue(poly_system.parse_unify_check("<<X,X>,X>", "<<e,Y>,Z>"))
+        self.assertTrue(poly_system.parse_unify_check("<<<e,X>,Y>,Y>", "<<<X,Z>,Z>,e>"))
+        self.assertTrue(poly_system.parse_unify_check("<<X,Y>,<Z,<Z',Z''>>>", "<<X',Y'>,<Y',Z'''>>"))
+
+        self.assertFalse(poly_system.parse_unify_check("e", "t"))
+        self.assertFalse(poly_system.parse_unify_check("<e,t>", "<e,e>"))
+        self.assertFalse(poly_system.parse_unify_check("<<e,X>,X>", "<<Y,Y>,t>"))
+        self.assertFalse(poly_system.parse_unify_check("<<X,X>,<Y,Y>>", "<<e,Z>,<Z,t>>"))
+
+
