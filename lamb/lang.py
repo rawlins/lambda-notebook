@@ -1675,9 +1675,9 @@ def binary_factory_curried(meta_fun, name, reduce=True, commutative=False):
 class PlaceholderTerm(meta.TypedTerm):
     """This class represents a placeholder for some denotation  that is unknown or not yet composed.  The primary use
     is in incrementally doing top-down composition."""
-    def __init__(self, varname, placeholder_for, system=None):
+    def __init__(self, varname, placeholder_for, system=None, assignment=None, type_check=True):
         #meta.TypedTerm.__init__(self, varname, types.VariableType("X"))
-        meta.TypedTerm.__init__(self, varname, types.UnknownType())
+        meta.TypedTerm.__init__(self, varname, types.UnknownType(), assignment=assignment, type_check=type_check)
         self.let = True
         self.placeholder_for = placeholder_for
         if system is None:
@@ -1727,8 +1727,8 @@ class PlaceholderTerm(meta.TypedTerm):
         #result = PlaceholderTerm(self.op, self.placeholder_for, system=self.system)
         return self.local_copy(self.op)
 
-    def local_copy(self, op):
-        result = PlaceholderTerm(op, self.placeholder_for, system=self.system)
+    def local_copy(self, op, type_check=True):
+        result = PlaceholderTerm(op, self.placeholder_for, system=self.system, type_check=type_check)
         result.let = self.let
         result.type = self.type # type may have changed, e.g. via alphabetic conversion to a fresh type
         #print("self: ", repr(meta.TypedTerm.local_copy(self, self.op)))
