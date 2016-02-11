@@ -9,8 +9,9 @@ try:
 	from notebook import notebookapp
 	import lamb
 except ImportError:
-	print("You don't seem to have IPython installed, or the dependencies of ")
-	print("ipython notebook are not met, or the lambda notebook library can't be found.")
+	print("You don't seem to have IPython/Jupyter installed, or the dependencies of ")
+	print("Jupyter notebook are not met, or the lambda notebook library can't be found.")
+	print("Have you tried running `pip3 install jupyter` at the command line?")
 	raise
 
 def launch_lambda_notebook(args):
