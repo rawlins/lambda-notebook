@@ -1,4 +1,4 @@
-import os, os.path, shutil, json
+import os, os.path, shutil, json, sys
 
 try:
     import IPython
@@ -101,22 +101,31 @@ kernelspec_str = """{
  "language": "python"
 }"""
 
-kernelspec_json = {
-    "argv": ["python3", "-m", "IPython.kernel", "-f", "{connection_file}"],
-    "display_name": "Lambda Notebook (Python 3)",
-    "language": "python"
-}
+def build_json():
+    if sys.version_info[0] != 3:
+        raise Exception("Could not install lambda notebook kernel from non-python 3, please run with python 3.")
+    executable = sys.executable
+    kernelspec_json = {
+        "argv": [sys.executable, "-m", "IPython.kernel", "-f", "{connection_file}"],
+        "display_name": "Lambda Notebook (Python 3)",
+        "language": "python"
+    }
+    return kernelspec_json
 
 def install_kernelspec(kernel_dir, lib_dir):
     if lib_dir:
         # TODO: won't override an installed copy of lamb in site-packages (e.g. in the app), fix this
-        injection_path_opt = "--IPKernelApp.exec_lines=[\"import sys; sys.path.append(\\\"%s\\\"); import lamb.lnsetup; lamb.lnsetup.ipython_setup()\"]" % lib_dir
+        # the following line is to deal with a messy escaping situation for windows paths
+        # this may fail horribly on unix paths with backslashes, but I don't have a better workaround for now
+        lib_dir = lib_dir.replace("\\", "\\\\\\\\")
+        injection_path_opt = "--IPKernelApp.exec_lines=[\"import sys\",\"sys.path.append(\\\"%s\\\")\", \"import lamb.lnsetup\", \"lamb.lnsetup.ipython_setup()\"]" % lib_dir
     else:
-        injection_path_opt = "--IPKernelApp.exec_lines=[\"import lamb.lnsetup; lamb.lnsetup.ipython_setup()\"]"
+        injection_path_opt = "--IPKernelApp.exec_lines=[\"import lamb.lnsetup\", \"lamb.lnsetup.ipython_setup()\"]"
 
-    k_json = kernelspec_json.copy()
+    k_json = build_json()
     k_json["argv"].append(injection_path_opt)
     k_json_filename = os.path.join(kernel_dir, "kernel.json")
+    #print(k_json)
     with open(k_json_filename, 'w') as k_json_file:
         json.dump(k_json, k_json_file, sort_keys=True, indent=4)
 
@@ -124,13 +133,13 @@ def install_kernelspec(kernel_dir, lib_dir):
 
 def launch_lambda_console(args, lib_dir=None, kernel_dir=None):
     if kernel_dir is None:
-        kernel_dir = os.path.join(lib_dir, "kernel/lambda-notebook")
+        kernel_dir = os.path.join(lib_dir, "kernel", "lambda-notebook")
     install_kernelspec(kernel_dir, lib_dir)
 
     c = Config()
     # no idea why this doesn't work, but it doesn't...
     #c.IPythonConsoleApp.kernel_name="lambda-notebook"
-    c.InteractiveShellApp.exec_lines=["import sys; sys.path.append(\"%s\"); import lamb.lnsetup; lamb.lnsetup.ipython_setup()" % lib_dir]
+    c.InteractiveShellApp.exec_lines=["import sys; sys.path.append(r\"%s\"); import lamb.lnsetup; lamb.lnsetup.ipython_setup()" % lib_dir]
 
     app = TerminalIPythonApp.instance(config=c)
     app.initialize(argv=args[1:])
@@ -142,7 +151,7 @@ def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=Non
     # that recipe is for a much earlier version of IPython, so the method is quite a bit different now
 
     if kernel_dir is None:
-        kernel_dir = os.path.join(lib_dir, "kernel/lambda-notebook")
+        kernel_dir = os.path.join(lib_dir, "kernel", "lambda-notebook")
     
     # ensure that the lambda-notebook kernelspec is installed
     install_kernelspec(kernel_dir, lib_dir)
