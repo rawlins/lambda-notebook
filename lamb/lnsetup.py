@@ -95,7 +95,7 @@ def install_notebooks(nb_path, package_nb_path, force=False):
             raise shutil.Error(errors)
 
 kernelspec_str = """{
- "argv": ["python3", "-m", "IPython.kernel",
+ "argv": ["python3", "-m", "ipykernel",
           "-f", "{connection_file}", "%s"],
  "display_name": "Lambda Notebook (Python 3)",
  "language": "python"
@@ -106,7 +106,7 @@ def build_json():
         raise Exception("Could not install lambda notebook kernel from non-python 3, please run with python 3.")
     executable = sys.executable
     kernelspec_json = {
-        "argv": [sys.executable, "-m", "IPython.kernel", "-f", "{connection_file}"],
+        "argv": [sys.executable, "-m", "ipykernel", "-f", "{connection_file}"],
         "display_name": "Lambda Notebook (Python 3)",
         "language": "python"
     }
