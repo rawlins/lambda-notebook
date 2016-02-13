@@ -112,7 +112,10 @@ def build_json():
     }
     return kernelspec_json
 
-def install_kernelspec(kernel_dir, lib_dir):
+def install_kernelspec(lib_dir, kernel_dir=None):
+    if kernel_dir is None:
+        kernel_dir = os.path.join(lib_dir, "kernel", "lambda-notebook")
+
     if lib_dir:
         # TODO: won't override an installed copy of lamb in site-packages (e.g. in the app), fix this
         # the following line is to deal with a messy escaping situation for windows paths
@@ -132,9 +135,7 @@ def install_kernelspec(kernel_dir, lib_dir):
     kernelspec.install_kernel_spec(kernel_dir, user=True, replace=True)
 
 def launch_lambda_console(args, lib_dir=None, kernel_dir=None):
-    if kernel_dir is None:
-        kernel_dir = os.path.join(lib_dir, "kernel", "lambda-notebook")
-    install_kernelspec(kernel_dir, lib_dir)
+    install_kernelspec(lib_dir, kernel_dir)
 
     c = Config()
     # no idea why this doesn't work, but it doesn't...
@@ -150,15 +151,14 @@ def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=Non
     # originally based on branded notebook recipe here: https://gist.github.com/timo/1497850
     # that recipe is for a much earlier version of IPython, so the method is quite a bit different now
 
-    if kernel_dir is None:
-        kernel_dir = os.path.join(lib_dir, "kernel", "lambda-notebook")
     
     # ensure that the lambda-notebook kernelspec is installed
-    install_kernelspec(kernel_dir, lib_dir)
+    install_kernelspec(lib_dir, kernel_dir)
 
     c = Config()
 
     if nb_path is None:
+        # TODO this needs to be fixed for windows...
         nb_path = os.path.expanduser("~/Documents/lambda_notebook/")
         if nb_path[0] == "~":
             raise Error("Unable to locate home directory")
@@ -182,4 +182,10 @@ def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=Non
         pass
     finally:
         pass
+
+def version_str():
+    s = "Lambda notebook version " + lamb.__version__
+    if not lamb.__release__:
+        s += " (development version)"
+    return s
 
