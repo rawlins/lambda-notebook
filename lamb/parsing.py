@@ -145,7 +145,7 @@ def parse_equality_line(s, env=None, transforms=None):
     # right side should be typed expr no matter what
 
     left_s = l[0].strip()
-    match = re.match(r'^\|\|([a-zA-Z0-9]+)\|\|$', left_s)
+    match = re.match(r'^\|\|([a-zA-Z _]+[a-zA-Z0-9 _]*)\|\|$', left_s)
     if match:
         default = a_ctl.default()
         db_env = default.modify(var_env)
@@ -164,7 +164,9 @@ def parse_equality_line(s, env=None, transforms=None):
         #print("env is " + str(var_env))
 
         # lexical assignment
-        lex_name = match.group(1)
+        lex_name = match.group(1).replace(" ", "_")
+        if lex_name != match.group(1):
+            meta.logger.info("Exporting item ||%s|| to python variable `%s`." % (match.group(1), lex_name))
         if transform:
             right_side = transform(right_side)
 
