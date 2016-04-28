@@ -6,7 +6,7 @@ from lamb.utils import *
 from lamb.types import type_e, type_t, type_property, TypeMismatch
 from lamb.meta import  TypedExpr, ensuremath, MiniLatex
 from lamb import tree_mini
-from lamb.tree_mini import Tree
+Tree = utils.get_tree_class()
 
 
 # There are three main kinds of things defined in here: Composables, CompositionSystems, and CompositionOps.
@@ -429,8 +429,8 @@ class CompositionTree(Tree, Composable):
         """Inserts or replaces the content of this node with a PlaceholderTerm.  If override is set, this will overwrite whatever might be here,
         unless that content itself is set to have its "constant" variable be True.  For example, a lexical item (Item) will have this set."""
         if self.denotations is None or (override and not self.constant):
-            if isinstance(self.node, str):
-                placeholder = TreeComposite(content=PlaceholderTerm(self.node.lower(), self ,system=self.system), mode="Placeholder", source=self)
+            if isinstance(self.label(), str):
+                placeholder = TreeComposite(content=PlaceholderTerm(self.label().lower(), self ,system=self.system), mode="Placeholder", source=self)
                 self.denotations = [placeholder,]
                 #self.placeholder=True
             else:
@@ -594,12 +594,12 @@ class CompositionTree(Tree, Composable):
         return empty
 
     def short_str(self, latex=False, children=True, force_brackets=False):
-        if isinstance(self.node, str):
-            n = self.node
-        elif isinstance(self.node, SingletonComposable):
-            n = self.node.short_str(latex=latex)
+        if isinstance(self.label(), str):
+            n = self.label()
+        elif isinstance(self.label(), SingletonComposable):
+            n = self.label().short_str(latex=latex)
         else:
-            n = str(self.node)
+            n = str(self.label())
         c_list = []
         if children:
             for c in self.children:
@@ -608,7 +608,7 @@ class CompositionTree(Tree, Composable):
                 elif isinstance(c, CompositionTree):
                     c_list.append(c.short_str(latex=latex, children=False, force_brackets=False))
                 elif isinstance(c, Tree):
-                    c_list.append(str(c.node))
+                    c_list.append(str(c.label()))
                 else:
                     c_list.append(str(c))
         if len(c_list) == 0:
@@ -697,9 +697,9 @@ class CompositionTree(Tree, Composable):
             node = display.RecursiveDerivationLeaf(self.short_str(latex=True, children=False, force_brackets=True), s, style=dict(style, leaf_border="1px"))
         else:
             try:
-                node = self.node._repr_latex_()
+                node = self.label()._repr_latex_()
             except:
-                node = str(self.node)
+                node = str(self.label())
         return display.RecursiveDerivationDisplay(node, explanation=None, parts=parts, style=style)
 
 
@@ -717,7 +717,7 @@ class CompositionTree(Tree, Composable):
         """Factory method to construct a CompositionTree from an nltk.Tree.
 
         Note that this doesn't convert the whole tree, just the top node."""
-        return CompositionTree(t.node, t, system=system)
+        return CompositionTree(t.label(), t, system=system)
 
     @classmethod
     def tree_factory(cls, composable, system=None):
@@ -778,7 +778,7 @@ class Composite(SingletonComposable):
             return str(self.part_structure)
         else:
             if isinstance(self.source, Tree):
-                return str(self.source.node)
+                return str(self.source.label())
             else:
                 return str(self.source)
 
@@ -1000,10 +1000,10 @@ class TreeComposite(Composite, Tree):
                 return ""
         else:
             if isinstance(self.source, Tree):
-                if isinstance(self.source.node, str):
-                    return self.source.node
+                if isinstance(self.source.label(), str):
+                    return self.source.label()
                 else:
-                    return repr(self.source.node)
+                    return repr(self.source.label())
             else:
                 return self.source
 
@@ -1568,7 +1568,7 @@ class TreeCompositionOp(object):
         return 1
 
     def composite_name(self, t):
-        return t.node
+        return t.label()
 
     def __str__(self):
         return "Tree composition op '%s'" % self.name
@@ -1611,13 +1611,13 @@ class LexiconOp(TreeCompositionOp):
 
     def lookup(self, t, assignment=None):
         # TODO: revisit
-        if isinstance(t, TreeComposite) and t.node is None and t.source is not None:
-            name = t.source.node
-        elif t.node and isinstance(t.node, PlaceholderTerm) and t.source is not None:
-            name = t.source.node
+        if isinstance(t, TreeComposite) and t.label() is None and t.source is not None:
+            name = t.source.label()
+        elif t.label() and isinstance(t.label(), PlaceholderTerm) and t.source is not None:
+            name = t.source.label()
         else:
-            assert(isinstance(t.node, str))
-            name = t.node
+            assert(isinstance(t.label(), str))
+            name = t.label()
         #assert(name is not None)
         den = self.system.lookup_item(name)
         if den is None:
@@ -1695,7 +1695,7 @@ class PlaceholderTerm(meta.TypedTerm):
         if isinstance(self.placeholder_for, str):
             return self.placeholder_for
         else:
-            return self.placeholder_for.node
+            return self.placeholder_for.label()
 
 
     def latex_str(self):
@@ -1983,7 +1983,7 @@ class CompositionSystem(object):
                     result = mode(*order, assignment=assignment)
                     if arity == 1:
                         if isinstance(order[0], Tree):
-                            result.c_name = order[0].node
+                            result.c_name = order[0].label()
                         else:
                             #print(order[0])
                             #print(mode)
@@ -2165,7 +2165,7 @@ class TreeCompositionSystem(CompositionSystem):
     def binary_tree_factory(self, c1, c2):
         t1 = self.tree_factory(c1)
         t2 = self.tree_factory(c2)
-        return CompositionTree(self.simple_composite_name(t1.node, t2.node), children=[t1, t2], system=self)
+        return CompositionTree(self.simple_composite_name(t1.label(), t2.label()), children=[t1, t2], system=self)
 
     def compose(self, c1, c2=None, override=False, assignment=None):
         if c2 is None:

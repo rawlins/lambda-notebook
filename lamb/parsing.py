@@ -1,6 +1,8 @@
 import sys, re, traceback, collections
-from lamb import utils, tree_mini
+from lamb import utils
 from lamb.utils import *
+
+Tree = utils.get_tree_class()
 
 #class ParseError(Exception):
 #    pass
@@ -355,7 +357,7 @@ def parse_qtree_r(s, i=0):
         children.append("")
     i = consume_whitespace(s, i)
     i = consume_char(s, i, "]", "Missing ']'")
-    return (tree_mini.Tree(label, children=children), i)
+    return (Tree(label, children=children), i)
 
 
 def flatten_paren_struc(struc):

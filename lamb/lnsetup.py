@@ -13,8 +13,6 @@ except:
 import lamb
 # note: can't import this from any other module.
 from lamb import utils, types, meta, lang, tree_mini, parsing, magics, combinators
-from lamb.tree_mini import Tree
-
 
 def inject_into_ipython():
     try:
@@ -31,7 +29,7 @@ def inject_into_ipython():
 
         # inject some convenience functions
         ip.user_ns["reload_lamb"] = reload_lamb
-        ip.user_ns["Tree"] = lamb.tree_mini.Tree
+        ip.user_ns["Tree"] = lamb.utils.get_tree_class()
         ip.user_ns["MiniLatex"] = lamb.utils.MiniLatex
         ip.user_ns["ltx_print"] = lamb.utils.ltx_print
         ip.user_ns["te"] = lamb.meta.te
@@ -40,10 +38,12 @@ def inject_into_ipython():
         print("Failed to inject lambda notebook variables into the ipython kernel namespace")
         raise
 
-def reload_lamb():
+def reload_lamb(use_nltk_tree=None):
     # should this reload the magics?
     import imp
     imp.reload(lamb.utils)
+    if use_nltk_tree is not None:
+        lamb.utils.use_nltk = use_nltk_tree # inherit default from currently running version. TODO: too confusing?
     imp.reload(lamb.types)
     imp.reload(lamb.meta)
     imp.reload(lamb.lang)

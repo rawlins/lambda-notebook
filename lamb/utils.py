@@ -1,6 +1,36 @@
 import sys, re, cgi
 from numbers import Number
 
+global tree_error_printed
+tree_error_printed = False
+global use_nltk
+use_nltk = False # for the moment this is off by default: subprocess in _repr_png_ seems to have weird behavior with respect to the python interface process it spawns, leading to unresponsive interface.  I'm not sure what's going on.
+# to turn on full nltk support, call reload_lamb(use_nltk_tree=True)
+
+def get_tree_class():
+    if not use_nltk:
+        from lamb.tree_mini import Tree
+        return Tree
+    global tree_error_printed
+    try:
+        import nltk
+        if int(nltk.__version__[0]) < 3:
+            if not tree_error_printed:
+                print("Old NLTK version found (%s)." % nltk.__version__)
+            raise Exception()
+        from nltk import Tree
+        import lamb.tree_mini
+        Tree.pprint_ipython_mathjax = lamb.tree_mini.Tree.pformat_ipython_mathjax
+        Tree.build_display_tree = lamb.tree_mini.Tree.build_display_tree
+        Tree._repr_latex_ = lamb.tree_mini.Tree._repr_latex_
+        return Tree
+    except:
+        if not tree_error_printed:
+            print("Falling back on lamb.tree_mini for Tree support.")
+            tree_error_printed = True
+        from lamb.tree_mini import Tree
+        return Tree
+
 class MiniLatex(object):
     def __init__(self, latex_s, plain_s = None):
         self.latex = latex_s
