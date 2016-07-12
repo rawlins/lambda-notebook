@@ -2001,7 +2001,7 @@ def eq_factory(arg1, arg2):
     arg1 = TypedExpr.ensure_typed_expr(arg1)
     arg2 = TypedExpr.ensure_typed_expr(arg2)
     ts = get_type_system()
-    if ts.eq_check(arg1.type, types.type_t):
+    if arg1.type == types.type_t: # this must be exact so as not to trigger on combinators.  TODO: something more general?
         return BinaryBiarrowExpr(arg1, arg2)
     else:
         return BinaryGenericEqExpr(arg1, arg2)
@@ -2647,7 +2647,7 @@ class ConditionSet(BindingOp):
         inner_type = unified_type.content_type
         char = self.to_characteristic()
         sub_var = TypedTerm(self.varname, inner_type)
-        new_condition = char.apply(sub_var, assignment=assignment)
+        new_condition = char.apply(sub_var)
         return self.local_copy(self.op, sub_var, new_condition)
 
 
@@ -2686,12 +2686,12 @@ class ListedSet(TypedExpr):
     def __init__(self, iterable, typ=None, assignment=None):
         s = set(iterable) # just make it a set first, remove duplicates, flatten order
         args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
-        if len(self.args) == 0 and typ is None:
+        if len(args) == 0 and typ is None:
             typ = types.VariableType("X") # could be a set of anything
         elif typ is None:
-            typ = self.args[0].type
-        for i in range(len(self.args)): # type checking TODO: this isn't right, would need to pick the strongest type
-            args[i] = self.ensure_typed_expr(self.args[i], typ)
+            typ = args[0].type
+        for i in range(len(args)): # type checking TODO: this isn't right, would need to pick the strongest type
+            args[i] = self.ensure_typed_expr(args[i], typ)
         super().__init__("Set", *args)
         #self.op = "Set"
         self.type = types.SetType(typ)
