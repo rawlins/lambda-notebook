@@ -238,12 +238,6 @@ class RecursiveDerivationDisplay(Styled):
             s += "</td></tr>"
         else:
             s += "<td></td></tr>"
-        #if len(expl) > 0:
-        #    s += "<td style=\"vertical-align:bottom;padding-bottom:5px;padding-left:10px\">"
-        #    s += expl
-        #    s += "</td></tr>"
-        #else:
-        #    s += "</tr>"
         s += "<tr style=\"border-top: 1px solid #848482\"><td align=\"center\">%s</td>" % self.render_content(**kwargs)
         if (not above) and len(expl) > 0:
             s += "<td style=\"vertical-align:bottom;padding-bottom:5px;padding-left:10px\">"
@@ -287,14 +281,6 @@ class RecursiveDerivationDisplay(Styled):
             s += "</td></tr>"
         else: # align explanation and content if there are no subparts
             s += "<td style=\"border-left:1px solid #848482\">%s</td></tr>" % expl
-        
-        #s += "<tr style=\"border-style:solid;border-color:#848482;border-width:0px 1px 1px 1px\"><td align=\"center\">%s</td>" % self.render_content()
-#         if len(expl) > 0:
-#             s += "<td style=\"vertical-align:bottom;padding-bottom:5px;padding-left:10px\">"
-#             s += expl
-#             s += "</td></tr></table>\n"
-#         else:
-#             s += "</tr></table>\n"
         s += "</table>"
         return s
 

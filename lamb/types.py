@@ -4,7 +4,6 @@ import sys, re, random
 from numbers import Number
 from lamb import utils, parsing
 from lamb.utils import *
-#import logic, utils
 
 # constant for third truth value
 global Maybe, random_len_cap
@@ -53,7 +52,6 @@ class TypeConstructor(object):
         self.symbol = None
         self.unify_source = None
         self.generic = False
-        #self.type_vars = set()
         self.init_type_vars()
 
     def __len__(self):
@@ -292,14 +290,6 @@ class FunType(TypeConstructor):
     def add_internal_argument(self, arg_type):
         return FunType(self.left, self.right.add_internal_argument(arg_type))
 
-    # def sub_type_vars(self, assignment):
-    #     left_sub = self.left.sub_type_vars(assignment)
-    #     right_sub = self.right.sub_type_vars(assignment)
-    #     if left_sub is not self.left or right_sub is not self.right:
-    #         return types.FunType(left_sub, right_sub)
-    #     else:
-    #         return self
-
     @classmethod
     def parse(cls, s, i, parse_control_fun):
         next = parsing.consume_char(s, i, "<")
@@ -312,26 +302,6 @@ class FunType(TypeConstructor):
             (right, i) = parse_control_fun(s, i)
             i = parsing.consume_char(s, i, ">", "Unmatched <")
             return (FunType(left, right), i)
-
-    # @classmethod
-    # def local_unify(cls, a, b):
-    #     if a.functional():
-    #         if b.functional():
-    #             if a.left.equal(b.left) == True and a.right.equal(b.right) == True:
-    #                 return (a, b)
-    #     return (None, None)
-
-    # def unify(self, other, unify_control_fun):
-    #     if isinstance(other, FunType):
-    #         s_left, o_left = unify_control_fun(self.left, other.left)
-    #         s_right, o_right = unify_control_fun(self.right, other.right)
-    #         if s_left is None or s_right is None:
-    #             return (None, None)
-    #         result_a = FunType(s_left, s_right)
-    #         result_b = FunType(o_left, o_right)
-    #         return (result_a, result_b)
-    #     else:
-    #         return (None, None)
 
     @classmethod
     def random(cls, random_ctrl_fun):
@@ -385,24 +355,6 @@ class SetType(TypeConstructor):
             return self.content_type.equal(other.content_type)
         else:
             return False
-
-    # def unify(self, other, unify_control_fun):
-    #     if isinstance(other, SetType):
-    #         result_s, result_o = unify_control_fun(self.content_type, other.content_type)
-    #         if result_s is None:
-    #             return (None, None)
-    #         else:
-    #             return (SetType(result_s), SetType(result_o))
-    #     else:
-    #         return (None, None)
-
-    # def sub_type_vars(self, assignment):
-    #     sub = self.content_type.sub_type_vars(assignment)
-    #     if sub is not self.content_type:
-    #         return SetType(sub)
-    #     else:
-    #         return self
-
 
     @classmethod
     def parse(cls, s, i, parse_control_fun):
@@ -483,38 +435,11 @@ class TupleType(TypeConstructor):
     def __hash__(self):
         return hash(self.signature)
 
-    #def __repr__(self):
-    #    return self.__str__()
-
     def __call__(self, other):
         return FunType(self, other)
 
     def _repr_latex_(self):
         return self.latex_str()
-
-    # def unify(self, other, unify_control_fun):
-    #     if isinstance(other, TupleType) and len(self.signature) == len(other.signature):
-    #         l = [unify_control_fun(self.signature[i], other.signature[i]) for i in range(len(self.signature))]
-    #         self_result = [x[0] for x in l]
-    #         other_result = [x[1] for x in l]
-    #         if None in (set(self_result)) or None in set(other_result):
-    #             return (None, None)
-    #         else:
-    #             return (TupleType(*self_result), TupleType(*other_result))
-    #     else:
-    #         return (None, None)
-
-    # def sub_type_vars(self, assignment):
-    #     l = list()
-    #     dirty = False
-    #     for i in range(len(self)):
-    #         l.append(self.signature[i].sub_type_vars(assignment))
-    #         if l[i] is not self.signature[i]:
-    #             dirty = True
-    #     if dirty:
-    #         return TupleType(*l)
-    #     else:
-    #         return self
 
     @classmethod
     def parse(cls, s, i, parse_control_fun):
@@ -536,8 +461,6 @@ class TupleType(TypeConstructor):
             i = parsing.consume_char(s, i, ")", "Unmatched ( in tuple type")
             return (TupleType(*signature), i)       
 
-    #def add_internal_argument(self, arg_type):
-    #    return FunType(self.left, self.right.add_internal_argument(arg_type))
     @classmethod
     def random(cls, random_ctrl_fun):
         tuple_len = random.randint(2, random_len_cap)
@@ -621,7 +544,6 @@ def replace_in_assign(var, value, assign):
             assign[k] = try_subst
     for d in dellist:
         del assign[d]
-    #print("output: ", assign)
     return assign
 
 class VariableType(TypeConstructor):
@@ -631,7 +553,7 @@ class VariableType(TypeConstructor):
         self.number = None
         super().__init__()
         if number is not None:
-            self.symbol = symbol[0] #+ str(number)
+            self.symbol = symbol[0] 
             self.number = number
         else:
             (symbol, number) = parse_vartype(symbol)
@@ -644,8 +566,6 @@ class VariableType(TypeConstructor):
         self.name = symbol
         self.values = set()
         self.init_type_vars()
-        #self.left = self # ???
-        #self.right = self # ???
 
     def internal(self):
         return self.symbol[0] == "I"
@@ -676,7 +596,6 @@ class VariableType(TypeConstructor):
         else:
             t2_principal = t2
             t2_prev = None
-        #print("t1: %s, t1 principal: %s, t2: %s, t2 principal: %s" % (self, start, t2, t2_principal))
         new_principal = start
         if PolyTypeSystem.occurs_check(new_principal, t2_principal):
             from lamb import meta
@@ -701,7 +620,6 @@ class VariableType(TypeConstructor):
             new_principal, assignment = unify_control_fun(start, t2_principal, assignment)
             if new_principal is None:
                 return (None, None)
-        #print("unify assignment: %s, new_principal: %s" % (assignment, new_principal))
         return (new_principal, assignment)
 
     def find_type_vars(self):
@@ -725,7 +643,6 @@ class VariableType(TypeConstructor):
                         break
                     visited |= {x}
                     x = assignment[x]
-                #print("substituting %s for %s" % (x, self))
             return x
         else:
             return self
@@ -778,7 +695,6 @@ class VariableType(TypeConstructor):
 
     @classmethod
     def fresh(cls):
-        #return VariableType("X", number=cls.max_id + 1)
         return VariableType("I", number=cls.max_id + 1)
 
 
@@ -803,12 +719,6 @@ class UnknownType(VariableType):
 
     def latex_str(self):
         return ensuremath("?")
-
-    # def __hash__(self):
-    #     return hash("?" + str(self.identifier))
-
-    # def __eq__(self, other):
-    #     return self.identifer == other.identifier
     
     def copy_local(self):
         return UnknownType(force_num=self.identifier)
@@ -843,7 +753,6 @@ def flexible_equal(t1, t2):
 class TypeMismatch(Exception):
     """Exception for type mismatches of all sorts."""
     def __init__(self, i1, i2, mode=None):
-        #print("type mismatch '%s', '%s'" % (fun, arg))
         self.i1 = i1
         self.i2 = i2
         try:
@@ -911,10 +820,6 @@ class TypeMismatch(Exception):
             else:
                 return "%s: %s and %s conflict (mode: %s)" % (tm_str, is_1, is_2, self.mode)
 
-
-    # def latex_str(self):
-    #     return "Type mismatch: %s and %s conflict (mode: %s)" % (self.item_str(self.i1, self.type1, True), self.item_str(self.i2, self.type2, True), self.mode)
-
     def _repr_latex_(self):
         return self.latex_str()
 
@@ -968,7 +873,6 @@ class TypeSystem(object):
                 continue
             return (self._parse_cache[r], new_i)
         raise TypeParseError("Unknown atomic type", s, i)
-        #return (None, None)
 
     def type_parser_recursive(self, s, i=0):
         for na in self.nonatomics:
@@ -1034,29 +938,11 @@ class TypeSystem(object):
             raise TypeMismatch(fun.type, arg.type, "function-argument combination")
 
     def eq_check(self, a, b):
-        #return (a == b)
         result = self.unify(a,b)
         return (result is not None)
 
     def type_allowed(self, a):
          return True
-
-    # def try_parse_type(self, s, onto=None):
-    #     """Attempt to get a type name out of s.
-
-    #     Assumes s is already stripped."""
-    #     # TODO: generalize to arbitrary types!
-    #     # deal with basic types first
-    #     if s == "e":
-    #         return type_e
-    #     elif s == "t":
-    #         return type_t
-    #     elif s == "n":
-    #         return type_n
-    #     elif onto is not None and s in onto:
-    #         return onto[s]
-    #     # TODO: proper handling of unrecognized atomic type
-    #     raise NotImplementedError("not implemented: non-atomic type parsing")
 
     def latex_str(self):
         return "Type system with atomic types: " + ensuremath(", ".join([a.latex_str() for a in self.atomics]))
@@ -1067,9 +953,7 @@ class TypeSystem(object):
 
     def random_type(self, max_depth, p_terminate_early):
         term = random.random()
-        #print(max_depth)
         if max_depth == 0 or term < p_terminate_early:
-            #print(term, p_terminate_early, term > p_terminate_early)
             # choose an atomic type
             t = random.choice(list(self.atomics))
             return t
@@ -1183,7 +1067,6 @@ def safe_var_in_set(unsafe, internal=False):
     while vt in unsafe:
         n += 1
         vt = VariableType(symbol, n)
-    #print("safe var: ", vt, unsafe)
     return vt
 
 def make_safe(typ1, typ2, unsafe=None):
@@ -1196,7 +1079,6 @@ def make_safe(typ1, typ2, unsafe=None):
     else:
         unsafe = list(unsafe)
     assignment = safe_vars(typ2, list(typ1.bound_type_vars()) + unsafe)
-    #return (typ1.sub_type_vars(assignment), invert(assignment))
     return typ1.sub_type_vars(assignment)
 
 def compact_type_set(types, unsafe=None):
@@ -1250,9 +1132,6 @@ class PolyTypeSystem(TypeSystem):
         self.add_nonatomic(UnknownType)
 
     def unify(self, t1, t2, assignment=None):
-        #from lamb import meta
-        #from lamb.meta import logger
-        #logger.warning("Unify(%s, %s)" % (t1,t2))
         assignment = dict()
         result = self.unify_details(t1, t2, assignment=assignment)
         if result is None:
@@ -1273,10 +1152,6 @@ class PolyTypeSystem(TypeSystem):
             assignment = dict()
         else:
             assignment = assignment.copy() # ugh
-        #t1safe = make_safe(t1, t2, set(assignment.keys()) | set(assignment.values()))
-        # if self.occurs_check(t1, t2) or self.occurs_check(t2, t1):
-        #     #print("occurs check fail: ", t1, t2)
-        #     return None
         (result, r_assign) = self.unify_r(t1, t2, assignment)
         if result is None:
             return None
@@ -1285,8 +1160,6 @@ class PolyTypeSystem(TypeSystem):
         l = list()
         for i in range(len(result)):
             l.append(result[i].sub_type_vars(r_assign, trans_closure=True))
-        #l.append(result[-1])
-        #print(l)
         result = result.copy_local(*l)
         return UnificationResult(result, t1, t2, r_assign)
 
@@ -1314,17 +1187,12 @@ class PolyTypeSystem(TypeSystem):
     def unify_fr(self, fun, ret, assignment=None):
         if assignment is None:
             assignment = dict()
-        #input_var = safe_var_in_set(ret.bound_type_vars() | fun.bound_type_vars() | vars_in_env(type_env), internal=False)
         input_var = VariableType.fresh()
         hyp_fun = FunType(input_var, ret)
-        #result = self.unify_details(fun, hyp_fun)
         result = self.unify_details(hyp_fun, fun, assignment=assignment)
         if result is None: # this will fail if `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:
-            # if result.trivial: # no need to introduce spurious alpha renaming
-            #     return (fun, fun.left, fun.right)
-            # else:
             return (result.principal, result.principal.left, result.principal.right)
 
 
@@ -1363,15 +1231,12 @@ class PolyTypeSystem(TypeSystem):
             return True
         if (r1 is None or r2 is None):
             return False
-        #print("equiv: ", r1, r2)
         return self.alpha_equiv(r1, r2)
 
 
     def random_type(self, max_depth, p_terminate_early, allow_variables=True):
         term = random.random()
-        #print(max_depth)
         if max_depth == 0 or term < p_terminate_early:
-            #print(term, p_terminate_early, term > p_terminate_early)
             # choose an atomic type
             t = random.choice(list(self.atomics))
             return t
@@ -1387,10 +1252,8 @@ class PolyTypeSystem(TypeSystem):
     def random_variable_type(self, max_depth, p_terminate_early):
         """Use only variable types in place of atomic types"""
         term = random.random()
-        #print(max_depth)
         ctrl_fun = lambda *a: self.random_variable_type(max_depth - 1, p_terminate_early)
         if max_depth == 0 or term < p_terminate_early:
-            #print(term, p_terminate_early, term > p_terminate_early)
             # choose a variable type
             t = VariableType.random(ctrl_fun)
             return t
@@ -1485,7 +1348,6 @@ def setup_type_constants():
     type_property = FunType(type_e, type_t)
     type_transitive = FunType(type_e, type_property)
     basic_system = TypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType})
-    #under_system = UnderTypeSystem(atomics={type_e, type_t, type_n, undetermined_type}, nonatomics={FunType, TupleType, UndeterminedType, SetType})
     poly_system = PolyTypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType, SetType})
 
 setup_type_constants()
@@ -1518,7 +1380,6 @@ class TypeTest(unittest.TestCase):
             for i in range(0, 200):
                 t1 = poly_system.random_variable_type(depth, 0.2)
                 t2 = poly_system.random_variable_type(depth, 0.2)
-                #print(t1, t2)
                 self.assertTrue(poly_system.unify_sym_check(t1, t2))
 
 

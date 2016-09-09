@@ -4,9 +4,6 @@ from lamb.utils import *
 
 Tree = utils.get_tree_class()
 
-#class ParseError(Exception):
-#    pass
-
 global eq_transforms
 eq_transforms = dict()
 
@@ -152,7 +149,6 @@ def parse_equality_line(s, env=None, transforms=None):
         default = a_ctl.default()
         db_env = default.modify(var_env)
         try:
-            #right_side = meta.TypedExpr.factory(right_str.strip(), assignment=db_env)
             right_side = meta.te(right_str.strip(), assignment=db_env)
             right_side = right_side.regularize_type_env(db_env)
             right_side = right_side.under_assignment(db_env)
@@ -160,10 +156,6 @@ def parse_equality_line(s, env=None, transforms=None):
             meta.logger.error("Parsing of assignment to '%s' failed with exception:" % left_s)
             meta.logger.error(e)
             return (dict(), env)
-
-        #print("assignment is " + str(db_env))
-        #print("default is " + str(db_env))
-        #print("env is " + str(var_env))
 
         # lexical assignment
         lex_name = match.group(1).replace(" ", "_")
@@ -178,7 +170,6 @@ def parse_equality_line(s, env=None, transforms=None):
         return ({lex_name: item}, env)
     else:
         try:
-            #right_side = meta.TypedExpr.factory(right_str.strip(), assignment=var_env)
             right_side = meta.te(right_str.strip(), assignment=var_env)
             right_side = right_side.regularize_type_env(var_env, constants=True)
             right_side = right_side.under_assignment(var_env)
@@ -231,15 +222,6 @@ def parse_line(s, env=None, transforms=None):
         meta.logger.error("Parsing failed with exception:")
         meta.logger.error(e)
         
-        #print(e)
-        #traceback.print_exc()
-        # try:
-        #     exec(s, globals(), env)
-        # except Exception as e2:
-        #     print("Parsing failed with exception:")
-        #     print(e)
-        #     print("Exec failed also:")
-        #     traceback.print_exc()
         return (dict(), env)
 
 
@@ -368,11 +350,9 @@ def flatten_paren_struc(struc):
             s += sub
         else:
             s += flatten_paren_struc(sub)
-    #return "(" + s + ")"
     return s
 
 global brackets, close_brackets
-#brackets = {"(": ")", "{": "}", "<": ">"}
 brackets = {"(" : ")"}
 close_brackets = {brackets[y] : y for y in brackets.keys()}
 

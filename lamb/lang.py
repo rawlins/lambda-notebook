@@ -96,12 +96,6 @@ class Composable(object):
     """Abstract mixin for objects that can be composed using a composition system; provides * and **.
     """
 
-    # def __iter__(self):
-    #     raise NotImplementedError
-
-    # def __len__(self):
-    #     raise NotImplementedError
-
     def compose(self, other=None, assignment=None):
         cs = get_system()
         if cs is None:
@@ -112,17 +106,6 @@ class Composable(object):
             if not (isinstance(other, Composable)):
                 raise NotImplementedError
         return cs.compose(self, other, assignment=assignment)
-        # if other is None:
-        #     return cs.compose_iterables(self)
-        # else:
-        #     if not (isinstance(other, Composable)):
-        #         raise NotImplementedError
-        # return cs.compose_iterables(self, other)
-        #return self * other
-
-    #@property
-    #def content(self):
-    #    raise NotImplementedError
 
     def placeholder(self):
         return False
@@ -247,9 +230,7 @@ class AssignmentController(object):
             self.reserved = self.reserved | set(reserved)
 
     def validate(self, a):
-        #for s in self.specials:
-        #    if s not in a.keys():
-        #        return False
+        # could check key names
         return True
 
     def render(self, a=None, latex=False, hide_reserved=True):
@@ -308,10 +289,6 @@ class SingletonComposable(Composable):
     def __init__(self, content, system=None):
         if system is None:
             system = get_system()
-        #if system is None:
-        #    self.assign_controller = VacuousAssignmentController()
-        #else:
-        #    self.assign_controller = system.assign_controller
         self.system = system
         if content is None or isinstance(content, Exception):
             self.content = content
@@ -355,7 +332,6 @@ class SingletonComposable(Composable):
             return "_{" + self.type.latex_str() + "}"
 
     def short_str_latex(self):
-        #return ensuremath(inbr(self.name))
         return self.short_str(latex=True)
         
 
@@ -375,14 +351,8 @@ class SingletonComposable(Composable):
     def compose_str_latex(self):
         return self.latex_str()
 
-    # def __iter__(self):
-    #     return iter((self,))
-
     def content_iter(self):
         return iter((self,))
-
-    # def __len__(self):
-    #     return 1
 
 
 class CompositionTree(Tree, Composable):
@@ -405,11 +375,9 @@ class CompositionTree(Tree, Composable):
         elif isinstance(denotation, Composable):
             self.denotations = [denotation,]
         elif isinstance(denotation, TypedExpr):
-            #self.denotations = [denotation]
             raise NotImplementedError() # TODO use an Item?
         else:
             self.denotations = list(denotation) # requires iterable
-            #raise NotImplementedError()
 
     @property
     def constant(self):
@@ -432,7 +400,6 @@ class CompositionTree(Tree, Composable):
             if isinstance(self.label(), str):
                 placeholder = TreeComposite(content=PlaceholderTerm(self.label().lower(), self ,system=self.system), mode="Placeholder", source=self)
                 self.denotations = [placeholder,]
-                #self.placeholder=True
             else:
                 raise NotImplementedError()
 
@@ -452,7 +419,6 @@ class CompositionTree(Tree, Composable):
                         ch = CompositionTree.tree_factory(ch, system=self.system)
                         self[i] = ch
                     elif isinstance(ch, Tree):
-                        #ch = CompositionTree(ch.node, children=ch.children, system=self.system)
                         ch = self.from_tree(ch, system=self.system)
                         self[i] = ch
                     else:
@@ -563,7 +529,6 @@ class CompositionTree(Tree, Composable):
                 except:
                     yield self[0]
                     raise StopIteration()
-                    #raise NotImplementedError("Cannot construct an iterator on non-Composables.  (Did compose_container get called without build_local_tree?)")
                 for c in iter0:
                     yield TreeComposite(c, content=None, source=self)
             elif len(self) == 2:
@@ -576,8 +541,6 @@ class CompositionTree(Tree, Composable):
                     iter1 = self[1].flatten_iter()
                 except AttributeError:
                     iter1 = iter([self[1]])
-                #if not isinstance(self[0], Composable) or not isinstance(self[1], Composable):
-                #    raise NotImplementedError("Cannot construct an iterator on non-Composables.  (Did compose_container get called without build_local_tree?)")
                 for c0 in iter0:
                     for c1 in iter1:
                         yield TreeComposite(c0, c1, content=None, source=self)
@@ -590,7 +553,6 @@ class CompositionTree(Tree, Composable):
             if isinstance(c.content, CompositionResult):
                 if c.content.empty():
                     empty.append(c.content)
-        #print(repr(empty))
         return empty
 
     def short_str(self, latex=False, children=True, force_brackets=False):
@@ -649,13 +611,11 @@ class CompositionTree(Tree, Composable):
         return self.latex_step_tree()
 
     def tree(self, derivations=False, recurse=True, style=None):
-        #return self.latex_step_tree(derivations=derivations)
         return self.build_display_tree(derivations=derivations, recurse=recurse, style=style)
 
     def show(self,derivations=False, short=True, style=None):
         """Show the step-by-step derivation(s) as a proof tree."""
         if self.content is None:
-            #return utils.MiniLatex(Tree.pprint_ipython_mathjax(self))
             return self.build_display_tree(derivations=derivations, style=style)
         elif isinstance(self.content, CompositionResult):
             if short:
@@ -669,15 +629,6 @@ class CompositionTree(Tree, Composable):
 
     def paths(self,derivations=False, style=None):
         return self.show(derivations=derivations, short=False, style=None)
-
-    # def build_display_tree(self, derivations=False, recurse=True, style=None):
-    #     if self.composed():
-    #         #return self.content.build_display_tree(derivations=derivations, recurse=recurse, style=style)
-    #         s =  self.content.build_summary_for_tree(style=style)
-    #         return display.RecursiveDerivationLeaf(self.short_str(latex=True, force_brackets=True), s, style=style)
-    #     else:
-    #         return Tree.build_display_tree(self, derivations=derivations, style=style)
-
 
     def build_display_tree(self, derivations=False, recurse=True, style=None):
         defaultstyle = display.td_proof_style
@@ -791,8 +742,6 @@ class TreeComposite(Composite, Tree):
         if isinstance(source, Composite) and source.source is not None:
             source = source.source # TODO: recursive?
         if isinstance(content, Composite):
-            #print(content.__class__)
-            #print(content.content.__class__)
             if mode is None:
                 mode = content.mode
             content = content.content
@@ -813,17 +762,6 @@ class TreeComposite(Composite, Tree):
         if self.content is not None and isinstance(self.content, PlaceholderTerm):
             return True
         return False
-
-
-    # def compose_str_latex(self):
-    #     if isinstance(self.content, Exception):
-    #         return self.content.latex_str()
-    #     else:
-    #         combination = " * ".join([n.short_str_latex() for n in self])
-    #         s = "%s leads to: %s" % (combination, self.latex_str())
-    #         if self.mode is not None:
-    #             s += " (by %s)" % self.mode.name
-    #         return s
 
     def compose_str_latex(self):
         return self.compose_str(latex=True)
@@ -894,7 +832,6 @@ class TreeComposite(Composite, Tree):
             return "<table align=\"center\"><tr><td align=\"center\">%s</td></tr><tr><td align=\"center\"><i>N/A</i></td></tr></table>\n" % (self.short_str_latex())
         else:
             return self.local_latex_tree(derivations=derivations)
-            #return "<table align=\"center\"><tr><td align=\"center\">%s</td></tr><tr><td align=\"center\">%s</td></tr></table>\n" % (self.short_str_latex(), ensuremath(self.content.latex_str()))
 
 
     def local_latex_tree(self, mode=True, derivations=False):
@@ -909,15 +846,10 @@ class TreeComposite(Composite, Tree):
             s = "<table style=\"margin-top:10px\"><tr><td style=\"vertical-align:bottom\" align=\"center\">%s</td>" % (content_str)
         else:
             s = "<table style=\"margin-top:10px\"><tr><td style=\"vertical-align:bottom\" align=\"center\">%s</td></tr><tr><td style=\"vertical-align:bottom\" align=\"center\">%s</td>" % (self.short_str_latex(), content_str)
-        #if mode:
-        #    s += "<td style=\"vertical-align:center\" align=\"center\">&nbsp;&nbsp;<b>[via %s]</b></td>" % self.mode.name
         s += "</tr></table>\n"
         return s
 
     def latex_step_tree_r(self, derivations=False):
-        #if len(self) == 0:
-        #    return self.latex_terminal_tree(derivations=derivations)
-        #"<div><div>%s</div><div>%s</div><hr /><br />\n<div>%s (%s)</div></div>\n" % (
         child_cells = []
         for i in range(len(self)):
             if not isinstance(self[i], Composable):
@@ -933,7 +865,6 @@ class TreeComposite(Composite, Tree):
         s += "<table><tr>"
         s+= "<td style=\"vertical-align:bottom;padding-bottom:5px\">&nbsp;&nbsp;&nbsp;$\circ$&nbsp;&nbsp;&nbsp;</td>".join(child_cells)
         s += "</tr></table></td>"
-        #<td style=\"vertical-align:bottom\">%s</td></tr></table>" % (self.p1.latex_step_tree_r(), self.p2.latex_step_tree_r())
         if self.mode is None:
             s += "</tr>"
         else:
@@ -1055,7 +986,6 @@ class CompositionResult(Composable):
             s += self.failures_str()
         else:
             for composite in self.results:
-                #s += "    '%s' * '%s' leads to '%s'\n" % (composite.p1.short_str(), composite.p2.short_str(), repr(composite))
                 s += "    " + composite.compose_str()
         return s
 
@@ -1077,7 +1007,6 @@ class CompositionResult(Composable):
                 #TODO: newlines in mathjax??
                 s += "\n<br />" + latex_indent() + "[%i]: " % n + composite.latex_str()
                 n += 1
-                #s += latex_indent() + "`%s' $*$ `%s' leads to `%s'\n" % (composite.p1.short_str_latex(), composite.p2.short_str_latex(), ensuremath(composite.latex_str()))
         return MiniLatex(s)
 
     def build_summary_for_tree(self, style=None):
@@ -1102,10 +1031,7 @@ class CompositionResult(Composable):
         s = str()
         for f in self.failures:
             if isinstance(f, CompositionResult):
-                #if self.source is None:
                 s += "Inheriting composition failure.  "
-                #else:
-                #        s += ("Inheriting composition failure from %s. " % self.source.short_str(latex=latex))
                 if latex:
                     s += f.latex_str()
                 else:
@@ -1276,7 +1202,6 @@ class CRFilter(object):
         self.name = name
 
     def __call__(self, cresult):
-        #cresult = cresult.copy() #TODO: implement
         i = 0
         while i < len(cresult.content):
             passes = self.filter_fun(cresult.content[i].content)
@@ -1348,7 +1273,6 @@ class Item(TreeComposite):
         if not self.content:
             return display.RecursiveDerivationLeaf(self.short_str_latex(), "N/A", style=style)
         else:
-            #return display.RecursiveDerivationLeaf(self.short_str_latex(), ensuremath(self.content.latex_str()))
             return super().build_display_tree(derivations=derivations, recurse=recurse, style=style)
 
 class CompositionOp(object):
@@ -1553,10 +1477,6 @@ class TreeCompositionOp(object):
         else:
             self.preconditions = preconditions
         self.system = system # adding the rule to a system will set this, no need to pre-check
-        # if system is not None:
-        #     self.system = system
-        # else:
-        #     self.system = get_system()
         self.typeshift = False
 
     @property
@@ -1583,7 +1503,6 @@ class TreeCompositionOp(object):
 
         This function is idempotent."""
         if not isinstance(tree, CompositionTree):
-            #tree = CompositionTree.from_tree(tree)
             tree = CompositionTree.tree_factory(tree)
         tree.build_local_tree(override=False)
         return tree
@@ -1597,7 +1516,6 @@ class TreeCompositionOp(object):
             for d in tree:
                 if d.content is None:
                     raise TypeMismatch(tree, None, mode="None not allowed for %s" % self.name) 
-        #result = self.operation(self.build_local(tree), assignment=assignment)
         result = self.operation(tree, assignment=assignment)
         # TODO: add a reduce_all stage?
         result.mode = self
@@ -1618,12 +1536,9 @@ class LexiconOp(TreeCompositionOp):
         else:
             assert(isinstance(t.label(), str))
             name = t.label()
-        #assert(name is not None)
         den = self.system.lookup_item(name)
         if den is None:
             raise TypeMismatch(t, None, mode="No lexical entry for '%s' found." % name)
-        #elif len(den) > 1:
-        #    raise NotImplementedError()
         return den
 
 def unary_factory(meta_fun, name, typeshift=False, reduce=True):
@@ -1676,7 +1591,6 @@ class PlaceholderTerm(meta.TypedTerm):
     """This class represents a placeholder for some denotation  that is unknown or not yet composed.  The primary use
     is in incrementally doing top-down composition."""
     def __init__(self, varname, placeholder_for, system=None, assignment=None, type_check=True):
-        #meta.TypedTerm.__init__(self, varname, types.VariableType("X"))
         meta.TypedTerm.__init__(self, varname, types.UnknownType(), assignment=assignment, type_check=type_check)
         self.let = True
         self.placeholder_for = placeholder_for
@@ -1724,15 +1638,12 @@ class PlaceholderTerm(meta.TypedTerm):
         return self(arg)
 
     def copy(self):
-        #result = PlaceholderTerm(self.op, self.placeholder_for, system=self.system)
         return self.local_copy(self.op)
 
     def local_copy(self, op, type_check=True):
         result = PlaceholderTerm(op, self.placeholder_for, system=self.system, type_check=type_check)
         result.let = self.let
         result.type = self.type # type may have changed, e.g. via alphabetic conversion to a fresh type
-        #print("self: ", repr(meta.TypedTerm.local_copy(self, self.op)))
-        #print("result: ", repr(meta.TypedTerm.local_copy(result, result.op)))
         return result
 
 
@@ -1755,7 +1666,6 @@ class CompositionSystem(object):
         self.name = name
 
         if a_controller is None:
-            #self.assign_controller = AssignmentController()
             self.assign_controller = VacuousAssignmentController()
         else:
             self.assign_controller = a_controller
@@ -1824,22 +1734,7 @@ class CompositionSystem(object):
             name = r.name
         return self.ruledict[name]
 
-    # this is very obsolete, but something like it is desireable.  (TODO)
-    # def hastype(self, t):
-    #     if t in self.basictypes:
-    #         return 1
-    #     elif t in self.typecache:
-    #         return 1
-
-    #     try:
-    #         if self.hastype(t.left) and self.hastype(t.right):
-    #             self.typecache.add(t)
-    #             return 1
-    #         else:
-    #             return 0
-    #     except:
-    #         #print "Unexpected error:", sys.exc_info()[0]
-    #         return 0
+    # TODO: function for checking if system supports an arbitrary type
 
     def __repr__(self):
         if self.name is None:
@@ -1918,8 +1813,6 @@ class CompositionSystem(object):
 
     def compose(self, *items, assignment=None, block_typeshift=False):
         """Compose the items according to the system.  Each item may be a container object."""
-        #return self.compose_raw(*items, assignment=assignment)
-        #TODO __big change__ (?) make sure this works generally...
         return self.compose_iterables(*items, assignment=assignment, block_typeshift=block_typeshift)
 
     def do_typeshifts(self, item, depth=1, include_base=True, assignment=None):
@@ -1985,8 +1878,6 @@ class CompositionSystem(object):
                         if isinstance(order[0], Tree):
                             result.c_name = order[0].label()
                         else:
-                            #print(order[0])
-                            #print(mode)
                             result.c_name = order[0].name
                     else:
                         result.c_name = mode.composite_name(items[0], items[1])
@@ -2032,7 +1923,6 @@ class CompositionSystem(object):
                 if len(new_i_n.results) > 1:
                     typeshifts_changed = True
             if typeshifts_changed:
-                #print("Type-shifting: found %i new items to try: %s" % (len(new_items), repr(new_items)))
                 result = self.compose(*new_items, assignment=assignment, block_typeshift=True)
                 if len(result.results) > 0:
                     return result
@@ -2071,7 +1961,6 @@ class CompositionSystem(object):
     def compose_container(self, c, assignment=None, block_typeshift=False):
         """Compose a container `c`.  Intended for use with a CompositionTree."""
         r = self.compose_iterators(c.flatten_iter(), assignment=assignment, block_typeshift=block_typeshift)
-        #print("hi %s" % repr(r.failures))
         if r.empty() and len(r.failures) == 0:
             r.failures.extend(c.find_empty_results()) # find any errors inherited from subtrees.
         r.source = c
@@ -2134,16 +2023,6 @@ class TreeCompositionSystem(CompositionSystem):
         elif len_fun(tree) >= 1:
             for i in range(len_fun(tree)):
                 yield from self.td_df_lr_gen(tree[i], tree, i, len_fun, full_path=full_path + (i,))
-            #subgen = self.td_df_lr_gen(tree[0], tree, 0, len_fun)
-            #for n in subgen:
-            #    yield n
-            # if len_fun(tree) == 2:
-            #     yield from self.td_df_lr_gen(tree[1], tree, 1, len_fun)
-            #     #subgen = self.td_df_lr_gen(tree[1], tree, 1, len_fun)
-            #     #for n in subgen:
-            #     #    yield n
-            # else:
-            #     raise NotImplementedError
 
     def bu_df_lr_gen(self, tree, parent, path_from_par, len_fun, full_path=None):
         if full_path is None:
@@ -2172,14 +2051,11 @@ class TreeCompositionSystem(CompositionSystem):
             tree = self.tree_factory(c1)
         else:
             tree = self.binary_tree_factory(c1, c2)
-        #tree.build_local_tree(override=override)
-        #return self.compose_container(tree)
         return tree.compose(assignment=assignment)
 
     def search_for_unexpanded(self, tree, search_gen, expanded_fun, len_fun):
         gen = search_gen(tree, None, None, len_fun)
         for (n, p, path, full_path) in gen:
-            #print("recursing node '%s'" % n)
             if not expanded_fun(n):
                 return (n, p, path, full_path)
         return (None, None, None, tuple())
@@ -2220,13 +2096,6 @@ class TreeCompositionSystem(CompositionSystem):
             order = self.bu_df_lr_gen
         return self.search_for_unexpanded(tree, order, self.is_expanded, self.len_fun)
 
-    def compose_path_old(self, root, path, assignment=None):
-        if len(path) > 0:
-            self.compose_path(root[path[0]], path[1:])
-        #self.compose()
-        #return root.compose(override=True, assignment=assignment)
-        return self.compose(root, override=True, assignment=assignment)
-
     def compose_path(self, root, path, assignment=None):
         return root.compose_path(path, assignment=assignment)
 
@@ -2236,11 +2105,6 @@ class TreeCompositionSystem(CompositionSystem):
         (subtree, parent, path_from_parent, full_path) = self.qsfu(tree)
         if subtree is None:
             return None
-        #expansion = subtree.content.expand()
-        #expansion = subtree.compose()
-
-        #parent[path_from_parent]
-        #return self.compose(tree, override=True) # redo everything?
         return tree.compose_path(full_path)
 
     def expand_all(self, tree):
@@ -2256,31 +2120,6 @@ class TreeCompositionSystem(CompositionSystem):
                 return cur
             cur = cur.compose_path(full_path)
             last = subtree
-
-    # TODO: this is obsolete given the current setup, but I need to return to implementing it
-    # def search_td_bf(self, node, expanded_fun, len_fun):
-    #     if len_fun(node) == 0:
-    #         return (None, )
-    #     if len_fun(node) == 1:
-    #         if expanded_fun(node):
-    #             return (0,) + self.search_td_bf(self, node[0], expanded_fun, len_fun)
-    #         else:
-    #             return (None, )
-    #     elif len_fun(node) == 2:
-    #         if expanded_fun(node):
-    #             if expanded_fun(node[0]):
-    #                 if expanded_fun(node[1]):
-    #                     return (0,) + self.search_td_bf(self, node[0], expanded_fun, len_fun)
-    #         else:
-    #             return (None, )
-
-
-
-  
-
-
-
-
 
 
 
@@ -2302,8 +2141,6 @@ def tree_fa_fun_abstract(f, a, assignment=None):
     if not ts.fun_arg_check_bool(f, a):
         return None
     result = (f.content.under_assignment(assignment))(a.content.under_assignment(assignment))
-    # if not a.type.undetermined:
-    #     result = result.reduce()
     return result
 
 def tree_left_fa_fun(t, assignment=None):
