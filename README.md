@@ -2,7 +2,7 @@
 
 This project is a framework for linguists and especially semanticists developing analyses in compositional semantics.  It aims to provide a means of developing 'digital fragments', following from the method of fragments in Montague grammar.
 
-The project is in an alpha state.  While code is publicly up on github, expect bugs and rapid changes.  Contributions, requests, and suggestions are welcome.
+The project is in an alpha state.  While code is publicly up on github, expect bugs and rapid changes.  Contributions, requests, and suggestions are welcome.  To see an example, a pre-rendered demo notebook can be found at [http://nbviewer.jupyter.org/github/rawlins/lambda-notebook/blob/master/notebooks/Lambda%20Notebook%20Demo%20%28executed%29.ipynb](http://nbviewer.jupyter.org/github/rawlins/lambda-notebook/blob/master/notebooks/Lambda%20Notebook%20Demo%20%28executed%29.ipynb).
 
 If you are interested in discussing this project, you can join the following mailing list, which currently very low traffic: [http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com](http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com).  You can also ask questions directly to Kyle Rawlins, [kgr@jhu.edu](mailto:kgr@jhu.edu).
 
