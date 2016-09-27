@@ -112,7 +112,7 @@ def build_json():
     }
     return kernelspec_json
 
-def install_kernelspec(lib_dir, kernel_dir=None):
+def install_kernelspec(lib_dir, kernel_dir=None, user=True):
     if kernel_dir is None:
         kernel_dir = os.path.join(lib_dir, "kernel", "lambda-notebook")
 
@@ -132,7 +132,9 @@ def install_kernelspec(lib_dir, kernel_dir=None):
     with open(k_json_filename, 'w') as k_json_file:
         json.dump(k_json, k_json_file, sort_keys=True, indent=4)
 
-    kernelspec.install_kernel_spec(kernel_dir, user=True, replace=True)
+    kernelspec.install_kernel_spec(kernel_dir, user=user, replace=True)
+    location = kernelspec.find_kernel_specs()['lambda-notebook']
+    return location
 
 def launch_lambda_console(args, lib_dir=None, kernel_dir=None):
     install_kernelspec(lib_dir, kernel_dir)
