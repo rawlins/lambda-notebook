@@ -48,6 +48,8 @@ lr_table_style = {"direction": "lr",
                   "leaf_align": "left",
                   "leaf_style": "div"}
 
+table_reset = """<style>.rendered_html table, .rendered_html tr, .rendered_html td, .rendered_html th { border: 0px; }</style>"""
+
 class Styled(object):
     def __init__(self, style=None):
         if style is None:
@@ -276,8 +278,8 @@ class RecursiveDerivationDisplay(Styled):
         expl = self.render_expl(**kwargs)
         s = "<table>"
         if len(expl) > 0 and len(self.parts) > 0:
-            s += "<tr><td></td><td style=\"border-left:1px solid #848482\">%s</td></tr>" % expl
-        s += "<tr><td style=\"vertical-align:bottom;padding-right:10px\">%s</td>" % self.render_content(**kwargs)
+            s += "<tr style=\"border:0px\"><td></td><td style=\"border-left:1px solid #848482\">%s</td></tr>" % expl
+        s += "<tr style=\"border:0px\"><td style=\"vertical-align:bottom;padding-right:10px\">%s</td>" % self.render_content(**kwargs)
         if len(self.parts) > 0:
             s += "<td style=\"border: 1px solid #848482;vertical-align:bottom;padding:0px 10px\">"
             s += self.render_parts(**kwargs)
@@ -345,16 +347,16 @@ class RecursiveDerivationDisplay(Styled):
     def restyle(self, **kwargs):
         """Uses `kwargs` to override the stored style.  This displays the result; it does not actually modify `self`."""
         if self.get_style(kwargs, "style", "default") == "rows":
-            out = "<table><tr>%s</tr></table>" % self.html_render(**kwargs)
+            out = table_reset + "<table><tr>%s</tr></table>" % self.html_render(**kwargs)
         else:
-            out = self.html_render(**kwargs)
+            out = table_reset + self.html_render(**kwargs)
         return utils.MiniLatex(out)
     
     def _repr_html_(self):
         if self.get_style(None, "style", "default") == "rows":
-            return "<table><tr>%s</tr></table>" % self.html_render()
+            return table_reset + "<table><tr>%s</tr></table>" % self.html_render()
         else:
-            return self.html_render()
+            return table_reset + self.html_render()
         
 class RecursiveDerivationLeaf(Styled):
     """Class for leaf nodes.  Note that RecursiveDerivationDisplay can handle leaf nodes as well;
@@ -439,6 +441,7 @@ class RecursiveDerivationLeaf(Styled):
                 s += "<tr><td style=\"vertical-align:bottom\" align=\"%s\">%s</td></tr>" % (align,self.to_str(p, style=kwargs))
             s += "</table>"
         return s
-    
+
     def _repr_html_(self):
         return self.html_render()
+
