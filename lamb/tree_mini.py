@@ -955,29 +955,6 @@ class Tree(list):
                                     " ".join(childstrs), parens[1])
 
     # KGR added
-    def pformat_ipython_mathjax(self):
-        #"<div><div>%s</div><div>%s</div><hr /><br />\n<div>%s (%s)</div></div>\n" % (
-        s = "<table><tr><td style=\"vertical-align:bottom;padding:0px 10px\" align=\"center\">" 
-        s += "<table><tr style=\"border-bottom:1px solid #848482\">"
-        child_cells = []
-        for i in range(len(self)):
-            try:
-                child_text = self[i].pformat_ipython_mathjax()
-            except:
-                try:
-                    child_text = self[i]._repr_latex_()
-                except:
-                    child_text = str(self[i])
-            child_cells.append("<td style=\"vertical-align:bottom\">%s</td>" % child_text)
-        s+= "<td style=\"vertical-align:bottom;padding-bottom:5px\">&nbsp;&nbsp;&nbsp;$\circ$&nbsp;&nbsp;&nbsp;</td>".join(child_cells)
-        #<td style=\"vertical-align:bottom\">%s</td></tr></table>" % (self.p1.latex_step_tree_r(), self.p2.latex_step_tree_r())
-        try:
-            nodetext = self.label()._repr_latex_()
-        except:
-            nodetext = str(self.label())
-        s += "</tr></table></tr><tr><td align=\"center\">%s</td></tr></table>\n" % nodetext
-        return s
-
     def build_display_tree(self, derivations=False, recurse=True, style=None):
         import lamb
         from lamb import display
@@ -989,19 +966,18 @@ class Tree(list):
                 part_i = self[i].build_display_tree(recurse=recurse, derivations=derivations, style=style)
             except AttributeError:
                 try:
-                    part_i = display.RecursiveDerivationLeaf(self[i]._repr_latex_(), style=style)
+                    part_i = display.RecursiveDerivationLeaf(self[i]._repr_html_(), style=style)
                 except AttributeError:
                     part_i = display.RecursiveDerivationLeaf(str(self[i]), style=style)
             parts.append(part_i)
         try:
-            nodetext = self.label()._repr_latex_()
+            nodetext = self.label()._repr_html_()
         except:
             nodetext = str(self.label())
         return display.RecursiveDerivationDisplay(nodetext, explanation=None, parts=parts, style=style)
 
-    def _repr_latex_(self):
-        #return self.pformat_ipython_mathjax()
-        return self.build_display_tree()._repr_latex_()
+    def _repr_html_(self):
+        return self.build_display_tree()._repr_html_()
 
 
 

@@ -120,8 +120,8 @@ class Composable(object):
     def constant(self):
         return False
 
-    def _repr_latex_(self):
-        return self.show()._repr_latex_()
+    def _repr_html_(self):
+        return self.show()._repr_html_()
 
     def latex_str(self):
         return self.show()._repr_latex_()
@@ -589,7 +589,7 @@ class CompositionTree(Tree, Composable):
 
     def latex_str(self):
         if self.content is None:
-            return Tree._repr_latex_(self)
+            return Tree._repr_html_(self)
         elif isinstance(self.content, CompositionResult):
             return self.content.latex_str() # TODO more?
         elif len(self.content) == 1:
@@ -604,8 +604,8 @@ class CompositionTree(Tree, Composable):
         else:
             return None
 
-    def _repr_latex_(self):
-        return self.show()._repr_latex_()
+    def _repr_html_(self):
+        return self.show()._repr_html_()
 
     def print_ipython_mathjax(self):
         return self.latex_step_tree()
@@ -639,7 +639,7 @@ class CompositionTree(Tree, Composable):
                 part_i = self[i].build_display_tree(recurse=recurse, derivations=derivations, style=style)
             except AttributeError:
                 try:
-                    part_i = display.RecursiveDerivationLeaf(self[i]._repr_latex_(), style=style)
+                    part_i = display.RecursiveDerivationLeaf(self[i]._repr_html_(), style=style)
                 except AttributeError:
                     part_i = display.RecursiveDerivationLeaf(str(self[i]), style=style)
             parts.append(part_i)
@@ -648,7 +648,7 @@ class CompositionTree(Tree, Composable):
             node = display.RecursiveDerivationLeaf(self.short_str(latex=True, children=False, force_brackets=True), s, style=dict(style, leaf_border="1px"))
         else:
             try:
-                node = self.label()._repr_latex_()
+                node = self.label()._repr_html_()
             except:
                 node = str(self.label())
         return display.RecursiveDerivationDisplay(node, explanation=None, parts=parts, style=style)
@@ -947,6 +947,9 @@ class TreeComposite(Composite, Tree):
         # since this inherits from Tree, need to ensure that we don't inherit a monkey-patched _repr_latex_ from there.
         return self.latex_str()
 
+    def _repr_html_(self):
+        return self.latex_str()
+
 class BinaryComposite(TreeComposite):
     def __init__(self, p1, p2, content, mode=None, source=None):
         TreeComposite.__init__(self, p1, p2, content=content, mode=mode, source=source)
@@ -1090,7 +1093,7 @@ class CompositionResult(Composable):
                 s += "Path [%i]:<br />\n" % i
             # this will return a MiniLatex-packaged string.
             rst = r.tree(derivations=derivations, recurse=recurse, style=style)
-            s += rst._repr_latex_() + "<br /><br />"
+            s += rst._repr_html_() + "<br /><br />"
             i += 1
         return MiniLatex(s)
 
@@ -1299,7 +1302,7 @@ class CompositionOp(object):
         self.desc = desc
         self.latex_desc = latex_desc
 
-    def _repr_latex_(self):
+    def _repr_html_(self):
         if self.latex_desc is None:
             return "%s <i>%s</i>, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
         else:
@@ -1759,13 +1762,13 @@ class CompositionSystem(object):
         if latex:
             s += "<br />"
             for x in self.rules:
-                s += "&nbsp;&nbsp;&nbsp;&nbsp;" + x._repr_latex_() + "<br />"
+                s += "&nbsp;&nbsp;&nbsp;&nbsp;" + x._repr_html_() + "<br />"
             s += "}"
         else:
             s += ", ".join([x.name for x in self.rules]) + "}"
         return s
 
-    def _repr_latex_(self):
+    def _repr_html_(self):
         return self.description(latex=True)
 
     def lookup(self, *items):

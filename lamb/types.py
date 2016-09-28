@@ -820,7 +820,7 @@ class TypeMismatch(Exception):
             else:
                 return "%s: %s and %s conflict (mode: %s)" % (tm_str, is_1, is_2, self.mode)
 
-    def _repr_latex_(self):
+    def _repr_html_(self):
         return self.latex_str()
 
     def __repr__(self):
@@ -1116,7 +1116,7 @@ class UnificationResult(object):
         self.mapping = mapping
         self.trivial = injective(mapping) and not strengthens(mapping)
 
-    def _repr_latex_(self):
+    def _repr_html_(self):
         s = "<table>"
         s += "<tr><td>Principal type:&nbsp;&nbsp; </td><td>%s</td></tr>" % self.principal.latex_str()
         s += "<tr><td>Inputs: </td><td>%s and %s</td></tr>" % (self.t1.latex_str(), self.t2.latex_str())

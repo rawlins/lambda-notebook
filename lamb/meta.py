@@ -127,7 +127,7 @@ class TypeEnv(object):
             self.var_mapping = var_mapping
         self.update_var_set()
 
-    def _repr_latex_(self):
+    def _repr_html_(self):
         s = "<table>"
         s += "<tr><td>Term mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" % utils.dict_latex_repr(self.var_mapping)
         s += "<tr><td>Type mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" % utils.dict_latex_repr(self.type_mapping)
@@ -3018,8 +3018,8 @@ class Derivation(object):
     def show(self, recurse=False, style=None):
         return self.trace(recurse=recurse, style=style)
 
-    def _repr_latex_(self):
-        return self.build_display_tree(recurse=False)._repr_latex_()
+    def _repr_html_(self):
+        return self.build_display_tree(recurse=False)._repr_html_()
 
     def steps_str(self):
         l = self.steps_sequence(latex=False)

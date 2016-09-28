@@ -94,9 +94,12 @@ class Styled(object):
                 return x.html_render(**style)
         except:
             try:
-                return x._repr_latex_()
+                return x._repr_html_()
             except:
-                return repr(x)
+                try:
+                    return x._repr_latex_()
+                except:
+                    return repr(x)
 
 class RecursiveDerivationDisplay(Styled):
     """Class for rendering some recursive (tree-structured) data.
@@ -347,7 +350,7 @@ class RecursiveDerivationDisplay(Styled):
             out = self.html_render(**kwargs)
         return utils.MiniLatex(out)
     
-    def _repr_latex_(self):
+    def _repr_html_(self):
         if self.get_style(None, "style", "default") == "rows":
             return "<table><tr>%s</tr></table>" % self.html_render()
         else:
@@ -437,5 +440,5 @@ class RecursiveDerivationLeaf(Styled):
             s += "</table>"
         return s
     
-    def _repr_latex_(self):
+    def _repr_html_(self):
         return self.html_render()

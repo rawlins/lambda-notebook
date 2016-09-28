@@ -20,7 +20,6 @@ def get_tree_class():
             raise Exception()
         from nltk import Tree
         import lamb.tree_mini
-        Tree.pprint_ipython_mathjax = lamb.tree_mini.Tree.pformat_ipython_mathjax
         Tree.build_display_tree = lamb.tree_mini.Tree.build_display_tree
         Tree._repr_latex_ = lamb.tree_mini.Tree._repr_latex_
         return Tree
@@ -48,16 +47,22 @@ class MiniLatex(object):
     def __repr__(self):
         return self.latex
 
+    def _repr_html_(self):
+        return self.latex
+
 def ltx_print(*args):
     s = ""
     for x in args:
         try:
-            s += x._repr_latex_()
+            s += x._repr_html_()
         except:
-            if isinstance(x, str):
-                s += cgi.escape(x)
-            else:
-                s += cgi.escape(repr(x))
+            try:
+                s += x._repr_latex_()
+            except:
+                if isinstance(x, str):
+                    s += cgi.escape(x)
+                else:
+                    s += cgi.escape(repr(x))
         s += "<br />"
     return MiniLatex(s)
 

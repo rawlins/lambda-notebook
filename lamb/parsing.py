@@ -259,7 +259,7 @@ def latex_output(accum, env):
             lines.append(ensuremath(fullvar(accum, k)._repr_latex_() + "\\:=\\:" + accum[k]._repr_latex_()))
         elif isinstance(accum[k], lang.Item):
             # item will automatically print an equality statement
-            lines.append(ensuremath(accum[k]._repr_latex_()))
+            lines.append(ensuremath(accum[k]._repr_html_()))
         else:
             print("(Unknown) %s \\:=\\: %s" % (k, accum[k]))
     return MiniLatex("<br />\n".join(lines))
