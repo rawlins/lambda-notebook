@@ -400,8 +400,10 @@ class TypedExpr(object):
                     return derived(new_term, self, derivation_reason)
                 else:
                     result = self.try_adjust_type_local(unify_target, derivation_reason, assignment, env)
-                    result = result.under_type_assignment(env.type_mapping)
-                    result._type_env = env
+                    if result is not None:
+                        result = result.under_type_assignment(env.type_mapping)
+                        if result is not None:
+                            result._type_env = env
                     if result is None:
                         logger.warning("In type adjustment, unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.type, unify_target))
                         return self
@@ -409,6 +411,8 @@ class TypedExpr(object):
                         return derived(result, self, derivation_reason)
 
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
+        # write an error instead of throwing an exception -- this is easier for the user to handle atm
+        logger.error("Unimplemented `try_adjust_type_local` in class '%s'" % type(self).__name__)
         return None
 
     def get_type_env(self, force_recalc=False):
@@ -1364,6 +1368,10 @@ class Tuple(TypedExpr):
         """Return a python `tuple` version of the Tuple object."""
         return tuple(self.args)
 
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
+        content = [self.args[i].try_adjust_type(unified_type[i], derivation_reason=derivation_reason, assignment=assignment) for i in range(len(self.args))]
+        return self.local_copy(self.op, *content)
+
     def __repr__(self):
         return "(" + ", ".join([repr(a) for a in self.args]) + ")"
 
@@ -1878,6 +1886,16 @@ class TupleIndex(BinaryOpExpr):
 
     def local_copy(self, op, arg1, arg2, type_check=True):
         return TupleIndex(arg1, arg2)
+
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
+        if isinstance(self.args[1].op, Number):
+            ttype = list(self.args[0].type)
+            ttype[self.args[1].op] = unified_type
+            adjusted_tuple = self.args[0].try_adjust_type(types.TupleType(*ttype))
+            return self.local_copy(self.op, adjusted_tuple, self.args[1])
+        else:
+            logger.warning("Using non-constant index; not well-supported at present.")
+            return None
 
     def __str__(self):
         return "%s\nType: %s" % (repr(self), self.type)
