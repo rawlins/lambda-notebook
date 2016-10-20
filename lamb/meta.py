@@ -748,12 +748,12 @@ class TypedExpr(object):
             # args[0] is either an unsaturated function, a term, or a string that needs parsed.
             # in the first two cases, return a unary TypedExpr
             s = args[0]
-            if isinstance(s, Number): 
-                return TypedTerm(s, type_n)
-            elif s is True:
+            if s is True:
                 return true_term
             elif s is False:
                 return false_term
+            elif isinstance(s, Number): 
+                return TypedTerm(s, type_n)
             elif isinstance(s, str):
                 #return cls.parse_expr_string(s, assignment)
                 return cls.parse(s, assignment)
