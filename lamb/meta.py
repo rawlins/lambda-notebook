@@ -493,7 +493,7 @@ class TypedExpr(object):
             locals = dict()
         ## Replace the alternative spellings of operators with canonical spellings
         s = s.replace('==>', '>>').replace('<==', '<<')
-        s = s.replace('<=>', '%').replace('=/=', '^')
+        s = s.replace('<=>', '%').replace('=/=', '^').replace('==', '%')
         s = TypedExpr.expand_terms(s, assignment=assignment, ignore=locals.keys())
         ## Now eval the string.  (A security hole; do not use with an adversary.)
         # TODO: this won't necessarily do the right thing with assignment, can still result in inconsistent types
