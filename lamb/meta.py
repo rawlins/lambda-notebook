@@ -1057,6 +1057,25 @@ class TypedExpr(object):
                 return False
         return True
 
+    def simplify(self):
+        return self
+
+    def simplify_all(self):
+        result = self
+        dirty = False
+        if isinstance(result.op, TypedExpr):
+            new_op = result.op.simplify_all()
+            if new_op is not result.op:
+                dirty = True
+                result = derived(result.subst(0, new_op), result, desc="Recursive simplification of operator", subexpression=new_op)
+        for i in range(len(result.args)):
+            new_arg_i = result.args[i].simplify_all()
+            if new_arg_i is not result.args[i]:
+                dirty = True
+                result = derived(result.subst(i + 1, new_arg_i), result, desc="Recursive simplification of argument %i" % i, subexpression=new_arg_i)
+        result = result.simplify()
+        return result
+
     def reducible(self):
         if len(self.args) == 1 and isinstance(self.op, LFun):
             return True
@@ -1747,28 +1766,129 @@ class UnaryNegExpr(UnaryOpExpr): #unicode: ¬
     def __init__(self, body):
         super().__init__(type_t, "~", body, "~", "\\neg{}")
 
+    def simplify(self):
+        if self.args[0] == true_term:
+            return derived(false_term, self, desc="negation")
+        elif self.args[0] == false_term:
+            return derived(true_term, self, desc="negation")
+        else:
+            return self
+
+
 class BinaryAndExpr(BinaryOpExpr): #note: there is a unicode, ∧.
     def __init__(self, arg1, arg2):
         super().__init__(type_t, "&", arg1, arg2, "&", "\\wedge{}")
 
+    def simplify(self):
+        if self.args[0] == false_term or self.args[1] == false_term:
+            return derived(false_term, self, desc="conjunction")
+        elif self.args[0] == true_term:
+            return derived(self.args[1].copy(), self, desc="conjunction")
+        elif self.args[1] == true_term:
+            return derived(self.args[0].copy(), self, desc="conjunction")
+        elif self.args[0] == self.args[1]:
+            return derived(true_term, self, desc="conjunction")
+        else:
+            return self
+
 class BinaryOrExpr(BinaryOpExpr): #unicode: ∨.
     def __init__(self, arg1, arg2):
         super().__init__(type_t, "|", arg1, arg2, "|", "\\vee{}")
+
+    def simplify(self):
+        if self.args[0] == true_term or self.args[1] == true_term:
+            return derived(true_term, self, desc="disjunction")
+        elif self.args[0] == false_term:
+            return derived(self.args[1].copy(), self, desc="disjunction") # covers case of False | False
+        elif self.args[1] == false_term:
+            return derived(self.args[0].copy(), self, desc="disjunction")            
+        elif self.args[0] == self.args[1]:
+            return derived(true_term, self, desc="disjunction")
+        else:
+            return self
+
 
 #unicode arrow: →
 class BinaryArrowExpr(BinaryOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, ">>", arg1, arg2, ">>", "\\rightarrow{}")
 
+    def simplify(self):
+        if self.args[0] == false_term:
+            return derived(true_term, self, desc="material implication")
+        elif self.args[0] == true_term:
+            return derived(self.args[1].copy(), self, desc="material implication")
+        elif self.args[1] == false_term:
+            return derived(UnaryNegExpr(self.args[0]), self, desc="material implication")
+        elif self.args[1] == true_term:
+            return derived(true_term, self, desc="material implication")
+        elif self.args[0] == self.args[1]:
+            return derived(true_term, self, desc="material implication")
+        else:
+            return self
+
 # unicode: ↔
 class BinaryBiarrowExpr(BinaryOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, "<=>", arg1, arg2, "<=>", "\\leftrightarrow{}")
 
+    def simplify(self):
+        if self.args[0] == false_term:
+            if self.args[1] == true_term:
+                return derived(false_term, self, desc="biconditional")
+            elif self.args[1] == false_term:
+                return derived(true_term, self, desc="biconditional")
+            else:
+                return derived(UnaryNegExpr(self.args[1]), self, "biconditional")
+        elif self.args[0] == true_term:
+            if self.args[1] == false_term:
+                return derived(false_term, self, desc="biconditional")
+            elif self.args[1] == true_term:
+                return derived(true_term, self, desc="biconditional")
+            else:
+                return derived(self.args[1].copy(), self, desc="biconditional")
+        elif self.args[1] == false_term: # term+term cases are already taken care of
+            return derived(UnaryNegExpr(self.args[0]), self, desc="biconditional")
+        elif self.args[1] == true_term:
+            return derived(self.args[0].copy(), self, desc="biconditional")
+        elif self.args[0] == self.args[1]:
+            return derived(true_term, self, desc="biconditional")
+        else:
+            return self
+
+
 # TODO: generalize this?
 class BinaryNeqExpr(BinaryOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, "^", arg1, arg2, "=/=", "\\not=")
+
+    def simplify(self):
+        if self.args[0] == false_term:
+            if self.args[1] == true_term:
+                return derived(true_term, self, desc="neq")
+            elif self.args[1] == false_term:
+                return derived(false_term, self, desc="neq")
+            else:
+                return derived(self.args[1].copy(), self, desc="neq")
+                
+        elif self.args[0] == true_term:
+            if self.args[1] == false_term:
+                return derived(true_term, self, desc="neq")
+            elif self.args[1] == true_term:
+                return derived(false_term, self, desc="neq")
+            else:
+                return derived(UnaryNegExpr(self.args[1]), self, desc="neq")
+        elif self.args[1] == true_term: # term+term cases are already taken care of
+            return derived(UnaryNegExpr(self.args[0]), self, desc="neq")
+        elif self.args[1] == false_term:
+            return derived(self.args[0].copy(), self, desc="neq")
+        elif self.args[0] == self.args[1]:
+            return derived(false_term, self, desc="neq")
+        else:
+            return self # note: don't simplify p =/= q; this would be a job for a prover
+
+
+
 
 class BinaryGenericEqExpr(BinaryOpExpr):
     """Type-generic equality.  This places no constraints on the type of `arg1` and `arg2` save that they be equal.  See `eq_factory`."""
@@ -3068,6 +3188,8 @@ def derivation_factory(result, desc=None, latex_desc=None, origin=None, steps=No
 def derived(result, origin, desc=None, latex_desc=None, subexpression=None, allow_trivial=False):
     """Convenience function to return a derived TypedExpr while adding a derivational step.
     Always return result, adds or updates its derivational history as a side effect."""
+    if isinstance(result, TypedTerm) and result.derivation is None:
+        result = result.copy() # avoid mixing up derivations on terms.  TODO: assess how bad this is.
     trivial = False
     if result == origin: # may be inefficient?
         if allow_trivial:
@@ -3263,6 +3385,14 @@ def test_repr_parse_abstract(self, depth):
             print("Failure on depth %i expression '%s'" % (depth, repr(x)))
         self.assertTrue(result)
 
+def testsimp(self, a, b):
+    intermediate = a.simplify()
+    teb = te(b)
+    if intermediate != teb:
+        print("Failed simplification test: '%s == %s'" % (repr(a), repr(b)))
+    self.assertEqual(intermediate, teb)
+    return intermediate
+
 class MetaTest(unittest.TestCase):
     def setUp(self):
         self.ident = te("L x_e : x") 
@@ -3317,6 +3447,69 @@ class MetaTest(unittest.TestCase):
         self.assertNotEqual(test3[2][1][1], test3[2][1][2])
         self.assertNotEqual(test3[2][1][1], test3[2][1][3])
         self.assertNotEqual(test3[2][1][2], test3[2][1][3])
+
+    def test_binary_simplify(self):
+        # negation
+        testsimp(te("~False"), True)
+        testsimp(te("~True"), False)
+        testsimp(te("~p_t"), te("~p_t"))
+
+        # conjunction
+        testsimp(te("True & True"), True)
+        testsimp(te("True & False"), False)
+        testsimp(te("False & True"), False)
+        testsimp(te("False & False"), False)
+        testsimp(te("False & p_t"), False)
+        testsimp(te("p_t & False"), False)
+        testsimp(te("True & p_t"), te("p_t"))
+        testsimp(te("p_t & True"), te("p_t"))
+        testsimp(te("p_t & q_t"), te("p_t & q_t"))
+
+        # disjunction
+        testsimp(te("True | True"), True)
+        testsimp(te("True | False"), True)
+        testsimp(te("False | True"), True)
+        testsimp(te("False | False"), False)
+        testsimp(te("False | p_t"), te("p_t"))
+        testsimp(te("p_t | False"), te("p_t"))
+        testsimp(te("True | p_t"), True)
+        testsimp(te("p_t | True"), True)
+        testsimp(te("p_t | q_t"), te("p_t | q_t"))
+
+        # arrow
+        testsimp(te("True >> True"), True)
+        testsimp(te("True >> False"), False)
+        testsimp(te("False >> True"), True)
+        testsimp(te("False >> False"), True)
+        testsimp(te("False >> p_t"), True)
+        testsimp(te("p_t >> False"), te("~p_t"))
+        testsimp(te("True >> p_t"), te("p_t"))
+        testsimp(te("p_t >> True"), True)
+        testsimp(te("p_t >> q_t"), te("p_t >> q_t"))
+
+        # biconditional
+        testsimp(te("True <=> True"), True)
+        testsimp(te("True <=> False"), False)
+        testsimp(te("False <=> True"), False)
+        testsimp(te("False <=> False"), True)
+        testsimp(te("False <=> p_t"), te("~p_t"))
+        testsimp(te("p_t <=> False"), te("~p_t"))
+        testsimp(te("True <=> p_t"), te("p_t"))
+        testsimp(te("p_t <=> True"), te("p_t"))
+        testsimp(te("p_t <=> q_t"), te("p_t <=> q_t"))
+        testsimp(te("p_t <=> p_t"), True)
+
+        # neq
+        testsimp(te("True =/= True"), False)
+        testsimp(te("True =/= False"), True)
+        testsimp(te("False =/= True"), True)
+        testsimp(te("False =/= False"), False)
+        testsimp(te("False =/= p_t"), te("p_t"))
+        testsimp(te("p_t =/= False"), te("p_t"))
+        testsimp(te("True =/= p_t"), te("~p_t"))
+        testsimp(te("p_t =/= True"), te("~p_t"))
+        testsimp(te("p_t =/= q_t"), te("p_t =/= q_t"))
+        testsimp(te("p_t =/= p_t"), False)
 
     # each of these generates 1000 random expressions with the specified depth, and checks whether their repr 
     # parses as equal to the original expression
