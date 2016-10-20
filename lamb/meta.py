@@ -1899,6 +1899,15 @@ class BinaryGenericEqExpr(BinaryOpExpr):
         # some problems with equality using '==', TODO recheck, but for now just use "<=>" in the normalized form
         super().__init__(type_t, "<=>", arg1, arg2, op_name_uni = "<=>", op_name_latex = "=", tcheck_args = False)
 
+    def simplify(self):
+        if self.args[0] == self.args[1]:
+            return derived(true_term, self, desc="Equality")
+        else:
+            if isinstance(self.args[0].op, Number) and isinstance(self.args[1].op, Number):
+                return derived(false_term, self, desc="Equality")
+            else:
+                return self # this would require a solver for the general case
+
 def eq_factory(arg1, arg2):
     """If type is type t, return a biconditional.  Otherwise, build an equality statement."""
     arg1 = TypedExpr.ensure_typed_expr(arg1)
@@ -1910,7 +1919,7 @@ def eq_factory(arg1, arg2):
         return BinaryGenericEqExpr(arg1, arg2)
 
 
-def binary_num_op(op, op_uni=None, op_latex=None):
+def binary_num_op(op, op_uni=None, op_latex=None, simplify_fun=None):
     """Factory for binary numeric operators."""
     if op_uni is None:
         op_uni = op
@@ -1919,9 +1928,17 @@ def binary_num_op(op, op_uni=None, op_latex=None):
     class BinOp(BinaryOpExpr):
         def __init__(self, arg1, arg2):
             super().__init__(type_n, op, arg1, arg2, op_uni, op_latex)
+
+        def simplify(self):
+            if simplify_fun is None:
+                return self
+            if isinstance(self.args[0].op, Number) and isinstance(self.args[1].op, Number):
+                return derived(te(simplify_fun(self.args[0].op, self.args[1].op)), self, desc=op_uni)
+            else:
+                return self
     return BinOp
 
-def binary_num_rel(op, op_uni=None, op_latex=None):
+def binary_num_rel(op, op_uni=None, op_latex=None, simplify_fun=None):
     """Factory for binary numeric relations."""
     if op_uni is None:
         op_uni = op
@@ -1931,17 +1948,26 @@ def binary_num_rel(op, op_uni=None, op_latex=None):
         def __init__(self, arg1, arg2):
             # this is a bit redundant but it works
             super().__init__(type_t, op, self.ensure_typed_expr(arg1, types.type_n), self.ensure_typed_expr(arg2, types.type_n), op_uni, op_latex, tcheck_args=False)
+
+        def simplify(self):
+            if simplify_fun is None:
+                return self
+            if isinstance(self.args[0].op, Number) and isinstance(self.args[1].op, Number):
+                return derived(te(simplify_fun(self.args[0].op, self.args[1].op)), self, desc=op_uni)
+            else:
+                return self
+
     return BinOp
 
-BinaryLExpr = binary_num_rel("<", "<", "<")
-BinaryLeqExpr = binary_num_rel("<=", "<=", "\\leq{}")
-BinaryGeqExpr = binary_num_rel(">=", ">=", "\\geq{}")
-BinaryGExpr = binary_num_rel(">", ">", ">")
-BinaryPlusExpr = binary_num_op("+", "+", "+")
-BinaryMinusExpr = binary_num_op("-", "-", "-")
-BinaryDivExpr = binary_num_op("/", "/", "/")
-BinaryTimesExpr = binary_num_op("*", "*", "*")
-BinaryExpExpr = binary_num_op("**", "**", "**")
+BinaryLExpr = binary_num_rel("<", "<", "<", simplify_fun=lambda x,y: x<y)
+BinaryLeqExpr = binary_num_rel("<=", "<=", "\\leq{}", simplify_fun=lambda x,y: x<=y)
+BinaryGeqExpr = binary_num_rel(">=", ">=", "\\geq{}", simplify_fun=lambda x,y: x>=y)
+BinaryGExpr = binary_num_rel(">", ">", ">", simplify_fun=lambda x,y: x>y)
+BinaryPlusExpr = binary_num_op("+", "+", "+", simplify_fun=lambda x,y: x+y)
+BinaryMinusExpr = binary_num_op("-", "-", "-", simplify_fun=lambda x,y: x-y)
+BinaryDivExpr = binary_num_op("/", "/", "/", simplify_fun=lambda x,y: x/y)
+BinaryTimesExpr = binary_num_op("*", "*", "*", simplify_fun=lambda x,y: x*y)
+BinaryExpExpr = binary_num_op("**", "**", "**", simplify_fun=lambda x,y: x**y)
 
 
 # There's only one of these, so a factory would be silly
@@ -1949,6 +1975,11 @@ class UnaryNegativeExpr(UnaryOpExpr):
     def __init__(self, body):
         super().__init__(type_n, "-", body, "-", "-")
 
+    def simplify(self):
+        if isinstance(self.args[0].op, Number):
+            return derived(te(- self.args[0].op), self, desc="unary -")
+        else:
+            return self
 
 class SetContains(BinaryOpExpr):
     """Binary relation of set membership.  This uses `<<` as the symbol.
