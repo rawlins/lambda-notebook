@@ -940,7 +940,7 @@ class TreeComposite(Composite, Tree):
 
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as possible."""
-        self.content = self.content.reduce_all()
+        self.content = self.content.reduce_all().simplify_all()
         return self
 
     def _repr_latex_(self):
@@ -1124,7 +1124,7 @@ class CompositionResult(Composable):
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as possible."""
         for i in range(len(self.results)):
-            new_c = self.results[i].content.reduce_all()
+            new_c = self.results[i].content.reduce_all().simplify_all()
             # TODO probably should copy
             # currently, works by side effect
             self.results[i].content = new_c
@@ -1244,7 +1244,7 @@ class Item(TreeComposite):
 
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as possible."""
-        self.content = self.content.reduce_all()
+        self.content = self.content.reduce_all().simplify_all()
         return self
 
     def reduce(self):
