@@ -3220,7 +3220,9 @@ def derived(result, origin, desc=None, latex_desc=None, subexpression=None, allo
     """Convenience function to return a derived TypedExpr while adding a derivational step.
     Always return result, adds or updates its derivational history as a side effect."""
     if isinstance(result, TypedTerm) and result.derivation is None:
-        result = result.copy() # avoid mixing up derivations on terms.  TODO: assess how bad this is.
+        tenv = result._type_env # need to manually copy the typeenv??  TODO: double check...
+        result = result.copy() # avoid mixing up derivations on terms.  TODO: assess how bad this is.  
+        result._type_env = tenv
     trivial = False
     if result == origin: # may be inefficient?
         if allow_trivial:
