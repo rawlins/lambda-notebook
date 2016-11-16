@@ -211,7 +211,7 @@ class Assignment(collections.MutableMapping):
     def latex_str(self):
         # the superscripting is the Heim & Kratzer style, but I'm not sure I really like it...
         if isinstance(self.base, Assignment):
-            return ensuremath("{%s}^{%s}" % (self.base.latex_str(), ",".join([("%s/%s" % (self.store[k].latex_str(), k.latex_str())) for k in self.store.keys()])))
+            return ensuremath("{%s}^{%s}" % (self.base.latex_str(), ",".join([("%s/%s" % (self.store[k], k)) for k in self.store.keys()])))
         else:
             return self.name # TODO: display defaults??
 
@@ -1461,7 +1461,7 @@ def tree_leaf(t):
 
 class TreeCompositionOp(object):
     """A composition operation on a local tree segment."""
-    def __init__(self, name, operation, preconditions=None, commutative=False, allow_none=False, system=None):
+    def __init__(self, name, operation, preconditions=None, commutative=False, allow_none=False, reduce=True, system=None):
         """Build a composition operation on trees given some function.
 
         `name`: the name of the operation, e.g. "FA".
@@ -1480,6 +1480,7 @@ class TreeCompositionOp(object):
         else:
             self.preconditions = preconditions
         self.system = system # adding the rule to a system will set this, no need to pre-check
+        self.reduce = reduce
         self.typeshift = False
 
     @property
@@ -1520,7 +1521,8 @@ class TreeCompositionOp(object):
                 if d.content is None:
                     raise TypeMismatch(tree, None, mode="None not allowed for %s" % self.name) 
         result = self.operation(tree, assignment=assignment)
-        # TODO: add a reduce_all stage?
+        if self.reduce:
+            result = result.reduce_all()
         result.mode = self
         return result
 
