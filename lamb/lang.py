@@ -1482,6 +1482,8 @@ class TreeCompositionOp(object):
         self.system = system # adding the rule to a system will set this, no need to pre-check
         self.reduce = reduce
         self.typeshift = False
+        self.latex_desc = None
+        self.desc = None
 
     @property
     def name(self):
@@ -1491,11 +1493,26 @@ class TreeCompositionOp(object):
     def arity(self):
         return 1
 
+    def description(self):
+        return "Tree composition rule"
+
     def composite_name(self, t):
         return t.label()
 
     def __str__(self):
         return "Tree composition op '%s'" % self.name
+
+    def _repr_html_(self):
+        if self.latex_desc is None:
+            return "%s <i>%s</i>, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
+        else:
+            return "%s <i>%s</i>, built on combinator '%s'" % (self.description(), self.name, self.latex_desc)
+
+    def __repr__(self):
+        if self.desc is None:
+            return "%s %s, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
+        else:
+            return "%s %s, built on combinator '%s'" % (self.description(), self.name, self.desc)
 
 
     # this could be a classmethod, as it doesn't reference anything on an instance.  Old version
@@ -2215,7 +2232,21 @@ def tree_pm_fun_wrong(t, assignment=None):
     return BinaryComposite(t[0], t[1], conjoined_c, source=t)
 
 
+def tree_pa_metalanguage_fun(t, assignment=None):
+    """H&K-style Predicate Abstraction, implemented in the metalanguage.
 
+    This shifts the assignment for the interpretation of the sister of the binder to match up traces with the bound variable.
+    It assumes the binder is the left sister, and will generate a TypeMismatch otherwise."""
+    binder = t[0]
+    if (binder.content is not None) or not binder.name.strip().isnumeric():
+        raise types.TypeMismatch(t, None, "Predicate Abstraction")
+    index = int(binder.name.strip())
+    vname = "t%i" % index
+    outer_vname = t[1].content.find_safe_variable()
+    new_a = Assignment(assignment)
+    new_a.update({vname: te("%s_e" % outer_vname)})
+    f = meta.LFun(types.type_e, t[1].content.under_assignment(new_a), varname=outer_vname)
+    return BinaryComposite(t[0], t[1], f, source=t)
 
 class Trace(Item):
     """An indexed trace of some specified type.
@@ -2321,9 +2352,10 @@ def setup_hk_chap3():
     tfa_l = TreeCompositionOp("FA/left", tree_left_fa_fun) # Function Application
     tfa_r = TreeCompositionOp("FA/right", tree_right_fa_fun) # Function Application
     tpm = TreeCompositionOp("PM", tree_pm_fun) # Predicate Modification
+    tpa = TreeCompositionOp("PA", tree_pa_metalanguage_fun, allow_none=True)
     nn = TreeCompositionOp("NN", tree_nn_fun, preconditions=tree_unary) # Non-branching Node
 
-    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, nn], basictypes={type_e, type_t}, name="H&K Tree version")
+    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn], basictypes={type_e, type_t}, name="H&K Tree version")
     hk3_system.add_items(cat, gray, john, julius, inP, texas, isV)
 
 
