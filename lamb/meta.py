@@ -271,7 +271,33 @@ def merge_type_envs(env1, env2, target=None):
             result[k2] = env2[k2]
     return result
 
+def merge_tes(te1, te2, symmetric=True):
+    """Produce a TypedExpr that is the result of 'merging' `te1` and `te2`.
 
+    TypedExprs can be merged only if their types can match.  This has two types of behaviors.
+    * Symmetric: if `te1` is a term and `te2` is not a term, return te2 coerced to the principal type; v.v for `te2` and `te1.
+        Otherwise, if they are equal (using `==`, which checks structural/string identity) return the result at the principle type.
+    * Non-symmetric: if `te1` is a term, return `te2` at the principal type.  Otherwise, return something (at the principal type) only if `te1` and `te2` are equal.
+    The failure cases for both modes will raise a TypeMismatch.
+    """
+    ts = get_type_system()
+    principal = ts.unify(te1.type, te2.type)
+    if principal is None:
+        raise TypeMismatch(te1, te2, "Failed to merge typed expressions (incompatible types)")
+    te1_new = te1.try_adjust_type(principal)
+    te2_new = te2.try_adjust_type(principal)
+    if te1_new is None or te2_new is None:
+        raise TypeMismatch(te1, te2, "Failed to merge typed expressions (type adjustment failed)")
+    if te1_new.term():
+        if symmetric and te2_new.term() and not (te1_new == te2_new):
+            raise TypeMismatch(te1, te2, "Failed to merge typed expressions; result is not equal")
+        return te2_new
+    elif symmetric and te2_new.term():
+        return te1_new
+    else:
+        if not (te1_new == te2_new):
+            raise TypeMismatch(te1, te2, "Failed to merge typed expressions; result is not equal")
+        return te1_new
 
 class TypedExpr(object):
     """Basic class for a typed n-ary logical expression in a formal language.  This class should generally be

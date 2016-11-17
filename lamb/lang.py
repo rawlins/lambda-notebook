@@ -193,6 +193,19 @@ class Assignment(collections.MutableMapping):
         new_a.update(updates)
         return new_a
 
+    def merge(self, assignment):
+        """Merge in another assignment.
+
+        This has non-symmetric behavior: if the types are ok, and the value here is a term, 
+        the value in `assignment` (at the principal type) will override the value here."""
+        new_a = Assignment(self)
+        for k in assignment:
+            if k in new_a:
+                # this will raise a TypeMismatch if the merge fails.
+                new_a[k] = meta.merge_tes(new_a[k], assignment[k], symmetric=False)
+            else:
+                new_a[k] = assignment[k]
+
     def text(self):
         if isinstance(self.base, Assignment):
             return "%s[%s]" % (self.base.text(), ",".join([("%s/%s" % (self.store[k], k)) for k in self.store.keys()]))
@@ -308,6 +321,11 @@ class SingletonComposable(Composable):
             return VacuousAssignmentController()
         else:
             return self.system.assign_controller
+
+    def under_assignment(self, assignment):
+        a = self.assign_controller.default()
+        a.merge(assignment)
+        return self.content.under_assignment(a)
 
     def composite_name(self, other=None):
         if other is not None:
