@@ -149,8 +149,6 @@ class Composable(object):
 
     def __pow__(self, other):
         r = self * other
-        if isinstance(r, CompositionResult):
-            r.print_details()
         return r
 
 class Assignment(collections.MutableMapping):
@@ -766,7 +764,12 @@ class TreeComposite(Composite, Tree):
         Composite.__init__(self, children, content, mode=mode, source=source)
         Tree.__init__(self, content, children)
         self.children = self # hack
-
+        self.collapsed_paths = list()
+        self.collapsed_count = 1
+        for c in children:
+            if isinstance(c, TreeComposite):
+                self.collapsed_count *= c.collapsed_count
+                
     @property
     def p1(self):
         return self[0]
@@ -775,6 +778,26 @@ class TreeComposite(Composite, Tree):
     def p2(self):
         return self[1]
 
+    def extend_collapsed_paths(self, tc):
+        self.collapsed_paths.append(tc)
+        if isinstance(tc, TreeComposite):
+            self.collapsed_paths.extend(tc.collapsed_paths)
+            self.collapsed_count += tc.collapsed_count
+
+    def collapsed_compose_str(self):
+        s = ""
+        i = 0
+        for p in self.collapsed_paths:
+            if p.mode is None:
+                continue
+            if i > 0:
+                s += ", "
+            i += 1
+            s += p.mode.name
+        return s
+
+    def all_paths(self):
+        return [self, ] + self.collapsed_paths
 
     def placeholder(self):
         if self.content is not None and isinstance(self.content, PlaceholderTerm):
@@ -784,7 +807,7 @@ class TreeComposite(Composite, Tree):
     def compose_str_latex(self):
         return self.compose_str(latex=True)
 
-    def compose_str(self, latex=False):
+    def compose_str(self, latex=False, collapsed=True):
         if isinstance(self.content, Exception):
             if latex:
                 try:
@@ -810,6 +833,10 @@ class TreeComposite(Composite, Tree):
                     s += " <b>[by %s]</b>" % self.mode.name
                 else:
                     s += " [by %s]" % self.mode.name
+            if collapsed:
+                cstr = self.collapsed_compose_str()
+                if len(cstr) > 0:
+                    s += " (%i equivalent paths not shown: %s)" % (len(self.collapsed_paths), cstr)
             return s
 
     def find_steps(self):
@@ -915,6 +942,9 @@ class TreeComposite(Composite, Tree):
                     expl = self.mode
                 else:
                     expl = self.mode.name
+                collapsed = self.collapsed_compose_str()
+                if len(collapsed) > 0:
+                    expl += "<span style=\"font-size:x-small\"> (or: " + self.collapsed_compose_str() + ")</span>"
             else:
                 expl = None
             # TODO revisit and generalize this (maybe override Item in a better way?)
@@ -983,15 +1013,18 @@ class CompositionResult(Composable):
         """Construct a CompositionResult given the output of the things that can happen while doing composition.
 
         `items`: a list of Composables that were the input to the CompositionStep.  These might themselves be CompositionResults.
-        `results`: a list of results from composition.  These should not be (?) themselves list-like objects.
+        `results`: a list of results from composition.
         `failures`: a list of failed composition paths, usually in the form of information-rich TypeMismatch objects.
         `source`: some representation of a natural language structure that led to this composition step.
 
         """
         self.items = items
-        self.results = results
         self.failures = failures
         self.source = source
+        self.result_hash = dict()
+        self.results = list()
+        for r in results:
+            self.add_result(r)
 
     def __repr__(self):
         return "CompositionResult(results=%s, failures=%s)" % (repr(self.results), repr(self.failures))
@@ -1010,7 +1043,7 @@ class CompositionResult(Composable):
                 s += "    " + composite.compose_str()
         return s
 
-    def show(self, recurse=True, style=None):
+    def show(self, recurse=True, style=None, failures=False):
         s = str()
         if (len(self.results) == 0):
             if self.source is None:
@@ -1026,8 +1059,14 @@ class CompositionResult(Composable):
             n = 0
             for composite in self.results:
                 #TODO: newlines in mathjax??
-                s += "\n<br />" + latex_indent() + "[%i]: " % n + composite.latex_str()
+                num = composite.collapsed_count
+                if num == 1:
+                    s += "\n<br />" + latex_indent() + "[%i]: " % n + composite.latex_str()
+                else:
+                    s += "\n<br />" + latex_indent() + "[%i]: %s &nbsp;&nbsp;<span style=\"font-size:small\">(%i equivalent paths lead here)</span>" % (n, composite.latex_str(), num)
                 n += 1
+            if failures:
+                s += "\n<br /><br />" + "Composition attempts that failed:<br />\n" + self.failures_str_latex()
         return MiniLatex(s)
 
     def build_summary_for_tree(self, style=None):
@@ -1069,11 +1108,11 @@ class CompositionResult(Composable):
     def failures_trace_latex(self):
         raise NotImplementedError
 
-    def trace(self):
+    def trace(self, subpaths=False):
         """Trace all derivation paths in detail"""
-        return self.full_trace_latex()
+        return self.full_trace_latex(subpaths=subpaths)
 
-    def full_trace_latex(self):
+    def full_trace_latex(self, subpaths=False):
         """Trace all derivation paths in detail"""
         s = str()
         i = 1
@@ -1086,13 +1125,31 @@ class CompositionResult(Composable):
         else:
             s += "%i paths:<br />\n" % len(self.results)
         for r in self.results:
-            steps = r.find_steps()
-            step_i = 1
-            if len(self.results) > 1:
-                s += "Path %i<br />\n" % i
-            for step in steps:
-                s += latex_indent() + ("Step %i: " % step_i) + step.compose_str_latex() + "<br />\n"
-                step_i += 1
+            spcount = r.collapsed_count #len(r.collapsed_paths)
+            if subpaths:
+                spaths = r.all_paths()
+            else:
+                spaths = (r,)
+            sub_i = 1
+            for path in spaths:
+                steps = path.find_steps()
+                step_i = 1
+                if len(self.results) > 1 or spcount > 1:
+                    if spcount > 1:
+                        if subpaths:
+                            spstr = ".%i" % sub_i
+                        else:
+                            spstr = " (%i equivalent sub-paths not shown)" % (spcount - 1)
+                    else:
+                        spstr = ""
+                    s += "<b>Path %i%s:</b><br />\n" % (i, spstr)
+                for step in steps:
+                    if step is path:
+                        s += latex_indent() + ("Step %i: " % step_i) + step.compose_str(latex=True, collapsed=(not subpaths)) + "<br />\n"
+                    else:
+                        s += latex_indent() + ("Step %i: " % step_i) + step.compose_str(latex=True) + "<br />\n"
+                    step_i += 1
+                sub_i += 1
             i += 1
         return meta.MiniLatex(s)
 
@@ -1107,8 +1164,11 @@ class CompositionResult(Composable):
             s += "%i composition paths:<br />\n" % len(self.results)
         i = 0
         for r in self.results:
-            if len(self.results) > 1:
-                s += "Path [%i]:<br />\n" % i
+            if len(self.results) > 1 or r.collapsed_count > 1:
+                s += "Path [%i]:" % i
+                if r.collapsed_count > 1:
+                    s += "(%i other equivalent paths)" % (r.collapsed_count - 1)
+                s += "<br />\n" 
             # this will return a MiniLatex-packaged string.
             rst = r.tree(derivations=derivations, recurse=recurse, style=style)
             s += rst._repr_html_() + "<br /><br />"
@@ -1141,23 +1201,25 @@ class CompositionResult(Composable):
 
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as possible."""
-        for i in range(len(self.results)):
-            new_c = self.results[i].content.reduce_all().simplify_all()
-            # TODO probably should copy
-            # currently, works by side effect
-            self.results[i].content = new_c
+
+        # this is a bit complicated because reducing in place may change the hash of any results. (not to mention collapse results)
+        # it's generally better to just enable reduction in the composition system.
+        rcopy = list(self.results)
+        dirty = False
+        for r in rcopy:
+            old_c = r.content
+            new_c = r.content.reduce_all().simplify_all()
+            if new_c != old_c:
+                dirty = True
+                # TODO probably should copy
+                # currently, works by side effect
+                r.content = new_c
+        if dirty:
+            self.results = list()
+            self.result_hash = dict()
+            for r in rcopy:
+                self.add_result(r)
         return self
-
-
-
-    def print_details(self):
-        # TODO better
-        if self.items is None:
-            print("composing iterables")
-        else:
-            print("composing '%s' * '%s'" % (self.items[0], self.items[1]))
-        print(str(self))
-
 
     def result_items(self):
         return self.results
@@ -1181,11 +1243,19 @@ class CompositionResult(Composable):
     def __getitem__(self, i):
         return self.results[i]
 
+    def add_result(self, r):
+        if r.content in self.result_hash:
+            self.result_hash[r.content].extend_collapsed_paths(r)
+        else:
+            self.result_hash[r.content] = r
+            self.results.append(r)
+
     def extend(self, other):
         """Extend this with another CompositionResult."""
         if not isinstance(other, CompositionResult):
             raise ValueError
-        self.results.extend(other.results)
+        for r in other.results:
+            self.add_result(r)
         self.failures.extend(other.failures)
 
     def prune(self, i, reason=None):
@@ -1193,22 +1263,10 @@ class CompositionResult(Composable):
 
         Will move the derivation into the `failures` list."""
         result = self.results[i]
+        del self.result_hash[result.content]
         del self.results[i]
         self.failures.append(result)
         #TODO: do something with reason
-
-    def eliminate_dups(cr):
-        """Eliminate any duplicates, at least by syntactic equality criteria."""
-        i = 0
-        while i < len(cr.content):
-            j = i + 1
-            while j < len(cr.content):
-                if cr.content[i].content == cr.content[j].content:
-                    cr.prune(j, reason="duplicate meaning")
-                else:
-                    j += 1
-            i += 1
-        return cr
 
 class CRFilter(object):
     """A filter on CompositionResults that enforces some specified meta-language criteria."""
@@ -1942,7 +2000,9 @@ class CompositionSystem(object):
             shift_result = self.last_resort_shift(*items, assignment=assignment)
             if shift_result is not None and len(shift_result.results) > 0:
                 return shift_result
-        return CompositionResult(items, results, failures)
+        ret = CompositionResult(items, results, failures)
+        return ret
+
 
     def last_resort_shift(self, *items, assignment=None):
         """Do last-resort style typeshifting (up to a constant depth).  That is, while (non-type-shifting) composition fails, try typeshifting
@@ -2005,13 +2065,6 @@ class CompositionSystem(object):
             r.failures.extend(c.find_empty_results()) # find any errors inherited from subtrees.
         r.source = c
         return r
-
-    def pcompose(self, i1, i2):
-        cret = self.compose(i1,i2)
-        cret.print_details()
-        return cret
-
-
 
 class TreeCompositionSystem(CompositionSystem):
     """A composition system for doing composition in tree structures."""
