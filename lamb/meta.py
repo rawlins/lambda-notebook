@@ -2223,15 +2223,8 @@ class BindingOp(TypedExpr):
         self.init_var(varname, vartype)
         # TODO: consider overriding __eq__ and __hash__.
         if type_check:
-            store_old_v = None
-            if assignment is None:
-                assignment = {self.varname: self.var_instance}
-            else:
-                #assignment = assignment.copy()
-                if self.varname in assignment:
-                    store_old_v = assignment[self.varname]
-                assignment[self.varname] = self.var_instance
-            self.init_body(self.ensure_typed_expr(body, body_type, assignment=assignment))
+            sassign = self.scope_assignment(assignment=assignment)
+            self.init_body(self.ensure_typed_expr(body, body_type, assignment=sassign))
             body_env = self.body.get_type_env()
             if self.varname in body_env.var_mapping: # binding can be vacuous
                 if body_env.var_mapping[self.varname] != self.vartype: # propagate type inference to binding expression
@@ -2240,12 +2233,16 @@ class BindingOp(TypedExpr):
                     self.init_var(self.varname, new_vartype)
             self.init_body(self.body.regularize_type_env())
             self.init_var_by_instance(self.var_instance.under_type_assignment(body_env.type_mapping, merge_intersect=False))
-            if store_old_v is not None:
-                assignment[self.varname] = store_old_v
         else:
             self.init_body(body)
 
-        
+    def scope_assignment(self, assignment=None):
+        if assignment is None:
+            assignment = dict()
+        else:
+            assignment = assignment.copy()
+        assignment[self.varname] = self.var_instance
+        return assignment
 
     def default_varname(self):
         return "x"
@@ -2481,16 +2478,12 @@ class BindingOp(TypedExpr):
             new_struc = [remainder,] + struc[1:]
         if assignment is None: 
             assignment = dict()
+        else:
+            assignment = assignment.copy()
+        store_old_v = None
         for var_tuple in var_list:
             (v,t) = var_tuple
             assignment[v] = TypedTerm(v, t)
-            if v in assignment:
-                assert(len(var_list) == 1)
-                store_old_v = assignment[v]
-            else:
-                # create a new one to avoid side effects
-                assignment = dict(assignment)
-                store_old_v = None
         body = None
         try:
             body = TypedExpr.try_parse_paren_struc_r(new_struc, assignment=assignment, locals=locals, vprefix=vprefix)
@@ -2502,10 +2495,6 @@ class BindingOp(TypedExpr):
         if body is None:
             raise parsing.ParseError("Can't create body-less binding operator expression", parsing.flatten_paren_struc(struc), None)
         result = BindingOp.binding_op_factory(op_class, var_list, body, assignment=assignment)
-        if store_old_v is not None:
-            assignment[v] = store_old_v
-        else:
-            del assignment[v]
         return result
 
 class ConditionSet(BindingOp):

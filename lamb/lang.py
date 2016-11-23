@@ -164,6 +164,11 @@ class Assignment(collections.MutableMapping):
         else:
             self.name = name
 
+    def copy(self):
+        new_a = Assignment(self.base, self.name)
+        new_a.store = self.store.copy()
+        return new_a
+
     def __getitem__(self, key):
         if key in self.store:
             return self.store[key]
