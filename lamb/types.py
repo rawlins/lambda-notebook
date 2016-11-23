@@ -375,8 +375,8 @@ class SetType(TypeConstructor):
 class TupleType(TypeConstructor):
     """Type for tuples.  See `lang.Tuple`."""
     def __init__(self, *signature):
-        if len(signature) == 0:
-            raise ValueError("Tuple type can't be 0 length")
+        #if len(signature) == 0:
+        #    raise ValueError("Tuple type can't be 0 length")
         self.signature = tuple(signature)
         TypeConstructor.__init__(self)
 
@@ -449,15 +449,12 @@ class TupleType(TypeConstructor):
         else:
             i = next
             signature = []
-            (m, i) = parse_control_fun(s, i)
-            signature.append(m)
-            i = parsing.consume_char(s, i, ",", "Missing comma in tuple (no 1-tuples allowed)")
-            (m, i) = parse_control_fun(s, i)
-            signature.append(m)
-            while i < len(s) and s[i] == ",":
-                i = parsing.consume_char(s, i, ",", "Missing comma in tuple (no 1-tuples allowed)")
+            while i < len(s) and s[i] != ")":
                 (m, i) = parse_control_fun(s, i)
                 signature.append(m)
+                if s[i] == ")":
+                    break
+                i = parsing.consume_char(s, i, ",", "Missing comma in tuple")
             i = parsing.consume_char(s, i, ")", "Unmatched ( in tuple type")
             return (TupleType(*signature), i)       
 

@@ -336,7 +336,6 @@ class TypedExpr(object):
         self.let = False
 
         if (len(args) == 0):
-            logger.warning("Vacuous container TypedExpr")
             args = list()
 
         self.op = op
