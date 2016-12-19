@@ -823,7 +823,7 @@ class TypedExpr(object):
                 arg.type_not_guessed()
                 coerced_op = op.try_coerce_new_argument(arg.type, assignment=assignment)
                 if coerced_op is not None:
-                    logger.info("Coerced guessed type for '%s' into %s, to match argument '%s'" % (op.type, repr(op), coerced_op.type, repr(arg)))
+                    logger.info("Coerced guessed type for '%s' into %s, to match argument '%s'" % (repr(op), coerced_op.type, repr(arg)))
                     op = coerced_op
                 else:
                     logger.warning("Unable to coerce guessed type %s for '%s' to match argument '%s' (type %s)" % (op.type, repr(op), repr(arg), arg.type))
