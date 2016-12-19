@@ -49,6 +49,8 @@ class LambMagics(Magics):
         super(LambMagics, self).__init__(shell)
         self.env = collections.OrderedDict()
         self.silent = False
+        self.ambiguity = False
+        self.cur_ambiguity = self.ambiguity
 
     def shadow_warnings(self, dict):
         l = check_shadowing(dict.keys())
@@ -58,6 +60,7 @@ class LambMagics(Magics):
     @line_cell_magic
     def lamb(self, line, cell=None):
         "Magic that works both as %lcmagic and as %%lcmagic"
+        self.cur_ambiguity = self.ambiguity
         if cell is None:
             #print("Called as line magic")
             (accum, env) = parsing.parse(line, self.env)
@@ -69,7 +72,7 @@ class LambMagics(Magics):
                 r = self.control_line(line)
                 if r is not None:
                     return r #TODO fix this up, not right
-            (accum, env) = parsing.parse(cell, self.env)
+            (accum, env) = parsing.parse(cell, self.env, ambiguity=self.cur_ambiguity)
             self.env = env
             self.control_line(line, post=True, accum=accum)
         self.shadow_warnings(accum)
@@ -102,6 +105,8 @@ class LambMagics(Magics):
             return None
         elif cmd == "all":
             return parsing.latex_output(self.env, self.env)
+        elif cmd == "ambiguity":
+            self.cur_ambiguity = True
         else:
             if cmd in self.specials.keys():
                 return self.specials[cmd](self)

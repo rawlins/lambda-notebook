@@ -362,12 +362,16 @@ class SingletonComposable(Composable):
     def step_tree(self):
         return self
 
-    def latex_str(self):
+    def latex_str(self, i=None):
         if self.content is None:
             return ensuremath(self.short_str_latex())
         elif isinstance(self.content, PlaceholderTerm):
             return self.content.latex_str()
-        return ensuremath(inbrs(self.name, self.assign_controller.render(latex=True)) + self.type_str_latex() + " \\:=\\: ") + self.content.latex_str()
+        if i is None:
+            istr = ""
+        else:
+            istr = "[%i]" % i
+        return ensuremath(inbrs(self.name + istr, self.assign_controller.render(latex=True)) + self.type_str_latex() + " \\:=\\: ") + self.content.latex_str()
 
     def compose_str_latex(self):
         return self.latex_str()
@@ -774,7 +778,7 @@ class TreeComposite(Composite, Tree):
         for c in children:
             if isinstance(c, TreeComposite):
                 self.collapsed_count *= c.collapsed_count
-                
+
     @property
     def p1(self):
         return self[0]
@@ -1294,6 +1298,44 @@ class CRFilter(object):
             else:
                 cresult.prune(i, reason=self.name)
         return cresult
+
+class Items(CompositionResult):
+    def __init__(self, item_list):
+        CompositionResult.__init__(self, list(), item_list, list())
+
+    def show(self, recurse=True, style=None, failures=False):
+        s = str()
+        if (len(self.results) == 0):
+            s += "Empty item list"
+        else:
+            n = 0
+            for composite in self.results:
+                #TODO: newlines in mathjax??
+                num = composite.collapsed_count
+                if n > 0:
+                    s += "\n<br />"
+                if num == 1:
+                    s += composite.latex_str(i=n)
+                else:
+                    s += "%s &nbsp;&nbsp;<span style=\"font-size:small\">(%i equivalent items)</span>" % (composite.latex_str(i=n), num)
+                n += 1
+        return MiniLatex(s)
+
+    def __setitem__(self, i, value):
+        self.results[i] = value
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return Items(self.results[i])
+        else:
+            return self.results[i]
+
+    def __delitem__(self, i):
+        del self.results[i]
+
+    def add_result(self, r):
+        # ignores the results hash...
+        self.results.append(r)
 
 class Item(TreeComposite):
     """This class represents a lexical item.  It is implemented as a TreeComposite without a daughter."""

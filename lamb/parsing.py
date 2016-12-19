@@ -113,7 +113,25 @@ def parse_te(line, env=None, use_env=False):
     accum["_llast"] = result
     return (result, accum)
 
-def parse_equality_line(s, env=None, transforms=None):
+def try_parse_item_name(s, env=None, ambiguity=False):
+    match = re.match(r'^\|\|([a-zA-Z _]+[a-zA-Z0-9 _]*)(\[-?([0-9]+|\*)\])?\|\|$', s)
+    if not match:
+        return (None, None)
+    lex_name = match.group(1).replace(" ", "_")
+    if lex_name != match.group(1):
+        meta.logger.info("Exporting item ||%s|| to python variable `%s`." % (match.group(1), lex_name))
+    index = None
+    index_str = match.group(2)
+    if not index_str or len(index_str) == 0 or index_str == "[*]":
+        if (lex_name in env.keys() and (ambiguity or index_str == "[*]")):
+            index = True
+        else:
+            index = None # override existing item or add a new one
+    else:
+        index = int(index_str[1:-1])
+    return (lex_name, index)
+
+def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
     from lamb import meta, lang, types
     # TODO should this go by lines....
     if env is None:
@@ -142,10 +160,9 @@ def parse_equality_line(s, env=None, transforms=None):
 
 
     # right side should be typed expr no matter what
-
     left_s = l[0].strip()
-    match = re.match(r'^\|\|([a-zA-Z _]+[a-zA-Z0-9 _]*)\|\|$', left_s)
-    if match:
+    lex_name, item_index = try_parse_item_name(left_s, env=env, ambiguity=ambiguity)
+    if lex_name:
         default = a_ctl.default()
         db_env = default.modify(var_env)
         try:
@@ -158,17 +175,30 @@ def parse_equality_line(s, env=None, transforms=None):
             return (dict(), env)
 
         # lexical assignment
-        lex_name = match.group(1).replace(" ", "_")
-        if lex_name != match.group(1):
-            meta.logger.info("Exporting item ||%s|| to python variable `%s`." % (match.group(1), lex_name))
         if transform:
             right_side = transform(right_side)
 
         item = lang.Item(lex_name, right_side)
         # TODO: add to composition system's lexicon?  Different way of tracking lexicons?
-        env[lex_name] = item
+        if item_index is None:
+            env[lex_name] = item
+        else: # item_index is only set to a value if the item already exists in env.
+            if isinstance(env[lex_name], lang.Item):
+                tmp_list = list([env[lex_name]])
+                if item_index is True:
+                    tmp_list.append(item)
+                else:
+                    tmp_list[item_index] = item # may throw an exception, currently
+                item = lang.Items(tmp_list)
+                env[lex_name] = item
+            else:
+                if item_index is True:
+                    env[lex_name].add_result(item)
+                else:
+                    env[lex_name][item_index] = item
+                item = env[lex_name]
         return ({lex_name: item}, env)
-    else:
+    else: # assignment to variable
         try:
             right_side = meta.te(right_str.strip(), assignment=var_env)
             right_side = right_side.regularize_type_env(var_env, constants=True)
@@ -207,13 +237,13 @@ def remove_comments(s):
     r = s.split("#")
     return r[0]
 
-def parse_line(s, env=None, transforms=None):
+def parse_line(s, env=None, transforms=None, ambiguity=False):
     if env is None:
         env = dict()
     try:
         s = remove_comments(s)
         if len(s.strip()) > 0:
-            (accum, env) = parse_equality_line(s, transforms=transforms, env=env)
+            (accum, env) = parse_equality_line(s, transforms=transforms, env=env, ambiguity=ambiguity)
             return (accum, env)
         else:
             return (dict(), env)
@@ -225,7 +255,7 @@ def parse_line(s, env=None, transforms=None):
         return (dict(), env)
 
 
-def parse_lines(s, env=None, transforms=None):
+def parse_lines(s, env=None, transforms=None, ambiguity=False):
     if env is None:
         env = collections.OrderedDict()
     global eq_transforms
@@ -234,15 +264,15 @@ def parse_lines(s, env=None, transforms=None):
     accum = collections.OrderedDict()
     lines = s.splitlines()
     for l in lines:
-        (a, env) = parse_line(l, transforms=transforms, env=env)
+        (a, env) = parse_line(l, transforms=transforms, env=env, ambiguity=ambiguity)
         accum.update(a)
     return (accum, env)
 
-def parse(s, state=None, transforms=None):
+def parse(s, state=None, transforms=None, ambiguity=False):
     global eq_transforms
     if transforms is None:
         transforms = eq_transforms
-    return parse_lines(s, transforms=transforms, env=state)
+    return parse_lines(s, transforms=transforms, env=state, ambiguity=ambiguity)
 
 def fullvar(d, s):
     from lamb import meta
@@ -257,9 +287,9 @@ def latex_output(accum, env):
     for k in accum.keys():
         if isinstance(accum[k], meta.TypedExpr):
             lines.append(ensuremath(fullvar(accum, k)._repr_latex_() + "\\:=\\:" + accum[k]._repr_latex_()))
-        elif isinstance(accum[k], lang.Item):
+        elif isinstance(accum[k], lang.Composable):
             # item will automatically print an equality statement
-            lines.append(ensuremath(accum[k]._repr_html_()))
+            lines.append(accum[k]._repr_html_())
         else:
             print("(Unknown) %s \\:=\\: %s" % (k, accum[k]))
     return MiniLatex("<br />\n".join(lines))
