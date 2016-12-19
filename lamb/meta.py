@@ -10,15 +10,27 @@ global logger
 def setup_logger():
     """Set up a module-level logger called `logger` for use across `lamb` modules."""
     global logger
-    logger = logging.getLogger("lambda")
+    logger = logging.getLogger("lamb")
     logger.handlers = list() # otherwise, will get double output on reload (since this just keeps adding handlers)
     logger.setLevel(logging.INFO)
     logger.propagate = False
     # note that basicConfig does _not_ work for interactive ipython sessions, including notebook.
-    ch = logging.StreamHandler()
+    infoch = logging.StreamHandler(sys.stdout)
+    infoch.setFormatter(logging.Formatter('%(levelname)s (%(module)s): %(message)s'))
+    def info_filter(record):
+        if record.levelno == logging.INFO:
+            return 1
+        else:
+            return 0
+    infoch.addFilter(info_filter)
+    infoch.setLevel(logging.INFO)
+
+    errch = logging.StreamHandler(sys.stderr)
     #ch.setLevel(logging.INFO)
-    ch.setFormatter(logging.Formatter('%(levelname)s (%(module)s): %(message)s'))
-    logger.addHandler(ch)
+    errch.setLevel(logging.WARNING)
+    errch.setFormatter(logging.Formatter('%(levelname)s (%(module)s): %(message)s'))
+    logger.addHandler(errch)
+    logger.addHandler(infoch)
 
 setup_logger()
 
