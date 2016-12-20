@@ -1,5 +1,5 @@
 #!/usr/local/bin/python3
-import collections, itertools, logging
+import collections, itertools, logging, html
 
 from lamb import utils, types, meta, display
 from lamb.utils import *
@@ -208,10 +208,11 @@ class Assignment(collections.MutableMapping):
                 new_a[k] = meta.merge_tes(new_a[k], assignment[k], symmetric=False)
             else:
                 new_a[k] = assignment[k]
+        return new_a
 
     def text(self):
         if isinstance(self.base, Assignment):
-            return "%s[%s]" % (self.base.text(), ",".join([("%s/%s" % (self.store[k], k)) for k in self.store.keys()]))
+            return "%s[%s]" % (self.base.text(), ",".join([("%s/%s" % (self.store[k][0], k)) for k in self.store.keys()]))
         else:
             return self.name
 
@@ -227,7 +228,7 @@ class Assignment(collections.MutableMapping):
     def latex_str(self):
         # the superscripting is the Heim & Kratzer style, but I'm not sure I really like it...
         if isinstance(self.base, Assignment):
-            return ensuremath("{%s}^{%s}" % (self.base.latex_str(), ",".join([("%s/%s" % (self.store[k], k)) for k in self.store.keys()])))
+            return ensuremath("{%s}^{%s}" % (self.base.latex_str(), ",".join([("%s/%s" % (self.store[k]._repr_latex_(), k)) for k in self.store.keys()])))
         else:
             return self.name # TODO: display defaults??
 
@@ -326,8 +327,7 @@ class SingletonComposable(Composable):
             return self.system.assign_controller
 
     def under_assignment(self, assignment):
-        a = self.assign_controller.default()
-        a.merge(assignment)
+        a = self.assign_controller.default().merge(assignment)
         return self.content.under_assignment(a)
 
     def composite_name(self, other=None):
@@ -1403,11 +1403,11 @@ class Item(TreeComposite):
 
 class CompositionOp(object):
     """A unary composition operation."""
-    def __init__(self, name, operation, desc=None, latex_desc=None, composite_name=None, allow_none=False, reduce=False, system=None):
+    def __init__(self, name, operation, composite_name=None, allow_none=False, reduce=False, system=None, source=None):
         """Build a composition operation given some function.  See also `unary_factory`.
 
         `name`: the name of the operation, e.g. "FA".
-        `operation`: a function implementing the operation.  Must take one Composables and an optional assignment.
+        `operation`: a function implementing the operation.  Must take Composable(s) and an optional assignment.
         `commutative`: should the operation be tried in both orders?
         `composite_name`: an optional function to determine the node name from the operands.
         `allow_none`: can the argument to `operation` have content None?
@@ -1422,20 +1422,39 @@ class CompositionOp(object):
         if system is not None:
             self.system = system
         self.reduce = reduce # shadows builtin
-        self.desc = desc
-        self.latex_desc = latex_desc
+        self.source = source
+        self.set_descriptions_from_source(source)
+
+    def set_descriptions_from_source(self, source):
+        if source is None:
+            source = self.operation
+        if isinstance(source, meta.TypedExpr):
+            self.desc = "combinator '%s'" % repr(TypedExpr)
+            self.latex_desc = "combinator '%s'" % source._repr_latex_()
+        elif callable(source):
+            import types
+            if isinstance(source, types.FunctionType):
+                self.desc = "python function '%s.%s'" % (source.__module__, source.__name__)
+                self.latex_desc = self.desc
+            else:
+                self.desc = "python object '%s' of %s" % (source.__name__, source.__class__)
+                self.latex_desc = html.escape(self.desc) # __class__ tends to have <> in it
+        else:
+            self.desc = repr(source)
+            self.latex_desc = repr(source)
+
 
     def _repr_html_(self):
         if self.latex_desc is None:
             return "%s <i>%s</i>, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
         else:
-            return "%s <i>%s</i>, built on combinator '%s'" % (self.description(), self.name, self.latex_desc)
+            return "%s <i>%s</i>, built on %s" % (self.description(), self.name, self.latex_desc)
 
     def __repr__(self):
         if self.desc is None:
             return "%s %s, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
         else:
-            return "%s %s, built on combinator '%s'" % (self.description(), self.name, self.desc)
+            return "%s %s, built on %s" % (self.description(), self.name, self.desc)
 
     @property
     def name(self):
@@ -1458,7 +1477,7 @@ class CompositionOp(object):
 
 class BinaryCompositionOp(CompositionOp):
     """A composition operation on two Composables."""
-    def __init__(self, name, operation, commutative=False, desc=None, latex_desc=None,  composite_name=None, allow_none=False, reduce=False, system=None):
+    def __init__(self, name, operation, commutative=False, composite_name=None, allow_none=False, reduce=False, system=None, source=None):
         """Build a composition operation given some function.  See also `binary_factory` and `binary_factory_curried`.
 
         `name`: the name of the operation, e.g. "FA".
@@ -1469,7 +1488,7 @@ class BinaryCompositionOp(CompositionOp):
         `reduce`:  should `reduce_all` be called on the result?
         `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
         """
-        super().__init__(name, operation, desc=desc, latex_desc=latex_desc, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system)
+        super().__init__(name, operation, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system, source=source)
         self.commutative = commutative
         self.typeshift = False
 
@@ -1495,7 +1514,7 @@ class BinaryCompositionOp(CompositionOp):
 
 class UnaryCompositionOp(CompositionOp):
     """A unary composition operation."""
-    def __init__(self, name, operation, typeshift=False, desc=None, latex_desc=None, composite_name=None, allow_none=False, reduce=False, system=None):
+    def __init__(self, name, operation, typeshift=False, composite_name=None, allow_none=False, reduce=False, system=None, source=None):
         """Build a composition operation given some function.  See also `unary_factory`.
 
         `name`: the name of the operation, e.g. "FA".
@@ -1506,7 +1525,7 @@ class UnaryCompositionOp(CompositionOp):
         `reduce`:  should `reduce_all` be called on the result?
         `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
         """
-        super().__init__(name, operation, desc=desc, latex_desc=latex_desc, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system)
+        super().__init__(name, operation, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system, source=source)
         self.typeshift = typeshift
 
     @property
@@ -1532,43 +1551,6 @@ class UnaryCompositionOp(CompositionOp):
         else:
             return "Unary composition rule"
 
-class CombinatorCompositionOp(CompositionOp):
-    def __init__(self, name, combinator, arity=1, typeshift=False, commutative=False, desc=None, latex_desc=None,  composite_name=None, allow_none=False, reduce=False, system=None):
-        """Build a composition operation given some function.  See also `binary_factory` and `binary_factory_curried`.
-
-        `name`: the name of the operation, e.g. "FA".
-        `operation`: a function implementing the operation.  Must take two Composables and an optional assignment.
-        `commutative`: should the operation be tried in both orders?
-        `composite_name`: an optional function to determine the node name from the operands.
-        `allow_none`: can either of the arguments to `operation` have content None?  (See e.g. the PA rule.)
-        `reduce`:  should `reduce_all` be called on the result?
-        `system`: the composition system that this is part of.  (Will be set/changed automatically if this operation is added to a system.)
-        """
-        self.combinator = combinator
-        self._arity = arity
-        if arity == 1:
-            fun = self.unary_call
-        elif arity == 2:
-            fun = self.binary_call
-        else:
-            raise NotImplementedError
-        super().__init__(name, fun, desc=desc, latex_desc=latex_desc, composite_name=composite_name, allow_none=allow_none, reduce=reduce, system=system)
-        self.commutative = commutative
-        self.typeshift = typeshift
-
-    @property
-    def arity(self):
-        return self._arity
-
-    def unary_call(self, i1, assignment=None):
-        result = self.combinator(arg.content.under_assignment(assignment))
-        return UnaryComposite(arg, result)
-
-    def op_fun(arg1, arg2, assignment=None):
-        result = self.combinator(arg1.content.under_assignment(assignment))(arg2.content.under_assignment(assignment))
-        return BinaryComposite(arg1, arg2, result)
-
-
 def tree_binary(t):
     """Returns true just in case `t` is locally binary branching."""
     return (len(t) == 2)
@@ -1584,7 +1566,7 @@ def tree_leaf(t):
 
 class TreeCompositionOp(object):
     """A composition operation on a local tree segment."""
-    def __init__(self, name, operation, preconditions=None, commutative=False, allow_none=False, reduce=True, system=None):
+    def __init__(self, name, operation, preconditions=None, commutative=False, allow_none=False, reduce=True, system=None, source=None):
         """Build a composition operation on trees given some function.
 
         `name`: the name of the operation, e.g. "FA".
@@ -1605,8 +1587,38 @@ class TreeCompositionOp(object):
         self.system = system # adding the rule to a system will set this, no need to pre-check
         self.reduce = reduce
         self.typeshift = False
-        self.latex_desc = None
-        self.desc = None
+        self.set_descriptions_from_source(source)
+
+    def set_descriptions_from_source(self, source):
+        if source is None:
+            source = self.operation
+        if isinstance(source, meta.TypedExpr):
+            self.desc = "combinator '%s'" % repr(TypedExpr)
+            self.latex_desc = "combinator '%s'" % source._repr_latex_()
+        elif callable(source):
+            import types
+            if isinstance(source, types.FunctionType):
+                self.desc = "python function '%s.%s'" % (source.__module__, source.__name__)
+                self.latex_desc = self.desc
+            else:
+                self.desc = "python object '%s' of %s" % (source.__name__, source.__class__)
+                self.latex_desc = html.escape(self.desc) # __class__ tends to have <> in it
+        else:
+            self.desc = repr(source)
+            self.latex_desc = repr(source)
+
+
+    def _repr_html_(self):
+        if self.latex_desc is None:
+            return "%s <i>%s</i>, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
+        else:
+            return "%s <i>%s</i>, built on %s" % (self.description(), self.name, self.latex_desc)
+
+    def __repr__(self):
+        if self.desc is None:
+            return "%s %s, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
+        else:
+            return "%s %s, built on %s" % (self.description(), self.name, self.desc)
 
     @property
     def name(self):
@@ -1624,19 +1636,6 @@ class TreeCompositionOp(object):
 
     def __str__(self):
         return "Tree composition op '%s'" % self.name
-
-    def _repr_html_(self):
-        if self.latex_desc is None:
-            return "%s <i>%s</i>, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
-        else:
-            return "%s <i>%s</i>, built on combinator '%s'" % (self.description(), self.name, self.latex_desc)
-
-    def __repr__(self):
-        if self.desc is None:
-            return "%s %s, built on python function '%s.%s'" % (self.description(), self.name, self.operation.__module__, self.operation.__name__)
-        else:
-            return "%s %s, built on combinator '%s'" % (self.description(), self.name, self.desc)
-
 
     # this could be a classmethod, as it doesn't reference anything on an instance.  Old version
     # did reference the composition system, however, and this may need to be revisited.  (See CompositionTree.build_local_tree)
@@ -1670,7 +1669,7 @@ class TreeCompositionOp(object):
 class LexiconOp(TreeCompositionOp):
     """A composition operation that looks up a lexical entry in the composition system's lexicon."""
     def __init__(self, system=None):
-        TreeCompositionOp.__init__(self, "Lexicon", self.lookup, preconditions=tree_leaf, system=system)
+        TreeCompositionOp.__init__(self, "Lexicon", self.lookup, preconditions=tree_leaf, system=system, source=None)
 
     def lookup(self, t, assignment=None):
         # TODO: revisit
@@ -1686,6 +1685,15 @@ class LexiconOp(TreeCompositionOp):
             raise TypeMismatch(t, None, mode="No lexical entry for '%s' found." % name)
         return den
 
+    def description(self):
+        return "Lexicon lookup"
+
+    def _repr_html_(self):
+        return "Lexicon lookup"
+
+    def __repr__(self):
+        return "Lexicon lookup"
+
 def unary_factory(meta_fun, name, typeshift=False, reduce=True):
     """Factory function to construct a unary composition operation given some function.
 
@@ -1694,24 +1702,18 @@ def unary_factory(meta_fun, name, typeshift=False, reduce=True):
     def op_fun(arg, assignment=None):
         result = meta_fun(arg.content.under_assignment(assignment))
         return UnaryComposite(arg, result)
-    desc = None
-    latex_desc = None
-    if isinstance(meta_fun, meta.TypedExpr):
-        desc = repr(meta_fun)
-        latex_desc = meta_fun._repr_latex_()
-    return UnaryCompositionOp(name, op_fun, typeshift=typeshift, reduce=reduce, desc=desc, latex_desc=latex_desc)
+    return UnaryCompositionOp(name, op_fun, typeshift=typeshift, reduce=reduce, source=meta_fun)
 
 def binary_factory(meta_fun, name, reduce=True, combinator_source=None):
     """Factory function to construct a binary composition operation given some function."""
     def op_fun(arg1, arg2, assignment=None):
         result = meta_fun(arg1.content.under_assignment(assignment), arg2.content.under_assignment(assignment))
         return BinaryComposite(arg1, arg2, result)
-    desc = None
-    latex_desc = None
-    if combinator_source is not None:
-        desc = repr(combinator_source)
-        latex_desc = combinator_source._repr_latex_()
-    return BinaryCompositionOp(name, op_fun, reduce=reduce, desc=desc, latex_desc=latex_desc)
+    if combinator_source is None:
+        source = meta_fun
+    else:
+        source = combinator_source
+    return BinaryCompositionOp(name, op_fun, reduce=reduce, source=source)
 
 def binary_factory_curried(meta_fun, name, reduce=True, commutative=False):
     """Factory function to construct a binary composition operation given some (curried) function.
@@ -1722,12 +1724,8 @@ def binary_factory_curried(meta_fun, name, reduce=True, commutative=False):
     def op_fun(arg1, arg2, assignment=None):
         result = meta_fun(arg1.content.under_assignment(assignment))(arg2.content.under_assignment(assignment))
         return BinaryComposite(arg1, arg2, result)
-    desc = None
-    latex_desc = None
-    if isinstance(meta_fun, meta.TypedExpr):
-        desc = repr(meta_fun)
-        latex_desc = meta_fun._repr_latex_()
-    return BinaryCompositionOp(name, op_fun, commutative=commutative, reduce=reduce, desc=desc, latex_desc=latex_desc)
+    r = BinaryCompositionOp(name, op_fun, commutative=commutative, reduce=reduce, source=meta_fun)
+    return r
 
 
 
