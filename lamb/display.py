@@ -48,7 +48,7 @@ lr_table_style = {"direction": "lr",
                   "leaf_align": "left",
                   "leaf_style": "div"}
 
-table_reset = """<style>.rendered_html table, .rendered_html tr, .rendered_html td, .rendered_html th { border: 0px; }</style>"""
+table_reset = """<style>.rendered_html table, .rendered_html tr, .rendered_html td, .rendered_html th { border: 0px; text-align:center; }</style>"""
 
 class Styled(object):
     def __init__(self, style=None):
@@ -434,11 +434,11 @@ class RecursiveDerivationLeaf(Styled):
         if len(self.parts) == 0:
             return ""
         elif len(self.parts) == 1:
-            return "<table style=\"margin-top:10px\"><tr><td style=\"vertical-align:bottom\" align=\"%s\">%s</td></tr></table>" % (align,self.to_str(self.parts[0], style=kwargs))
+            return "<table style=\"margin-top:10px\"><tr><td style=\"vertical-align:bottom; text-align:%s; \">%s</td></tr></table>" % (align,self.to_str(self.parts[0], style=kwargs))
         else:
             s = "<table style=\"margin-top:10px\">"
             for p in self.parts:
-                s += "<tr><td style=\"vertical-align:bottom\" align=\"%s\">%s</td></tr>" % (align,self.to_str(p, style=kwargs))
+                s += "<tr><td style=\"vertical-align:bottom; text-align:%s;\" >%s</td></tr>" % (align,self.to_str(p, style=kwargs))
             s += "</table>"
         return s
 
