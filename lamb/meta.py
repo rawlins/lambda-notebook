@@ -1231,28 +1231,28 @@ class TypedExpr(object):
         else:                     # Infix operator
             return '(%s)' % (' '+self.op+' ').join([repr(a) for a in self.args])
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         """Return a representation of the TypedExpr suitable for IPython Notebook display.
 
         In this case the output should be pure LaTeX."""
         if not self.args:
             return ensuremath(str(self.op))
         elif isinstance(self.op, LFun):
-            return ensuremath("[%s](%s)" % (self.op.latex_str(), ', '.join([a.latex_str() for a in self.args])))
+            return ensuremath("[%s](%s)" % (self.op.latex_str(**kwargs), ', '.join([a.latex_str(**kwargs) for a in self.args])))
         elif isinstance(self.op, TypedExpr) and (self.op.type.functional()):  # Functional or propositional operator
-            arg_str = ', '.join([a.latex_str() for a in self.args])
+            arg_str = ', '.join([a.latex_str(**kwargs) for a in self.args])
             if isinstance(self.op, CustomTerm):
                 return ensuremath(self.op.custom_appl_latex(arg_str))
             elif isinstance(self.args[0], Tuple):
                 # tuple already generates parens
-                return ensuremath('%s%s' % (self.op.latex_str(), arg_str))
+                return ensuremath('%s%s' % (self.op.latex_str(**kwargs), arg_str))
             else:
-                return ensuremath('%s(%s)' % (self.op.latex_str(), arg_str))
+                return ensuremath('%s(%s)' % (self.op.latex_str(**kwargs), arg_str))
         # past this point in the list of cases should only get hard-coded operators
         elif len(self.args) == 1: # Prefix operator
-            return ensuremath(text_op_in_latex(self.op) + self.args[0].latex_str())
+            return ensuremath(text_op_in_latex(self.op) + self.args[0].latex_str(**kwargs))
         else:                     # Infix operator
-            return ensuremath('(%s)' % (' '+text_op_in_latex(self.op)+' ').join([a.latex_str() for a in self.args]))
+            return ensuremath('(%s)' % (' '+text_op_in_latex(self.op)+' ').join([a.latex_str(**kwargs) for a in self.args]))
 
     def _repr_latex_(self):
         return self.latex_str()
@@ -1431,8 +1431,8 @@ class Tuple(TypedExpr):
     def __repr__(self):
         return "(" + ", ".join([repr(a) for a in self.args]) + ")"
 
-    def latex_str(self, parens=True):
-        inner = ", ".join([a.latex_str() for a in self.args])
+    def latex_str(self, parens=True, **kwargs):
+        inner = ", ".join([a.latex_str(**kwargs) for a in self.args])
         if parens:
             return ensuremath("(" + inner + ")")
         else:
@@ -1447,6 +1447,9 @@ suppress_constant_type = False
 # a predicate type is either <e,t>, or any characteristic function of a set of tuples
 global suppress_constant_predicate_type
 suppress_constant_predicate_type = True
+
+global suppress_bound_var_types
+suppress_bound_var_types = True
 
 class TypedTerm(TypedExpr):
     """used for terms of arbitrary type.  Note that this is not exactly standard usage of 'term'.
@@ -1478,12 +1481,13 @@ class TypedTerm(TypedExpr):
             self.type = env.var_mapping[self.op]
             self._type_env = env
 
+        self.suppress_type = False
         if isinstance(self.op, Number): # this isn't very elegant...
             if self.type != type_n:
                 raise TypeMismatch(self.op, self.type, "Numeric must have type n")
             self.type_guessed = False
+            self.suppress_type = True # suppress types for numbers
         self.args = list()
-        self.suppress_type = False
         self.latex_op_str = latex_op_str
         if update_a:
             assignment[self.op] = self
@@ -1539,7 +1543,10 @@ class TypedTerm(TypedExpr):
     def __repr__(self):
         return "%s_%s" % (self.op, repr(self.type))
 
-    def should_show_type(self):
+    def should_show_type(self, assignment=None):
+        if assignment and suppress_bound_var_types:
+            if self.op in assignment:
+                return False
         if self.suppress_type:
             return False
         if suppress_constant_type and self.constant():
@@ -1563,12 +1570,12 @@ class TypedTerm(TypedExpr):
             assignment[self.op] = coerced_op
         return coerced_op
 
-    def latex_str(self):
+    def latex_str(self, show_types=True, assignment=None, **kwargs):
         if self.latex_op_str is None:
             op = self.op
         else:
             op = self.latex_op_str
-        if not self.should_show_type():
+        if not show_types or not self.should_show_type(assignment=assignment):
             return ensuremath("{%s}" % op)
         else:
             return ensuremath("{%s}_{%s}" % (op, self.type.latex_str()))
@@ -1595,7 +1602,7 @@ class CustomTerm(TypedTerm):
     def copy(self, op):
         return CustomTerm(op, custom_english=self.custom, suppress_type=self.suppress_type, small_caps=self.sc, typ=self.type)
 
-    def latex_str(self):
+    def latex_str(self, show_types=True, **kwargs):
         s = ""
         # custom made small caps
         if self.sc:
@@ -1605,7 +1612,7 @@ class CustomTerm(TypedTerm):
                 s += "{\\rm %s {\\small %s}}" % (self.op[0].upper(), self.op[1:].upper())
         else:
             s += "{\\rm %s}" % self.op
-        if not self.suppress_type:
+        if show_types and not self.suppress_type:
             s += "_{%s}" % self.type.latex_str()
         return ensuremath(s)
 
@@ -1727,9 +1734,9 @@ class UnaryOpExpr(TypedExpr):
     def latex_str_long(self):
         return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return ensuremath("%s %s" % (self.op_name_latex,  
-                                                self.args[0].latex_str()))
+                                                self.args[0].latex_str(**kwargs)))
 
 class BinaryOpExpr(TypedExpr):
     """This class abstracts over expressions headed by specific binary operators.  It is not necessarily designed to be 
@@ -1774,9 +1781,9 @@ class BinaryOpExpr(TypedExpr):
     def latex_str_long(self):
         return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
 
-    def latex_str(self):
-        return ensuremath("(%s %s %s)" % (self.args[0].latex_str(), self.op_name_latex,  
-                                                self.args[1].latex_str()))
+    def latex_str(self, **kwargs):
+        return ensuremath("(%s %s %s)" % (self.args[0].latex_str(**kwargs), self.op_name_latex,  
+                                                self.args[1].latex_str(**kwargs)))
 
     @classmethod
     def join(cls, *l):
@@ -2094,8 +2101,8 @@ class TupleIndex(BinaryOpExpr):
     def latex_str_long(self):
         return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
 
-    def latex_str(self):
-        return ensuremath("(%s[%s])" % (self.args[0].latex_str(), self.args[1].latex_str()))
+    def latex_str(self, **kwargs):
+        return ensuremath("(%s[%s])" % (self.args[0].latex_str(**kwargs), self.args[1].latex_str(**kwargs)))
 
     def reduce(self):
         if isinstance(self.args[0], Tuple) and isinstance(self.args[1].op, Number):
@@ -2378,9 +2385,10 @@ class BindingOp(TypedExpr):
     def latex_str_long(self):
         return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
 
-    def latex_str(self):
+    def latex_str(self, assignment=None, **kwargs):
+        assignment = self.scope_assignment(assignment=assignment)
         return ensuremath("%s %s" % (self.latex_op_str(),  
-                                                self.body.latex_str()))
+                                                self.body.latex_str(assignment=assignment, **kwargs)))
 
     def __repr__(self):
         return "(%s %s: %s)" % (self.op_name, repr(self.var_instance), repr(self.body))
@@ -2535,8 +2543,8 @@ class ConditionSet(BindingOp):
     def term(self):
         return False
 
-    def latex_str(self, parens=True):
-        return ensuremath("\{%s_{%s}\:|\: " % (self.varname, self.vartype.latex_str()) + self.body.latex_str() + "\}")
+    def latex_str(self, parens=True, **kwargs):
+        return ensuremath("\{%s_{%s}\:|\: " % (self.varname, self.vartype.latex_str(**kwargs)) + self.body.latex_str(**kwargs) + "\}")
 
     def __lshift__(self, i):
         return SetContains(i, self)
@@ -2643,8 +2651,8 @@ class ListedSet(TypedExpr):
     def __repr__(self):
         return repr(set(self.args))
 
-    def latex_str(self):
-        inner = ", ".join([a.latex_str() for a in self.args])
+    def latex_str(self, **kwargs):
+        inner = ", ".join([a.latex_str(**kwargs) for a in self.args])
         return ensuremath("\{" + inner + "\}")
 
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
@@ -3440,6 +3448,7 @@ def test_repr_parse_abstract(self, depth):
     for i in range(1000):
         x = random_expr(depth=depth)
         result = repr_parse(x)
+        latex_str = x.latex_str() # also test that this doesn't crash -- can't easily test actual contents.
         if not result:
             print("Failure on depth %i expression '%s'" % (depth, repr(x)))
         self.assertTrue(result)

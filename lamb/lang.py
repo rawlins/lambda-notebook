@@ -1755,7 +1755,7 @@ class PlaceholderTerm(meta.TypedTerm):
             return self.placeholder_for.label()
 
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return ensuremath(inbrs(self.placeholder_name(), self.assign_controller.render(latex=True)) + "_{" + self.type.latex_str() + "}")
 
     def __repr__(self):
