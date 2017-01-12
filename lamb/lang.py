@@ -48,18 +48,21 @@ def text_inbr(s):
         return "||" + s + "||"
 
 def inbr_doublebracket_uni(s):
-    return "⟦\\mathbf{\\text{" + s + "}}⟧"
+    return "⟦" + s + "⟧"
 
 def inbr_doublebar(s):
-    return "||\\mathbf{\\text{" + s + "}}||"
+    return "||" + s + "||"
 
 def inbr_doublebracket(s, negspace=False):
     if negspace:
-        return "[\![\\mathbf{\\text{" + s + "}}]\!]"
+        return "[\![" + s + "]\!]"
     else:
-        return "[[\\mathbf{\\text{" + s + "}}]]"
+        return "[[" + s + "]]"
 
-def inbr(s):
+def latexbf(s):
+    return "\\mathbf{\\text{" + s + "}}"
+
+def inbr_raw(s):
     """Convenience function to wrap something in double brackets, for MathJax output."""
     if bracket_setting == BRACKET_BARS:
         return inbr_doublebar(s)
@@ -70,9 +73,15 @@ def inbr(s):
     else:
         return inbr_doublebar(s)
 
+def inbr(s):
+    return inbr_raw(latexbf(s))
+
+def latex_super(s, super):
+    return s + "^{" + super + "}"
+
 def inbrs(s, super):
     """Wrap a string in brackets with a superscript, for MathJax output."""
-    return inbr(s) + "^{" + super + "}"
+    return latex_super(inbr(s), super)
 
 def mathjax_indent():
     """Indentation suitable for MathJax output."""
