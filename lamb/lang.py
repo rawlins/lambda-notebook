@@ -349,11 +349,15 @@ class SingletonComposable(Composable):
         # TODO: make this parse?
         return text_inbr(self.name) + "%s = %s" % (self.assign_controller.render(latex=False), repr(self.content))
 
-    def short_str(self, latex=False):
-        if latex:
-            return ensuremath(inbrs(self.name, self.assign_controller.render(latex=True)) + self.type_str_latex())
+    def short_str(self, latex=False, i=None, **args):
+        if i is None:
+            istr = ""
         else:
-            return text_inbr(self.name)
+            istr = "[%i]" % i
+        if latex:
+            return ensuremath(inbrs(self.name + istr, self.assign_controller.render(latex=True)) + self.type_str_latex())
+        else:
+            return text_inbr(self.name + istr)
 
     def type_str_latex(self):
         if self.type is None:
@@ -361,8 +365,8 @@ class SingletonComposable(Composable):
         else:
             return "_{" + self.type.latex_str() + "}"
 
-    def short_str_latex(self):
-        return self.short_str(latex=True)
+    def short_str_latex(self, i=None):
+        return self.short_str(latex=True, i=i)
         
 
     def find_steps(self):
@@ -376,11 +380,7 @@ class SingletonComposable(Composable):
             return ensuremath(self.short_str_latex())
         elif isinstance(self.content, PlaceholderTerm):
             return self.content.latex_str()
-        if i is None:
-            istr = ""
-        else:
-            istr = "[%i]" % i
-        return ensuremath(inbrs(self.name + istr, self.assign_controller.render(latex=True)) + self.type_str_latex() + " \\:=\\: ") + self.content.latex_str()
+        return ensuremath(self.short_str(latex=True, i=i) + " \\:=\\: ") + self.content.latex_str()
 
     def compose_str_latex(self):
         return self.latex_str()
@@ -589,7 +589,7 @@ class CompositionTree(Tree, Composable):
                     empty.append(c.content)
         return empty
 
-    def short_str(self, latex=False, children=True, force_brackets=False):
+    def short_str(self, latex=False, children=True, force_brackets=False, **args):
         if isinstance(self.label(), str):
             n = self.label()
         elif isinstance(self.label(), SingletonComposable):
@@ -2366,26 +2366,51 @@ def tree_pa_metalanguage_fun(t, assignment=None):
     if (binder.content is not None) or not binder.name.strip().isnumeric():
         raise types.TypeMismatch(t, None, "Predicate Abstraction")
     index = int(binder.name.strip())
-    vname = "t%i" % index
+    vname = "var%i" % index
     outer_vname = t[1].content.find_safe_variable()
     new_a = Assignment(assignment)
     new_a.update({vname: te("%s_e" % outer_vname)})
     f = meta.LFun(types.type_e, t[1].content.under_assignment(new_a), varname=outer_vname)
     return BinaryComposite(t[0], t[1], f, source=t)
 
-class Trace(Item):
-    """An indexed trace of some specified type.
-
-    This is a meta-language implementation of traces!  That is, a trace in the metalanguage is a variable `t` numbered by index."""
-    def __init__(self, index, typ=None):
+class IndexedPronoun(Item):
+    def __init__(self, name, index, typ=None):
         if typ is None:
             typ = types.type_e
-        if index > 0:
-            name = "t%i" % index
-        else:
-            name = "t"
         # Item constructor will set self.index
-        Item.__init__(self, name, meta.TypedTerm(name, typ), index=index)        
+        if index > 0:
+            term_name = "var" + str(index)
+        else:
+            term_name = name
+        Item.__init__(self, name, meta.TypedTerm(term_name, typ), index=index)
+        
+    @property
+    def name(self):
+        return self.namefun(latex=False)
+        
+    def namefun(self, latex=False):
+        if self.index > 0:
+            if latex:
+                return latexbf(self.__node_name__) + "_{" + str(self.index) + "}"
+            else:
+                return self.__node_name__ + str(self.index)
+        else:
+            return self.__node_name__
+        
+    def short_str(self, latex=False, i=None, **kwargs):
+        name_str = self.namefun(latex=latex)
+        if i is None:
+            istr = ""
+        else:
+            istr = "[%i]" % i
+        if latex:
+            return ensuremath(latex_super(inbr_raw(self.namefun(latex=True) + istr), self.assign_controller.render(latex=True)) + self.type_str_latex())
+        else:
+            return text_inbr(self.namefun(latex=False) + istr)
+        
+class Trace(IndexedPronoun):
+    def __init__(self, index, typ=None):
+        super().__init__("t", index=index, typ=typ)
 
 class Binder(Item):
     """An indexed binder.  Note that its content is always `None`.  Currently untyped; this may change."""
@@ -2400,7 +2425,7 @@ def pa_fun(binder, content, assignment=None):
     if (binder.content is not None) or not binder.name.strip().isnumeric():
         raise TypeMismatch(binder, content, "Predicate Abstraction")
     index = int(binder.name.strip())
-    vname = "t%i" % index
+    vname = "var%i" % index
     # there could be more natural ways to do this...should H&K assignment functions be implemented directly?
     outer_vname = "x"
     inner_fun = meta.LFun(types.type_e, content.content.under_assignment(assignment), vname)
