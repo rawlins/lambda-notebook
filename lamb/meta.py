@@ -2697,6 +2697,23 @@ class ExistsUnary(BindingOp):
 
 BindingOp.add_op(ExistsUnary)
 
+class ExistsExact(BindingOp):
+    """Existential unary quantifier"""
+    canonical_name = "ExistsExact"
+    op_name_uni="∃!"
+    op_name_latex="\\exists{}!"
+
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
+        super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment, type_check=type_check)
+
+    def copy(self):
+        return ExistsExact(self.vartype, self.body, self.varname)
+
+    def local_copy(self, op, var, arg, type_check=True):
+        return ExistsExact(var, arg, type_check=type_check)        
+
+BindingOp.add_op(ExistsExact)
+
 class IotaUnary(BindingOp):
     """Iota operator.  Note that this is purely syntactic, no presuppositions or model constraints implemented."""
     canonical_name = "Iota"
