@@ -511,6 +511,18 @@ class TypedExpr(object):
         return cls.try_parse_paren_struc_r(struc, assignment=assignment, locals=locals)
 
 
+    _parsing_locals = dict()
+
+    @classmethod
+    def add_local(cls, l, value):
+        cls._parsing_locals[l] = value
+
+    @classmethod
+    def del_local(cls, l):
+        if l == "TypedExpr" or l == "TypedTerm":
+            raise Exception("Cannot delete parsing local '%s'" % l)
+        del cls._parsing_locals[l]
+
     @classmethod
     def try_parse_flattened(cls, s, assignment=None, locals=None):
         """Attempt to parse a flat, simplified string into a TypedExpr.  Binding expressions should be already handled.
@@ -531,11 +543,11 @@ class TypedExpr(object):
         ## Replace the alternative spellings of operators with canonical spellings
         s = s.replace('==>', '>>').replace('<==', '<<')
         s = s.replace('<=>', '%').replace('=/=', '^').replace('==', '%')
-        s = TypedExpr.expand_terms(s, assignment=assignment, ignore=locals.keys())
-        ## Now eval the string.  (A security hole; do not use with an adversary.)
-        # TODO: this won't necessarily do the right thing with assignment, can still result in inconsistent types
         lcopy = locals.copy()
-        lcopy.update({'TypedExpr':TypedExpr,'TypedTerm':TypedTerm, 'assignment': assignment, 'type_e': type_e})
+        lcopy.update(cls._parsing_locals)
+        s = TypedExpr.expand_terms(s, assignment=assignment, ignore=lcopy.keys())
+        ## Now eval the string.  (A security hole; do not use with an adversary.)
+        lcopy.update({'assignment': assignment, 'type_e': type_e})
 
         # cannot figure out a better way of doing this short of actually parsing
         global _parser_assignment
@@ -1169,8 +1181,9 @@ class TypedExpr(object):
             if new_arg_i is not result.args[i]:
                 if not dirty:
                     dirty = True
-                next_step = result.copy()
-                next_step.args[i] = new_arg_i
+                args = result.args.copy()
+                args[i] = new_arg_i
+                next_step = result.local_copy(result.op, *args)
                 if len(result.args) == 2 and isinstance(result, BindingOp):
                     reason = "Recursive reduction of body"
                 else:
@@ -1180,8 +1193,7 @@ class TypedExpr(object):
             new_op = result.op.reduce_all()
             if new_op is not result.op:
                 dirty = True
-                next_step = result.copy()
-                next_step.op = new_op
+                next_step = result.local_copy(new_op, *result.args)
                 result = derived(next_step, result, desc="Recursive reduction of operator", subexpression=new_op)
         self_dirty = False
         while result.reducible():
@@ -1195,6 +1207,7 @@ class TypedExpr(object):
         if self_dirty:
             new_result = result.reduce_all() # TODO: is this overkill?
             result = new_result
+        #print("result: '%s'" % repr(result))
         return result # could instead just do all the derivedness in one jump here
 
 
@@ -1238,7 +1251,7 @@ class TypedExpr(object):
         if not self.args:
             return ensuremath(str(self.op))
         elif isinstance(self.op, LFun):
-            return ensuremath("[%s](%s)" % (self.op.latex_str(**kwargs), ', '.join([a.latex_str(**kwargs) for a in self.args])))
+            return ensuremath("{[%s]}(%s)" % (self.op.latex_str(**kwargs), ', '.join([a.latex_str(**kwargs) for a in self.args])))
         elif isinstance(self.op, TypedExpr) and (self.op.type.functional()):  # Functional or propositional operator
             arg_str = ', '.join([a.latex_str(**kwargs) for a in self.args])
             if isinstance(self.op, CustomTerm):
@@ -1321,6 +1334,8 @@ class TypedExpr(object):
     def __mul__(self, other):    return self.factory('*',  self, other)
     def __neg__(self):           return self.factory('-',  self)
     def __pow__(self, other):    return self.factory('**', self, other)
+
+TypedExpr.add_local('TypedExpr', TypedExpr)
 
 class ApplicationExpr(TypedExpr):
     def __init__(self, fun, arg, defer=False, assignment=None, type_check=True):
@@ -1582,6 +1597,9 @@ class TypedTerm(TypedExpr):
 
     def _repr_latex_(self):
         return self.latex_str()
+
+TypedExpr.add_local('TypedTerm', TypedTerm)
+
 
 class CustomTerm(TypedTerm):
     """A subclass of TypedTerm used for custom displays of term names.
