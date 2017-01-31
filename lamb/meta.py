@@ -2696,6 +2696,12 @@ class ForallUnary(BindingOp):
     def local_copy(self, op, var, arg, type_check=True):
         return ForallUnary(var, arg, type_check=type_check)
 
+    def simplify(self):
+        # note: not valid if the domain of individuals is completely empty (would return True)
+        if not self.varname in self.body.free_variables():
+            return self.body
+        return self
+
 BindingOp.add_op(ForallUnary)
 
 class ExistsUnary(BindingOp):
@@ -2712,6 +2718,12 @@ class ExistsUnary(BindingOp):
 
     def local_copy(self, op, var, arg, type_check=True):
         return ExistsUnary(var, arg, type_check=type_check)        
+
+    def simplify(self):
+        # note: not valid if the domain of individuals is completely empty (would return False)
+        if not self.varname in self.body.free_variables():
+            return self.body
+        return self
 
 BindingOp.add_op(ExistsUnary)
 
