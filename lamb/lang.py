@@ -2418,10 +2418,28 @@ class Trace(IndexedPronoun):
     def __init__(self, index, typ=None):
         super().__init__("t", index=index, typ=typ)
 
+    @classmethod
+    def index_factory(cls, typ=None):
+        def from_index(index):
+            return Trace(index, typ=typ)
+        return from_index
+
 class Binder(Item):
     """An indexed binder.  Note that its content is always `None`.  Currently untyped; this may change."""
     def __init__(self, index):
         Item.__init__(self, "%i" % index, None, index=index)
+
+class PresupPronoun(IndexedPronoun):
+    def __init__(self, name, condition, index, typ=None):
+        super().__init__(name, index, typ=typ)
+        var = self.content
+        self.content = meta.Partial(var, condition(var).reduce_all())
+        
+    @classmethod
+    def index_factory(cls, name, condition, typ=None):
+        def from_index(index):
+            return PresupPronoun(name, condition, index, typ=typ)
+        return from_index
 
 def pa_fun(binder, content, assignment=None):
     """Do predicate abstraction given a `binder` and `content`.
@@ -2463,7 +2481,27 @@ def pm_fun(fun1, fun2, assignment=None):
     result = ((pm_op(c1))(c2)).reduce_all()
     return BinaryComposite(fun1, fun2, result)
 
+def presup_fa(f, a):
+    f = f.calculate_partiality()
+    a = a.calculate_partiality()
+    result = f(a).reduce_all().calculate_partiality()
+    return result
 
+def presup_pm(p1, p2):
+    p1 = p1.calculate_partiality()
+    p2 = p2.calculate_partiality()
+    return pm_op(p1)(p2).reduce_all().calculate_partiality()
+
+def presup_pa(binder, content, assignment=None):
+    if (binder.content is not None) or not binder.name.strip().isnumeric():
+        raise TypeMismatch(binder, content, "Predicate Abstraction")
+    index = int(binder.name.strip())
+    vname = "var%i" % index
+    outer_vname = content.content.find_safe_variable()
+    new_a = Assignment(assignment)
+    new_a.update({vname: meta.term(outer_vname, types.type_e)})
+    f = meta.LFun(types.type_e, content.content.calculate_partiality().under_assignment(new_a), outer_vname)
+    return BinaryComposite(binder, content, f)
 
 
 
@@ -2516,3 +2554,14 @@ def setup_hk_chap3():
 
 
 setup_hk_chap3()
+
+def setup_td_presup():
+    global topdown_presup
+    topdown_presup = CompositionSystem(rules=[], basictypes={types.type_e, types.type_t}, name="Top-down with partiality")
+    topdown_presup.add_binary_rule_uncurried(presup_fa, "FA")
+    pm = topdown_presup.add_binary_rule_uncurried(presup_pm, "PM")
+    pm.commutative = True
+    topdown_presup.add_rule(BinaryCompositionOp("PA", presup_pa, allow_none=True))
+
+setup_td_presup()
+

@@ -1211,6 +1211,24 @@ class TypedExpr(object):
         return result # could instead just do all the derivedness in one jump here
 
 
+    def calculate_partiality(self):
+        condition = true_term
+        new_parts = list()
+        for part in self:
+            if isinstance(part, TypedExpr):
+                part_i = part.calculate_partiality()
+                if isinstance(part_i, Partial):
+                    condition = condition & part_i.condition
+                    part_i = part_i.body
+            else:
+                part_i = part
+            new_parts.append(part_i)
+        new_self = self.local_copy(*new_parts)
+        condition = condition.simplify_all()
+        if condition is not true_term:
+            return Partial(new_self, condition)
+        else:
+            return self
 
 
     def __call__(self, *args):
@@ -1701,6 +1719,102 @@ class MiniOp(object):
         return MiniOp(op.op_name, op.op_name_latex)
 
 
+###############
+#
+# Partiality
+#
+###############
+
+class Partial(TypedExpr):
+    def __init__(self, body, condition):
+        if condition is None:
+            condition = true_term
+        if isinstance(body, Partial):
+            condition = condition & body.condition
+            body = body.body
+        while isinstance(condition, Partial):
+            condition = condition.body & condition.condition
+        condition = TypedExpr.ensure_typed_expr(condition, types.type_t)
+
+        super().__init__("Partial", body, condition)
+        self.type = body.type
+        self.condition = condition
+        self.body = body
+
+    def copy(self):
+        return Partial(self.body, self.condition)
+
+    def local_copy(self, op, body, condition):
+        return Partial(body, condition)
+
+    def calculate_partiality(self):
+        new_body = self.body.calculate_partiality()
+        new_condition = self.condition.calculate_partiality()
+        if isinstance(new_condition, Partial):
+            new_condition = new_condition.body & new_condition.condition
+        if isinstance(new_body, Partial):
+            new_condition = new_condition & new_body.condition
+            new_body = new_body.body
+        new_condition = new_condition.simplify_all()
+        return Partial(new_body, new_condition)
+    
+    def term(self):
+        return self.body.term()
+
+    def tuple(self):
+        return tuple(self.args)
+    
+    def meta_tuple(self):
+        return Tuple(self.args)
+    
+    def __repr__(self):
+        return "Partial(%s, %s)" % (repr(self.body), repr(self.condition))
+
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
+        tuple_version = self.meta_tuple()
+        revised_type = types.TupleType(unified_type, types.type_t)
+        result = tuple_version.try_adjust_type(unified_type, derivation_reason, assignment, env)
+        return self.local_copy(self.op, result[1], result[2])
+        
+    def latex_str(self, **kwargs):
+        if self.condition and self.condition != true_term:
+            return ensuremath("\\left|\\begin{array}{l}%s\\\\%s\\end{array}\\right|" % (  
+                                                self.body.latex_str(**kwargs),
+                                                self.condition.latex_str(**kwargs)))
+        else:
+            return ensuremath("%s" % (self.body.latex_str(**kwargs)))
+
+    @classmethod
+    def from_Tuple(cls, t):
+        return Partial(t[1], t[2])
+        
+    @classmethod
+    def get_condition(cls, p):
+        if isinstance(p, Partial) or isinstance(p, PLFun):
+            return p.condition
+        else:
+            return true_term
+        
+    @classmethod
+    def get_atissue(cls, p):
+        if isinstance(p, Partial) or isinstance(p, PLFun):
+            return p.body
+        else:
+            return p
+        
+TypedExpr.add_local("Partial", Partial.from_Tuple)
+
+
+
+
+
+###############
+#
+# Operators
+#
+###############
+
+
 
 class UnaryOpExpr(TypedExpr):
     """This class abstracts over expressions headed by specific unary operators.  It is not necessarily designed to be 
@@ -2185,6 +2299,15 @@ def op_expr_factory(op, *args):
         raise ValueError("Too many arguments (%s) to operator '%s'" % (len(args), op))
 
 
+
+###############
+#
+# Binding expressions
+#
+###############
+
+
+
 global recurse_level
 recurse_level = 0
 
@@ -2446,6 +2569,21 @@ class BindingOp(TypedExpr):
     def term(self):
         return False
 
+    def calculate_partiality(self):
+        new_body = self.body.calculate_partiality()
+        if isinstance(new_body, Partial):
+            if new_body.condition is true_term:
+                return new_body
+            if self.varname in new_body.condition.free_variables():
+                # default: project with the some operator.  May need tweaking for specialized operators.
+                new_condition = self.local_copy(self.op, self.var_instance, new_body.condition)
+            else:
+                new_condition = new_body.condition
+            new_self = self.local_copy(self.op, self.var_instance, new_body.body)
+            return Partial(new_self, new_condition)
+        else:
+            return self
+
     @classmethod
     def try_parse_header(cls, s, assignment=None, locals=None):
         """Try and parse the header of a binding operator expression, i.e. everything up to the body including ':'.
@@ -2535,6 +2673,26 @@ class BindingOp(TypedExpr):
         result = BindingOp.binding_op_factory(op_class, var_list, body, assignment=assignment)
         return result
 
+# not a classmethod...
+def calculate_partiality_cls(cls):
+    def calculate_partiality(self):
+        new_body = self.body.calculate_partiality()
+        if isinstance(new_body, Partial):
+            if new_body.condition is true_term:
+                return new_body
+            if self.varname in new_body.condition.free_variables():
+                # default: project with the some operator.  May need tweaking for specialized operators.
+                new_condition = cls(self.var_instance, new_body.condition)
+            else:
+                new_condition = new_body.condition
+            # default: project with the some operator.  May need tweaking for specialized operators.
+            new_self = self.local_copy(self.op, self.var_instance, new_body.body)
+            return Partial(new_self, new_condition)
+        else:
+            return self
+    return calculate_partiality
+
+
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
 
@@ -2577,6 +2735,10 @@ class ConditionSet(BindingOp):
         sub_var = TypedTerm(self.varname, inner_type)
         new_condition = char.apply(sub_var)
         return self.local_copy(self.op, sub_var, new_condition)
+
+    def calculate_partiality(self):
+        new_body = self.body.calculate_partiality()
+        return self.local_copy(self.op, self.var_instance, new_body)
 
 BindingOp.add_op(ConditionSet)
 
@@ -2732,6 +2894,7 @@ class ExistsExact(BindingOp):
     canonical_name = "ExistsExact"
     op_name_uni="∃!"
     op_name_latex="\\exists{}!"
+    calculate_partiality = calculate_partiality_cls(ForallUnary)
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
         super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment, type_check=type_check)
@@ -2750,6 +2913,7 @@ class IotaUnary(BindingOp):
     op_name_uni = "ι"
     op_name_latex="\\iota{}"
     secondary_names = {"ι"}
+    calculate_partiality = calculate_partiality_cls(ExistsExact)
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
         super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment, type_check=type_check)
@@ -2860,6 +3024,10 @@ class LFun(BindingOp):
         """Override `*` as function composition for LFuns.  Note that this _only_ works for LFuns currently, not functional constants/variables."""
         return self.compose(other)
 
+    def calculate_partiality(self):
+        new_body = self.body.calculate_partiality()
+        return self.local_copy(self.op, self.var_instance, new_body)
+
 def geach_combinator(gtype, ftype):
     body = term("g", gtype)(term("f", ftype)(term("x", ftype.left)))
     combinator = LFun(gtype, LFun(ftype, LFun(ftype.left, body,varname="x"),varname="f"), varname="g")
@@ -2877,6 +3045,15 @@ def fun_compose(g, f):
 
 
 BindingOp.add_op(LFun)
+
+
+
+###############
+#
+# Reduction code
+#
+###############
+
 
 def unsafe_variables(fun, arg):
     """For a function and an argument, return the set of variables that are not safe to use in application."""
@@ -3054,6 +3231,15 @@ def alpha_convert_r(t, overlap, conversions):
         for i in range(len(t.args)):
             t.args[i] = alpha_convert_r(t.args[i], overlap, conversions)
     return t
+
+
+###############
+#
+# Setup
+#
+###############
+
+
 
 global true_term, false_term
 true_term = TypedTerm("True", types.type_t)
