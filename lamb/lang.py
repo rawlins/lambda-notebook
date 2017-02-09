@@ -2407,6 +2407,12 @@ class IndexedPronoun(Item):
             return ensuremath(latex_super(inbr_raw(self.namefun(latex=True) + istr), self.assign_controller.render(latex=True)) + self.type_str_latex())
         else:
             return text_inbr(self.namefun(latex=False) + istr)
+
+    @classmethod
+    def index_factory(cls, name, typ=None):
+        def from_index(index):
+            return IndexedPronoun(name, index, typ=typ)
+        return from_index
         
 class Trace(IndexedPronoun):
     def __init__(self, index, typ=None):
