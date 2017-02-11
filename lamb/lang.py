@@ -2556,12 +2556,12 @@ def setup_hk_chap3():
 setup_hk_chap3()
 
 def setup_td_presup():
-    global topdown_presup
-    topdown_presup = CompositionSystem(rules=[], basictypes={types.type_e, types.type_t}, name="Top-down with partiality")
-    topdown_presup.add_binary_rule_uncurried(presup_fa, "FA")
-    pm = topdown_presup.add_binary_rule_uncurried(presup_pm, "PM")
+    global td_presup
+    td_presup = CompositionSystem(rules=[], basictypes={types.type_e, types.type_t}, name="Type-driven with partiality")
+    td_presup.add_binary_rule_uncurried(presup_fa, "FA")
+    pm = td_presup.add_binary_rule_uncurried(presup_pm, "PM")
     pm.commutative = True
-    topdown_presup.add_rule(BinaryCompositionOp("PA", presup_pa, allow_none=True))
+    td_presup.add_rule(BinaryCompositionOp("PA", presup_pa, allow_none=True))
 
 setup_td_presup()
 
