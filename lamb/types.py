@@ -4,6 +4,7 @@ import sys, re, random
 from numbers import Number
 from lamb import utils, parsing
 from lamb.utils import *
+import logging
 
 # constant for third truth value
 global Maybe, random_len_cap
@@ -79,10 +80,10 @@ class TypeConstructor(object):
         return self.copy_local(*list(iter(self)))
 
     def __repr__(self):
-        return re.sub(r'[\s]+', '', self.__str__())
-
-    def __str__(self):
         raise NotImplementedError
+
+    def _repr_latex_(self):
+        return self.latex_str()
 
     @classmethod
     def parse(cls, s, i, parse_control_fun):
@@ -90,6 +91,7 @@ class TypeConstructor(object):
 
     @classmethod
     def random(cls, random_ctrl_fun):
+        print(repr(cls))
         raise NotImplementedError
 
     def find_type_vars(self):
@@ -192,17 +194,14 @@ class BasicType(TypeConstructor):
     def __hash__(self):
         return hash(self.symbol)
 
-    def __str__(self):
-        return "%s" % self.symbol
-
     def __repr__(self):
-        return self.__str__()
+        return "%s" % self.symbol
 
     def __call__(self, other):
         return FunType(self, other)
 
     def latex_str(self):
-        return ensuremath(self.__str__())
+        return ensuremath(repr(self))
 
     def _repr_latex_(self):
         return self.latex_str()
@@ -250,7 +249,7 @@ class FunType(TypeConstructor):
     def check(self, x):
         raise NotImplementedError()
 
-    def __str__(self):
+    def __repr__(self):
         return "<%s,%s>" % (self.left, self.right)
 
     def __eq__(self, other):
@@ -275,14 +274,11 @@ class FunType(TypeConstructor):
     def __hash__(self):
         return hash(self.left) ^ hash(self.right)
 
-    def __repr__(self):
-        return re.sub(r'[\s]+', '', self.__str__())
-
     def __call__(self, other):
         return FunType(self, other)
 
     def latex_str(self):
-        return ensuremath("\\langle{}%s,%s\\rangle{}" % (self.left.latex_str(), self.right.latex_str()))
+        return ensuremath("\\left\\langle{}%s,%s\\right\\rangle{}" % (self.left.latex_str(), self.right.latex_str()))
 
     def _repr_latex_(self):
         return self.latex_str()
@@ -333,11 +329,11 @@ class SetType(TypeConstructor):
     def check(self, x):
         raise NotImplementedError()
 
-    def __str__(self):
-        return "{%s}" % str(self.content_type)
+    def __repr__(self):
+        return "{%s}" % repr(self.content_type)
 
     def latex_str(self):
-        return "\{%s\}" % self.content_type.latex_str()
+        return ensuremath("\\left\\{%s\\right\\}" % self.content_type.latex_str())
 
     def __eq__(self, other):
         if isinstance(other, SetType):
@@ -389,11 +385,11 @@ class TupleType(TypeConstructor):
     def check(self, x):
         raise NotImplementedError()
 
-    def __str__(self):
+    def __repr__(self):
         return "(%s)" % ",".join([str(self.signature[i]) for i in range(len(self.signature))])
 
     def latex_str(self):
-        return ensuremath("(%s)" % ", ".join([self.signature[i].latex_str() for i in range(len(self.signature))]))
+        return ensuremath("\\left(%s\\right)" % ", ".join([self.signature[i].latex_str() for i in range(len(self.signature))]))
 
     def __eq__(self, other):
         try:
@@ -460,7 +456,7 @@ class TupleType(TypeConstructor):
 
     @classmethod
     def random(cls, random_ctrl_fun):
-        tuple_len = random.randint(2, random_len_cap)
+        tuple_len = random.randint(0, random_len_cap)
         args = tuple([random_ctrl_fun() for i in range(0,tuple_len)])
         return TupleType(*args)
 
@@ -663,9 +659,6 @@ class VariableType(TypeConstructor):
             return self.symbol + str(self.number)
         else:
             return self.symbol + "'" * self.number
-
-    def __str__(self):
-        return self.__repr__()
     
     def latex_str(self):
         if self.number > 3:
@@ -707,9 +700,6 @@ class UnknownType(VariableType):
         else:
             self.identifier = force_num
         super().__init__("?", number=self.identifier)
-
-    def __str__(self):
-        return "?"
 
     def __repr__(self):
         return "?"
@@ -1222,13 +1212,20 @@ class PolyTypeSystem(TypeSystem):
 
 
     def unify_sym_check(self, t1, t2):
+        from lamb.meta import logger
+        oldlevel = logger.level
+        logger.setLevel(logging.CRITICAL) # suppress occurs check errors
         r1 = self.unify(t1, t2)
         r2 = self.unify(t2, t1)
+        logger.setLevel(oldlevel)
         if r1 is None and r2 is None:
             return True
         if (r1 is None or r2 is None):
             return False
-        return self.alpha_equiv(r1, r2)
+        result = self.alpha_equiv(r1, r2)
+        if not result:
+            print("Symmetry check failed: '%s' and '%s'." % (repr(r1), repr(r1)))
+        return result
 
 
     def random_type(self, max_depth, p_terminate_early, allow_variables=True):
@@ -1267,73 +1264,11 @@ class TypeParseError(Exception):
 
     def __str__(self):
         if self.s == None or self.i == None:
-            return msg
+            return self.msg
         if self.i >= len(self.s):
             return "%s at point '%s!here!" % (self.msg, self.s)
         else:
             return "%s at point '%s!here!%s'" % (self.msg, self.s[0:self.i], self.s[self.i:])
-
-def consume_char(s, i, match, error=None):
-    if i >= len(s):
-        if error is not None:
-            raise TypeParseError(error, s, i)
-        else:
-            return None
-    if s[i] == match:
-        return i + 1
-    else:
-        if error is None:
-            return None
-        else:
-            raise TypeParseError(error, s, i)
-
-def consume_pattern(s, i, regex, error=None):
-    if i > len(s):
-        if error is not None:
-            raise TypeParseError(error, s, i)
-        else:
-            return (None, None)
-    m = regex.match(s[i:])
-    if m:
-        return (m.group(), m.end() + i)
-    else:
-        if error is None:
-            return (None, None)
-        else:
-            raise TypeParseError(error, s, i)
-
-
-def consume_atomic_type(s, i):
-    # TODO: generalize
-    if s[i] == "e":
-        return (type_e, i+1)
-    elif s[i] == "t":
-        return (type_t, i+1)
-    elif s[i] == "n":
-        return (type_n, i+1)
-    else:
-        raise TypeParseError("Unknown atomic type", s, i)
-
-
-def type_parser_recursive(s, i=0):
-    next = consume_char(s, i, "<")
-    if next is None:
-        (result, i) = consume_atomic_type(s, i)
-        return (result, i)
-    else:
-        i = next
-        (left, i) = type_parser_recursive(s, i)
-        i = consume_char(s, i, ",", "Missing comma")
-        (right, i) = type_parser_recursive(s, i)
-        i = consume_char(s, i, ">", "Unmatched <")
-        return (FunType(left, right), i)
-
-def type_parser(s):
-    (r, i) = type_parser_recursive(s)
-    return r
-
-
-
 
 
 def setup_type_constants():
@@ -1363,7 +1298,7 @@ class TypeTest(unittest.TestCase):
         for i in range(0, 1000):
             self.assertTrue(poly_system.repr_check(poly_system.random_type(5, 0.2)))
 
-    def test_parser_poly(self):
+    def test_parser_poly_unify(self):
         for i in range(0, 1000):
             self.assertTrue(poly_system.repr_unify_check(poly_system.random_type(5, 0.2)))
 
@@ -1374,7 +1309,7 @@ class TypeTest(unittest.TestCase):
     def test_symmetry(self):
         """Ensure that unify is symmetric for variable types."""
         for depth in range (1,5):
-            for i in range(0, 200):
+            for i in range(0, 500):
                 t1 = poly_system.random_variable_type(depth, 0.2)
                 t2 = poly_system.random_variable_type(depth, 0.2)
                 self.assertTrue(poly_system.unify_sym_check(t1, t2))
