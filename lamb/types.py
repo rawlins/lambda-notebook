@@ -1122,10 +1122,24 @@ class UnificationResult(object):
 
 
 class PolyTypeSystem(TypeSystem):
+
     def __init__(self, atomics=None, nonatomics=None):
+        self.type_ranking = dict()
         super().__init__("polymorphic", atomics=atomics, nonatomics=nonatomics)
-        self.add_nonatomic(VariableType)
-        self.add_nonatomic(UnknownType)
+        self.add_nonatomic(VariableType, 10)
+        self.add_nonatomic(UnknownType, 10)
+
+    def add_nonatomic(self, t, ranking=0):
+        super().add_nonatomic(t)
+        self.type_ranking[t] = ranking
+
+    def remove_nonatomic(self, t):
+        supr().remove_nonatomic(t)
+        del self.type_ranking[t]
+
+    def add_atomic(self, t, ranking=0):
+        super().add_atomic(t)
+        self.type_ranking[t.__class__] = ranking
 
     def unify(self, t1, t2, assignment=None):
         assignment = dict()
@@ -1160,6 +1174,17 @@ class PolyTypeSystem(TypeSystem):
         return UnificationResult(result, t1, t2, r_assign)
 
     def unify_r(self, t1, t2, assignment):
+        if self.occurs_check(t1, t2):
+            from lamb import meta
+            from lamb.meta import logger
+            logger.error("Failed occurs check: can't unify recursive types %s and %s" % (t1,t2))
+            return (None, None)
+        if self.type_ranking[t1.__class__] <= self.type_ranking[t2.__class__]:
+            return t2.unify(t1, self.unify_r, assignment)
+        else:
+            return t1.unify(t2, self.unify_r, assignment)
+
+    def unify_r_old(self, t1, t2, assignment):
         # nearly the same as for strict types: just enforces that if either type is a variable, we call
         # that type's unify function (since only it knows what to do with variables.)
         if self.occurs_check(t1, t2):
@@ -1321,6 +1346,8 @@ class DisjunctiveType(TypeConstructor):
                 return r
             else:
                 return DisjunctiveType(*(self.disjuncts & b.disjuncts))
+        elif isinstance(b, VariableType):
+            return self
         else:
             if b in self.disjuncts:
                 return b
@@ -1402,7 +1429,8 @@ def setup_type_constants():
     type_property = FunType(type_e, type_t)
     type_transitive = FunType(type_e, type_property)
     basic_system = TypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType})
-    poly_system = PolyTypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType, SetType, DisjunctiveType})
+    poly_system = PolyTypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType, SetType})
+    poly_system.add_nonatomic(DisjunctiveType, 1)
 
 setup_type_constants()
 
@@ -1430,7 +1458,7 @@ class TypeTest(unittest.TestCase):
 
     def test_symmetry(self):
         """Ensure that unify is symmetric for variable types."""
-        for depth in range (1,5):
+        for depth in range (1,5): # this checks at the same depth for t1 and t2, and so can miss things.
             for i in range(0, 500):
                 t1 = poly_system.random_variable_type(depth, 0.2)
                 t2 = poly_system.random_variable_type(depth, 0.2)
@@ -1438,6 +1466,27 @@ class TypeTest(unittest.TestCase):
                 if (not result):
                     print("Symmetry check failed: '%s' and '%s'." % (repr(t1), repr(t2)))
                 self.assertTrue(result)
+        for depth1 in range (1,2):
+            for depth2 in range (1,2):
+                for i in range(0, 500):
+                    t1 = poly_system.random_variable_type(depth1, 0.2)
+                    t2 = poly_system.random_variable_type(depth2, 0.2)
+                    result = poly_system.unify_sym_check(t1, t2)
+                    if (not result):
+                        print("Symmetry check failed: '%s' and '%s'." % (repr(t1), repr(t2)))
+                    self.assertTrue(result)
+
+    def test_symmetry_general(self):
+        for depth1 in range (1,2):
+            for depth2 in range (1,2):
+                for i in range(0, 500):
+                    t1 = poly_system.random_type(depth1, 0.2)
+                    t2 = poly_system.random_type(depth2, 0.2)
+                    result = poly_system.unify_sym_check(t1, t2)
+                    if (not result):
+                        print("Symmetry check failed: '%s' and '%s'." % (repr(t1), repr(t2)))
+                    self.assertTrue(result)
+
 
     def test_disjunctive_cases(self):
         self.assertTrue(poly_system.parse_unify_check("[e|t]", "[t|e]"))
@@ -1466,5 +1515,15 @@ class TypeTest(unittest.TestCase):
         self.assertFalse(poly_system.parse_unify_check("<e,t>", "<e,e>"))
         self.assertFalse(poly_system.parse_unify_check("<<e,X>,X>", "<<Y,Y>,t>"))
         self.assertFalse(poly_system.parse_unify_check("<<X,X>,<Y,Y>>", "<<e,Z>,<Z,t>>"))
+
+        # some complicated occurs check cases discovered via random search
+        from lamb.meta import logger
+        oldlevel = logger.level
+        logger.setLevel(logging.CRITICAL) # suppress occurs check errors
+        self.assertTrue(poly_system.unify(poly_system.parse("<X,<X5,Y5>>"), poly_system.parse("<X5,X>")) == None)
+        self.assertTrue(poly_system.unify(poly_system.parse("<X5,X>"), poly_system.parse("<X,<X5,Y5>>")) == None)
+        self.assertTrue(poly_system.unify(poly_system.parse("<X',X''>"), poly_system.parse("<X'',{(<X',Y''>,{Z'''},Z10)}>")) == None)
+        self.assertTrue(poly_system.unify(poly_system.parse("<X'',{(<X',Y''>,{Z'''},Z10)}>"), poly_system.parse("<X',X''>")) == None)
+        logger.setLevel(oldlevel)
 
 

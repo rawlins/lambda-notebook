@@ -1593,9 +1593,7 @@ class TypedTerm(TypedExpr):
     def try_coerce_new_argument(self, typ, remove_guessed = False, assignment=None):
         if not self.type_guessed:
             return None
-        coerced_op = self.copy()
-        # TODO: not 100% sure this is right, and may lead to complications down the road
-        coerced_op.type = self.type.add_internal_argument(typ)
+        coerced_op = self.term_factory(self.op, typ=self.type.add_internal_argument(typ), preparsed=True)
         if not remove_guessed:
             coerced_op.type_guessed = True
         
@@ -3599,6 +3597,15 @@ def random_term(typ, blockset=None, usedset=set(), prob_used=0.8, prob_var=0.5):
         varname = alpha_variant(base, blockset | {n.op for n in usedset})
     return TypedExpr.term_factory(varname, typ)
 
+# use this to try to get more reused bound variables (which tend to have odd types when generated randomly)
+def random_pred_combo_from_term(output_type, usedset):
+    ts = get_type_system()
+    term = (random.choice(list(usedset))).copy()
+    pred_type = ts.unify_ar(term.type, output_type)
+    pred = random_term(pred_type, usedset=usedset)
+    usedset |= {pred}
+    return pred(term)
+
 def random_fa_combo(output_type, ctrl, max_type_depth=1):
     ts = get_type_system()
     input_type = ts.random_type(max_type_depth, 0.5, allow_variables=False)
@@ -3617,7 +3624,7 @@ def random_lfun(typ, ctrl):
 def random_binding_expr(ctrl, max_type_depth=1):
     global random_used_vars
     ts = get_type_system()
-    options = [ForallUnary, ExistsUnary]
+    options = [ForallUnary, ExistsUnary, ExistsExact]
     op_class = random.choice(options)
     var_type = ts.random_type(max_type_depth, 0.5)
     variable = random_term(var_type, usedset=random_used_vars, prob_used=0.2, prob_var=1.0)
@@ -3641,7 +3648,7 @@ def random_expr(typ=None, depth=1, used_vars=None):
     global random_used_vars
     if used_vars is None:
         used_vars = set()
-        random_used_vars = used_vars
+    random_used_vars = used_vars
     if typ is None:
         typ = random.choice(random_types)
     if depth == 0:
@@ -3662,6 +3669,8 @@ def random_expr(typ=None, depth=1, used_vars=None):
             options.append(3)
         if typ.functional():
             options.append(4)
+        if depth == 1 and len(random_used_vars) > 0:
+            options.extend([5,6,7,8]) # try to reuse vars a bit more
         choice = random.choice(options)
         def ctrl(**args):
             global random_used_vars
@@ -3674,6 +3683,8 @@ def random_expr(typ=None, depth=1, used_vars=None):
             return random_binding_expr(ctrl)
         elif choice == 4:
             return random_lfun(typ, ctrl)
+        elif choice >= 5:
+            return random_pred_combo_from_term(typ, random_used_vars)
         else:
             raise NotImplementedError
 
