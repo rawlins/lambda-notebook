@@ -598,6 +598,11 @@ class VariableType(TypeConstructor):
         if isinstance(start, VariableType):
             if not isinstance(t2_principal, VariableType):
                 t2_principal = t2_principal.sub_type_vars(assignment, trans_closure=True)
+                if PolyTypeSystem.occurs_check(start, t2_principal):
+                    from lamb import meta
+                    from lamb.meta import logger
+                    logger.error("Failed occurs check: can't unify recursive types %s and %s" % (new_principal, t2_principal))
+                    return (None, None)
             assignment = replace_in_assign(start, t2_principal, assignment)
             if start != t2_principal:
                 assignment[start] = t2_principal
@@ -605,6 +610,7 @@ class VariableType(TypeConstructor):
         if isinstance(t2_principal, VariableType):
             if not isinstance(start, VariableType):
                 start = start.sub_type_vars(assignment, trans_closure=True)
+                # TODO: do I need an occurs check here?  Hasn't come up in tons of random testing, but I'm not confident.
             assignment = replace_in_assign(t2_principal, start, assignment)
             if t2_principal != start:
                 assignment[t2_principal] = start
@@ -877,6 +883,9 @@ class TypeSystem(object):
     def type_parser(self, s):
         (r, i) = self.type_parser_recursive(s)
         return r
+
+    def parse(self, s):
+        return self.type_parser(s)
 
     def fun_arg_check_bool(self, fun, arg):
         return (fun.type.functional() and
@@ -1218,13 +1227,12 @@ class PolyTypeSystem(TypeSystem):
         r1 = self.unify(t1, t2)
         r2 = self.unify(t2, t1)
         logger.setLevel(oldlevel)
-        if r1 is None and r2 is None:
+        if ((r1 is None) and (r2 is None)):
             return True
-        if (r1 is None or r2 is None):
+        if ((r1 is None) or (r2 is None)):
+            print("Unify failed in one direction, results '%s' and '%s'" % (repr(r1), repr(r2)))
             return False
         result = self.alpha_equiv(r1, r2)
-        if not result:
-            print("Symmetry check failed: '%s' and '%s'." % (repr(r1), repr(r1)))
         return result
 
 
@@ -1253,8 +1261,122 @@ class PolyTypeSystem(TypeSystem):
             return t
         else:
             # choose a non-variable type and generate a random instantiation of it
-            t_class = random.choice(list(self.nonatomics - {VariableType}))
+            t_class = random.choice(list(self.nonatomics - {VariableType, DisjunctiveType}))
             return t_class.random(ctrl_fun)
+
+class DisjunctiveType(TypeConstructor):
+    def __init__(self, *type_list, raise_s=None, raise_i=None):
+        disjuncts = set()
+        for t in type_list:
+            if isinstance(t, DisjunctiveType):
+                disjuncts.update(t.disjuncts)
+            elif len(t.bound_type_vars()) > 0:
+                # this constraint is somewhat arbitrary, and could be generalized.
+                # but the unification would be smore complicated.
+                raise TypeParseError("Variable types can't be used disjunctively.", raise_s, raise_i)
+            else:
+                disjuncts.add(t)
+        if len(disjuncts) <= 1:
+            raise TypeParseError("Disjunctive type must have multiple unique disjuncts", raise_s, raise_i)
+        self.disjuncts = disjuncts
+        self.type_list = sorted(self.disjuncts, key=repr) # for a canonical ordering
+        super().__init__()
+        
+    def __hash__(self):
+        return hash(tuple(self.type_list))
+    
+    def __eq__(self, other):
+        if isinstance(other, DisjunctiveType):
+            return self.disjuncts == other.disjuncts
+        else:
+            return False
+        
+    def __len__(self):
+        return len(self.disjuncts)
+    
+    def __getitem__(self, i):
+        return self.type_list[i]
+    
+    def __iter__(self):
+        return iter(self.type_list)
+        
+    def __repr__(self):
+        return "[" + "|".join([repr(t) for t in self.type_list]) + "]"
+    
+    def latex_str(self):
+        # wrap in curly braces to ensure the brackets don't get swallowed
+        return ensuremath("{\\left[%s\\right]}" % "\mid{}".join([self.type_list[i].latex_str() for i in range(len(self.type_list))]))
+    
+    # this works if b is a regular type or a disjunctive type.
+    def __or__(self, b):
+        return DisjunctiveType(self, b)
+    
+    def __and__(self, b):
+        if isinstance(b, DisjunctiveType):
+            intersection = self.disjuncts & b.disjuncts
+            if len(intersection) == 0:
+                return None
+            elif len(intersection) == 1:
+                (r,) = intersection
+                return r
+            else:
+                return DisjunctiveType(*(self.disjuncts & b.disjuncts))
+        else:
+            if b in self.disjuncts:
+                return b
+            else:
+                return None
+    
+    def functional(self):
+        for t in self.type_list:
+            if t.functional():
+                return True
+        return False
+    
+    def copy_local(self, *parts):
+        return DisjunctiveType(*parts)
+    
+    def unify(self, t2, unify_control_fun, assignment):
+        # rely on the fact that disjunctive types disallow type variables.
+        principal = self & t2
+        return (principal, assignment)
+    
+    @classmethod
+    def parse(cls, s, i, parse_control_fun):
+        starting_i = i
+        next = parsing.consume_char(s, i, "[")
+        if next is None:
+            return (None, i)
+        else:
+            i = next
+            signature = []
+            while i < len(s) and s[i] != "]":
+                (m, i) = parse_control_fun(s, i)
+                signature.append(m)
+                if s[i] == "]":
+                    break
+                i = parsing.consume_char(s, i, "|", "Missing | in disjunctive type")
+            i = parsing.consume_char(s, i, "]", "Unmatched [ in disjunctive type")
+            return (DisjunctiveType(*signature, raise_s=s, raise_i=starting_i), i)
+    
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        type_len = random.randint(2, random_len_cap)
+        args = set()
+        success = False
+        while not success:
+            # a lot of seeds might just not work for this class, so keep
+            # trying until we get something sensible
+            # TODO: in extremely simple (non-realistic) type systems this could loop indefinitely.
+            args = set([random_ctrl_fun() for i in range(0,type_len)])
+            try:
+                result = DisjunctiveType(*args)
+            except TypeParseError:
+                #print("retry", repr(args))
+                continue
+            success = True
+        return result
+
 
 class TypeParseError(Exception):
     def __init__(self, msg, s, i):
@@ -1280,7 +1402,7 @@ def setup_type_constants():
     type_property = FunType(type_e, type_t)
     type_transitive = FunType(type_e, type_property)
     basic_system = TypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType})
-    poly_system = PolyTypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType, SetType})
+    poly_system = PolyTypeSystem(atomics={type_e, type_t, type_n}, nonatomics={FunType, TupleType, SetType, DisjunctiveType})
 
 setup_type_constants()
 
@@ -1312,8 +1434,22 @@ class TypeTest(unittest.TestCase):
             for i in range(0, 500):
                 t1 = poly_system.random_variable_type(depth, 0.2)
                 t2 = poly_system.random_variable_type(depth, 0.2)
-                self.assertTrue(poly_system.unify_sym_check(t1, t2))
+                result = poly_system.unify_sym_check(t1, t2)
+                if (not result):
+                    print("Symmetry check failed: '%s' and '%s'." % (repr(t1), repr(t2)))
+                self.assertTrue(result)
 
+    def test_disjunctive_cases(self):
+        self.assertTrue(poly_system.parse_unify_check("[e|t]", "[t|e]"))
+        self.assertTrue(poly_system.parse_unify_check("[e|t]", "[t|e]"))
+        self.assertTrue(poly_system.parse("[e|t]") & poly_system.parse("[t|n]") == poly_system.parse("t"))
+        self.assertTrue(poly_system.parse("[e|t]") | poly_system.parse("[t|n]") == poly_system.parse("[e|t|n]"))
+        self.assertTrue((poly_system.parse("[e|t]") & poly_system.parse("[<e,t>|n]")) is None)
+
+        with self.assertRaises(TypeParseError): poly_system.parse("[e|e]")
+        with self.assertRaises(TypeParseError): poly_system.parse("[e]")
+        with self.assertRaises(TypeParseError): poly_system.parse("[X|e]")
+        with self.assertRaises(TypeParseError): poly_system.parse("[e|<e,X>]")
 
     def test_var_cases(self):
         self.assertTrue(poly_system.parse_unify_check("e", "e"))
