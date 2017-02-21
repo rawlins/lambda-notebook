@@ -91,7 +91,7 @@ def let_wrapper(s):
 def te(s, let=True, assignment=None):
     """Convenience wrapper for `lang.TypedExpr.factory`."""
     result = TypedExpr.factory(s, assignment=assignment)
-    if let:
+    if let and isinstance(result, TypedExpr):
         result = let_wrapper(result)
     return result
 

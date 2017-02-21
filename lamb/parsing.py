@@ -101,9 +101,12 @@ def parse_te(line, env=None, use_env=False):
     var_env = vars_only(env)
     try:
         result = meta.te(line, assignment=var_env)
-        result = result.regularize_type_env(var_env, constants=True)
-        if reduce:
-            result = result.reduce_all()
+        if isinstance(result, meta.TypedExpr):
+            result = result.regularize_type_env(var_env, constants=True)
+            if reduce:
+                result = result.reduce_all()
+        else:
+            pass # warning here?
     except Exception as e:
         meta.logger.error("Parsing of typed expression failed with exception:")
         meta.logger.error(e)
