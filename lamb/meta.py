@@ -61,6 +61,9 @@ def ts_unify(a, b):
     ts = get_type_system()
     return ts.unify(a, b)
 
+global unify
+unify = ts_unify
+
 def ts_compatible(a, b):
     """Returns `True` or `False` depending on whether `a` and `b` are compatible types."""
     ts = get_type_system()
@@ -1803,6 +1806,78 @@ class Partial(TypedExpr):
 TypedExpr.add_local("Partial", Partial.from_Tuple)
 
 
+###############
+#
+# more type underspecification
+#
+###############
+
+
+# The `Disjunctive` class allows for the construction of ad-hoc polymorphic expressions in the 
+# metalanguage. It takes a set of expressions, and gives you an object that will simplify 
+# to one or more of the expressions depending on type adjustment/inference.  It enforces the
+# constraint that every (non-disjunctive) type it is constructed from must be simplifiable to
+# no more than one expression.  So, constructing a Disjunctive from two objects of the same 
+# type is not permitted, but neither are cases where the types overlap (so for example, 
+# where you have an expression of type e, and an expression of type [e|t], because that would
+# lead to a problem if it were adjusted to type e.)
+#
+# In a very roundabout way, this class acts like a dictionary mapping types to expressions.
+class Disjunctive(TypedExpr):
+    def __init__(self, *disjuncts):
+        ts = get_type_system()
+        principal_type = types.DisjunctiveType(*[d.type for d in disjuncts])
+        t_adjust = set()
+        # this is not a great way to do this (n*m) but I couldn't see a cleverer way to 
+        # catch stuff like `Disjunctive(te("x_e"), te("y_n"), te("z_[e|t]"))`.  It would
+        # work to not have this check here, and let the error happen on type adjustment
+        # later (e.g. type adjustment to `e` would fail in the above example) but I decided
+        # that that would be too confusing.
+        for d in disjuncts:
+            for t in principal_type:
+                r = d.try_adjust_type(t)
+                if r is not None:
+                    if r.type in t_adjust:
+                        raise parsing.ParseError("Disjoined expressions must determine unique types (type %s appears duplicated in expression '%s')" %(repr(t), repr(d)))
+                    else:
+                        t_adjust |= {r.type}
+        self.type = types.DisjunctiveType(*t_adjust)
+        super().__init__("Disjunctive", *disjuncts)
+        
+    def copy(self):
+        return Disjunctive(*self.args)
+    
+    def local_copy(self, op, *disjuncts):
+        return Disjunctive(*disjuncts)
+    
+    def term(self):
+        return False
+    
+    def __repr__(self):
+        return "Disjunctive(%s)" % (",".join([repr(a) for a in self.args]))
+    
+    def latex_str(self, **kwargs):
+        return ensuremath("{Disjunctive}^{%s}(%s)" % (self.type.latex_str(), ", ".join([a.latex_str(**kwargs) for a in self.args])))
+    
+    def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
+        ts = get_type_system()
+        l = list()
+        for a in self.args:
+            t = ts.unify(unified_type, a.type)
+            if t is None:
+                continue
+            l.append(a.try_adjust_type(t, derivation_reason=derivation_reason, assignment=assignment))
+        assert len(l) > 0
+        if (len(l) == 1):
+            return l[0]
+        else:
+            return Disjunctive(*l)
+        
+    @classmethod
+    def from_tuple(cls, t):
+        return Disjunctive(*t[1:])
+    
+TypedExpr.add_local("Disjunctive", Disjunctive.from_tuple)
 
 
 
