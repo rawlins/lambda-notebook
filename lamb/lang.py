@@ -2475,7 +2475,10 @@ def pm_fun(fun1, fun2, assignment=None):
     if not (ts.eq_check(fun1.type, type_property) and 
             ts.eq_check(fun2.type, type_property)):
         raise TypeMismatch(fun1, fun2, "Predicate Modification") # this isn't strictly necessary, but will make errors look slightly nicer.
-    varname = fun1.content.varname
+    try:
+        varname = fun1.content.varname
+    except AttributeError:
+        varname = "x"
     c1 = fun1.content.under_assignment(assignment)
     c2 = fun2.content.under_assignment(assignment)
     result = ((pm_op(c1))(c2)).reduce_all()

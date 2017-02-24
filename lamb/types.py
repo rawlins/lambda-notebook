@@ -137,14 +137,14 @@ class TypeConstructor(object):
     def unify(self, other, unify_control_fun, data):
         """General function for type unification.  Not intended to be called directly.  See `TypeSystem.unify`."""
         if not isinstance(self, other.__class__):
-            return (None, None)
+            return (None, data)
         if len(self) != len(other):
-            return (None, None)
+            return (None, data)
         sig = list()
         for i in range(len(self)):
             (part_result, data) = unify_control_fun(self[i], other[i], data)
             if part_result is None:
-                return (None, None)
+                return (None, data)
             sig.append(part_result)
         return (self.copy_local(*sig), data)
 
@@ -213,7 +213,7 @@ class BasicType(TypeConstructor):
         if self == other:
             return (self, data)
         else:
-            return (None, None)
+            return (None, data)
 
 
 
@@ -484,6 +484,24 @@ def parse_vartype(x):
     else:
         return (symbol, 0)
 
+########
+#
+# type assignment code
+#
+########
+
+
+# A type assignment is a dict where every entry maps a variable to a type.  That type may be itself a variable, or some other type.
+# Each variable determines an equivalence class of variables that potentially map to one non-variable type.
+#
+# Constraints:
+#   Type mapping chains are linear (i.e. cannot loop).
+#   Variable types are represented in at most one chain.
+#   No variable can map to an expression that contains an instance of itself.  (The so-called "occurs" check.)
+#   Non-variable types should be at the end of chains.
+
+# add something to the end of an existing chain.
+#  Doesn't check whether `end` is already present.
 def transitive_add(v, end, assignment):
     visited = set()
     while v in assignment:
@@ -498,6 +516,7 @@ def transitive_add(v, end, assignment):
         v = next_v
     return assignment
 
+# find the end of an existing chain starting with `v`.
 def transitive_find_end(v, assignment):
     # TODO: delete the loop checking from these functions once it's solid
     start_v = v
@@ -514,6 +533,7 @@ def transitive_find_end(v, assignment):
         v = assignment[v]
     return (v, last_v)
 
+# replace all instances of `var` in the type assignment with `value`, including embedded instances and instances as a key.
 def replace_in_assign(var, value, assign):
     #print("input: %s, var: %s, value: %s" %  (assign, var, value))
     if var in assign:
@@ -538,6 +558,45 @@ def replace_in_assign(var, value, assign):
     for d in dellist:
         del assign[d]
     return assign
+
+def type_assignment_set_unsafe(assign, var, value):
+    try_subst = value.sub_type_vars(assign, trans_closure=True)
+    if try_subst is None:
+        return None
+    if try_subst in assign:
+        return assign # value converts to a variable that is already present in the assignment.
+    if var in assign:
+        (principal, prev) = transitive_find_end(var, assign)
+        if isinstance(principal, VariableType):
+            assign[principal] = value
+        else:
+            # this is the unsafe part
+            assign[prev] = value
+    else:
+        assign[var] = value
+    return assign
+
+# return the principal type for `var` in the assignment, or None if there is none.
+def type_assignment_get(assign, var):
+    (v, prev) = transitive_find_end(var, assign)
+    if prev is None:
+        return None
+    else:
+        return v
+
+def union_assignment(assign, var, value):
+    cur = type_assignment_get(assign, var)
+    if cur is not None and not isinstance(cur, VariableType):
+        value = DisjunctiveType.factory(cur, value) # may throw exception
+    if value is not None:
+        type_assignment_set_unsafe(assign, var, value)
+    return assign
+
+def union_assignments(a1, a2):
+    a1 = a1.copy()
+    for m in a2:
+        union_assignment(a1, m, a2[m])
+    return a1
 
 class VariableType(TypeConstructor):
     max_id = 0
@@ -1178,7 +1237,7 @@ class PolyTypeSystem(TypeSystem):
             from lamb import meta
             from lamb.meta import logger
             logger.error("Failed occurs check: can't unify recursive types %s and %s" % (t1,t2))
-            return (None, None)
+            return (None, assignment)
         if self.type_ranking[t1.__class__] <= self.type_ranking[t2.__class__]:
             return t2.unify(t1, self.unify_r, assignment)
         else:
@@ -1191,7 +1250,7 @@ class PolyTypeSystem(TypeSystem):
             from lamb import meta
             from lamb.meta import logger
             logger.error("Failed occurs check: can't unify recursive types %s and %s" % (t1,t2))
-            return (None, None)
+            return (None, assignment)
         if isinstance(t1, VariableType):
             if isinstance(t2, VariableType):
                 return t2.unify(t1, self.unify_r, assignment)
@@ -1202,7 +1261,7 @@ class PolyTypeSystem(TypeSystem):
         else:
             (result, r_assign) = t1.unify(t2, self.unify_r, assignment)
             if result is None:
-                return (None, None)
+                return (None, assignment)
             return (result, r_assign)
 
     def unify_fr(self, fun, ret, assignment=None):
@@ -1215,7 +1274,6 @@ class PolyTypeSystem(TypeSystem):
             return (None, None, None)
         else:
             return (result.principal, result.principal.left, result.principal.right)
-
 
     def unify_fa(self, fun, arg, assignment=None):
         """Try unifying the input type of the function with the argument's type.
@@ -1306,6 +1364,7 @@ class DisjunctiveType(TypeConstructor):
         self.disjuncts = disjuncts
         self.type_list = sorted(self.disjuncts, key=repr) # for a canonical ordering
         super().__init__()
+        self.store_functional_info()
         
     def __hash__(self):
         return hash(tuple(self.type_list))
@@ -1337,23 +1396,8 @@ class DisjunctiveType(TypeConstructor):
         return DisjunctiveType(self, b)
     
     def __and__(self, b):
-        if isinstance(b, DisjunctiveType):
-            intersection = self.disjuncts & b.disjuncts
-            if len(intersection) == 0:
-                return None
-            elif len(intersection) == 1:
-                (r,) = intersection
-                return r
-            else:
-                return DisjunctiveType(*(self.disjuncts & b.disjuncts))
-        elif isinstance(b, VariableType):
-            return self
-        else:
-            if b in self.disjuncts:
-                return b
-            else:
-                return None
-    
+        return poly_system.unify(self, b)
+
     def functional(self):
         for t in self.type_list:
             if t.functional():
@@ -1362,11 +1406,90 @@ class DisjunctiveType(TypeConstructor):
     
     def copy_local(self, *parts):
         return DisjunctiveType(*parts)
+
+    # returns a disjunctive type or a non-disjunctive type, as appropriate for `disjuncts`.
+    # `disjuncts`, when turned into a set, is:
+    #    length 0: return None
+    #    length 1: return the content
+    #    length 2: return a DisjunctiveType for the disjuncts.
+    #
+    # If multiple disjuncts are DisjunctiveTypes, this could still fail, depending on what the union looks like.
+    @classmethod
+    def factory(cls, *disjuncts):
+        r = set(disjuncts)
+        if len(r) == 0:
+            return None
+        elif len(r) == 1:
+            (r,) = r
+            return r
+        else:
+            return DisjunctiveType(*r)
+
+    # test case: tp("[<e,t>|<e,n>|<n,t>]").intersection_point(tp("<X,t>"), types.poly_system.unify_r, dict())
+    #               should map X to [e|n].
+    def intersection_point(self, b, unify_fun, assignment):
+        if b in self.disjuncts:
+            return (b, assignment)
+        else:
+            new_disjuncts = list()
+            return_assign = assignment
+            # this assumes that type variables can't be part of a disjunctive type.
+            for d in self.disjuncts:
+                tmp_assignment = assignment.copy() # sigh
+                (principal, tmp_assignment) = unify_fun(d, b, tmp_assignment)
+                # Important note: we discard all the temporary assignments *unless* the type disjunction
+                # is eliminated.
+                if principal is None:
+                    continue
+                new_disjuncts.append(principal)
+                return_assign = union_assignments(return_assign, tmp_assignment)
+            result = self.factory(*new_disjuncts)
+            if result is None:
+                return (result, assignment)
+            else:
+                return (result, return_assign)
     
-    def unify(self, t2, unify_control_fun, assignment):
-        # rely on the fact that disjunctive types disallow type variables.
-        principal = self & t2
-        return (principal, assignment)
+    def store_functional_info(self):
+        l_set = set()
+        r_set = set()
+        # alternative: only set something if all disjuncts are functional?
+        for d in self.disjuncts:
+            if d.functional():
+                l_set |= {d.left}
+                r_set |= {d.right}
+        self.left = self.factory(*l_set)
+        self.right = self.factory(*r_set)
+
+    def functional(self):
+        return (self.left is not None)
+
+    # returns a FunType characterizing the set of functional types contained in self.
+    def factor_functional_types(self):
+        return FunType(self.left, self.right)
+
+
+    # calculate the intersection of `self` and type `b`.
+    # If `b` is a DisjunctiveType, this involves looking at the intersection of the types.
+    # Otherwise, it involves unifying `b` with the contents of self and seeing what is left.
+    # Will return some type (not necessarily disjunctive) if it succeeds, otherwise None.
+    #
+    # Some examples:
+    # [e|n] intersect e = e
+    # [e|n] intersect X = [e|n]
+    # [<e,t>|<n,t>|<e,e>] intersect <X,t> = [<e,t>|<n,t>]
+    # [e|n] intersect t = None
+    def intersection(self, b, unify_fun, assignment):
+        if isinstance(b, DisjunctiveType):
+            # this relies on type variables not being possible as disjuncts.
+            # otherwise, you'd need to use unify to check equality.
+            intersection = self.disjuncts & b.disjuncts
+            return (self.factory(*intersection), assignment)
+        else:
+            return self.intersection_point(b, unify_fun, assignment)
+
+
+    def unify(self, b, unify_control_fun, assignment):
+        return self.intersection(b, unify_control_fun, assignment)
     
     @classmethod
     def parse(cls, s, i, parse_control_fun):

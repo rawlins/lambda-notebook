@@ -1101,6 +1101,10 @@ class TypedExpr(object):
     def term(self):
         return (isinstance(self.op, str) and len(self.args) == 0)
 
+    def functional(self):
+        funtype = unify(self.type, tp("<X,Y>"))
+        return (funtype is not None)
+
     def atomic(self):
         if isinstance(self.op, TypedExpr):
             return False
@@ -1129,21 +1133,11 @@ class TypedExpr(object):
         return result
 
     def reducible(self):
-        if len(self.args) == 1 and isinstance(self.op, LFun):
-            return True
         return False
 
     def reduce(self):
-        """if there are arguments to op, see if a single reduction is possible."""
-        if not self.reducible():
-            return self
-        if isinstance(self.op, LFun):
-            return derived(self.op.apply(self.args[0]), self, desc="Beta reduction")
-        else:
-            # functional op but don't know what to do
-            # TODO: implement some special casing here?
-            #   in particular, constant terms, numeric ops, TF ops
-            return self
+        assert (not self.reducible())
+        return self
 
     def reduce_sub(self, i):
         """Applies reduce to a constituent term, determined by i.
@@ -1424,6 +1418,17 @@ class ApplicationExpr(TypedExpr):
 
         return (fun, arg, out_type, history)
 
+    def reducible(self):
+        if isinstance(self.op, LFun) or isinstance(self.op, Disjunctive):
+            return True
+        return False
+
+    def reduce(self):
+        """if there are arguments to op, see if a single reduction is possible."""
+        if not self.reducible():
+            return self
+        else:
+            return derived(self.op.apply(self.args[0]), self, desc="Reduction")
 
 
 class Tuple(TypedExpr):
@@ -1559,6 +1564,9 @@ class TypedTerm(TypedExpr):
 
     def term(self):
         return True
+
+    def apply(self, arg):
+        return self(arg)
 
     @property
     def term_name(self):
@@ -1856,8 +1864,11 @@ class Disjunctive(TypedExpr):
     def __repr__(self):
         return "Disjunctive(%s)" % (",".join([repr(a) for a in self.args]))
     
-    def latex_str(self, **kwargs):
-        return ensuremath("{Disjunctive}^{%s}(%s)" % (self.type.latex_str(), ", ".join([a.latex_str(**kwargs) for a in self.args])))
+    def latex_str(self, disj_type=False, **kwargs):
+        if disj_type:
+            return ensuremath("{Disjunctive}^{%s}(%s)" % (self.type.latex_str(), ", ".join([a.latex_str(**kwargs) for a in self.args])))
+        else:
+            return ensuremath("{Disjunctive}(\\left[%s\\right])" % ("\mid{}".join([a.latex_str(**kwargs) for a in self.args])))
     
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
         ts = get_type_system()
@@ -1873,9 +1884,53 @@ class Disjunctive(TypedExpr):
         else:
             return Disjunctive(*l)
         
+    # this was a nice idea, but can't work in general given the strict constraints on type inference in binding expressions.
+    # that is, something like `L x_[e|n] : Disjunctive(x_e, x_n)` generates a type mismatch, because each disjunct suggests 
+    # a different strengthening of `x`.
+    # I'll leave it here in case it is ever useful.
+    def factor_functional_types(self):
+        factored_type = self.type.factor_functional_types()
+        if factored_type is None:
+            return None
+        var = self.term_factory("a", typ=factored_type.left)
+        new_disjuncts = list()
+        for d in self.args:
+            if not d.functional():
+                continue
+            new_disjuncts.append(d(var.copy()).reduce())
+        return LFun(var, self.factory(*new_disjuncts))
+
+    def apply(self, arg):
+        if not self.type.functional():
+            raise TypeMismatch(self,arg, "Application to a disjunction")
+        applied_disjuncts = list()
+        for d in self.args:
+            if not d.functional():
+                continue
+            try:
+                applied_disjuncts.append(d.apply(arg))
+            except TypeMismatch:
+                continue
+        result = self.factory(*applied_disjuncts)
+        if result is None:
+            raise TypeMismatch(self,arg, "Application to a disjunction")
+        return result
+
+
     @classmethod
     def from_tuple(cls, t):
         return Disjunctive(*t[1:])
+
+    @classmethod
+    def factory(cls, *disjuncts):
+        disjuncts = set(disjuncts)
+        if len(disjuncts) == 0:
+            return None
+        elif len(disjuncts) == 1:
+            (r,) = disjuncts
+            return r
+        else:
+            return Disjunctive(*disjuncts)
     
 TypedExpr.add_local("Disjunctive", Disjunctive.from_tuple)
 
@@ -3039,6 +3094,9 @@ class LFun(BindingOp):
     @property
     def returntype(self):
         return self.type.right
+
+    def functional(self):
+        return True # no need to do any calculations
 
     def copy(self):
         r = LFun(self.argtype, self.body, self.varname, type_check=False)
