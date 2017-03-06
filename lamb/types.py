@@ -1476,8 +1476,13 @@ class PolyTypeSystem(TypeSystem):
         result = self.alpha_equiv(r1, r2)
         return result
 
+    def random_from_class(self, cls, max_depth=2, p_terminate_early=0.2, allow_variables=False):
+        return cls.random(self.random_ctrl(max_depth=max_depth, p_terminate_early=p_terminate_early, allow_variables=allow_variables))
 
-    def random_type(self, max_depth, p_terminate_early, allow_variables=True):
+    def random_ctrl(self, max_depth=2, p_terminate_early=0.2, allow_variables=False):
+        return lambda *a: self.random_type(max_depth - 1, p_terminate_early, allow_variables)
+
+    def random_type(self, max_depth, p_terminate_early, allow_variables=True, allow_disjunction=True):
         """Generate a random type of `max_depth`."""
         term = random.random()
         if max_depth == 0 or term < p_terminate_early:
@@ -1487,10 +1492,12 @@ class PolyTypeSystem(TypeSystem):
         else:
             # choose a non-atomic type and generate a random instantiation of it
             ctrl_fun = lambda *a: self.random_type(max_depth - 1, p_terminate_early, allow_variables)
-            if allow_variables:
-                t_class = random.choice(list(self.nonatomics - {UnknownType}))
-            else:
-                t_class = random.choice(list(self.nonatomics - {VariableType, UnknownType}))
+            options = self.nonatomics - {UnknownType}
+            if not allow_variables:
+                options -= {VariableType}
+            if not allow_disjunction:
+                options -= {DisjunctiveType}
+            t_class = random.choice(list(options))
             return t_class.random(ctrl_fun)
 
     def random_variable_type(self, max_depth, p_terminate_early):

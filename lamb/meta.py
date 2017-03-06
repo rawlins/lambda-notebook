@@ -1430,6 +1430,13 @@ class ApplicationExpr(TypedExpr):
         else:
             return derived(self.op.apply(self.args[0]), self, desc="Reduction")
 
+    @classmethod
+    def random(self, random_ctrl_fun):
+        ftyp = get_type_system().random_from_class(types.FunType)
+        fun = random_lfun_force_bound(ftyp, random_ctrl_fun)
+        arg = random_ctrl_fun(typ=ftyp.left)
+        return ApplicationExpr(fun, arg)
+
 
 class Tuple(TypedExpr):
     """TypedExpr wrapper on a tuple.
@@ -1478,6 +1485,18 @@ class Tuple(TypedExpr):
             return ensuremath("(" + inner + ")")
         else:
             return ensuremath(inner)
+
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1, max_tuple_len=5, allow_empty=True):
+        if allow_empty:
+            r = range(max_tuple_len+1)
+        else:
+            r = range(max_tuple_len+1)[1:]
+        length = random.choice(r)
+        signature = [get_type_system().random_type(max_type_depth, 0.5) for i in range(length)]
+        args = [ctrl(typ=t) for t in signature]
+        return Tuple(args)
+
 
 
 # suppress any constant type
@@ -1596,7 +1615,7 @@ class TypedTerm(TypedExpr):
         if suppress_constant_type and self.constant():
             return False
         if suppress_constant_predicate_type:
-            if self.constant() and self.type.functional():
+            if self.constant() and self.type.functional() and not isinstance(self.type, types.VariableType):
                 if (self.type.left == types.type_e or isinstance(self.type.left, types.TupleType)) and self.type.right == types.type_t:
                     return False
         return True
@@ -1624,6 +1643,39 @@ class TypedTerm(TypedExpr):
 
     def _repr_latex_(self):
         return self.latex_str()
+
+    random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
+
+    @classmethod
+    def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(), prob_used=0.8, prob_var=0.5, max_type_depth=1):
+        ts = get_type_system()
+        if blockset is None:
+            blockset = set()
+        varname = None
+        is_var = (random.random() <= prob_var)
+        try_used = ((len(usedset) > 0) and (random.random() <= prob_used))
+        if typ is None:
+            if try_used:
+                used_var = random.choice(list(usedset))
+                varname = used_var.op
+                typ = used_var.type
+            else:
+                typ = ts.random_type(max_type_depth, 0.5)
+        else:
+            used_typed = [x for x in list(usedset) if (x.type==typ and x.variable() == is_var)]
+            if try_used and len(used_typed) > 0:
+                varname = (random.choice(list(used_typed))).op
+        if varname is None:
+            if typ in random_term_base.keys():
+                base = random_term_base[typ]
+            else:
+                base = "f"
+            if not is_var:
+                base = base.upper()
+            varname = alpha_variant(base, blockset | {n.op for n in usedset})
+        
+        return TypedExpr.term_factory(varname, typ)
+
 
 TypedExpr.add_local('TypedTerm', TypedTerm)
 
@@ -1810,6 +1862,15 @@ class Partial(TypedExpr):
             return p.body
         else:
             return p
+
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1):
+        # This will implicitly use the same depth for the body and condition
+        typ = get_type_system().random_type(max_type_depth, 0.5)
+        body = ctrl(typ=typ)
+        condition = ctrl(typ=type_t)
+        return Partial(body, condition)
+
         
 TypedExpr.add_local("Partial", Partial.from_Tuple)
 
@@ -1846,7 +1907,7 @@ class Disjunctive(TypedExpr):
                 r = d.try_adjust_type(t)
                 if r is not None:
                     if r.type in t_adjust:
-                        raise parsing.ParseError("Disjoined expressions must determine unique types (type %s appears duplicated in expression '%s')" %(repr(t), repr(d)))
+                        raise parsing.ParseError("Disjoined expressions must determine unique types (type %s appears duplicated in expression '%s' for disjuncts '%s')" %(repr(t), repr(d), repr(disjuncts)))
                     else:
                         t_adjust |= {r.type}
         self.type = types.DisjunctiveType(*t_adjust)
@@ -1931,7 +1992,15 @@ class Disjunctive(TypedExpr):
             return r
         else:
             return Disjunctive(*disjuncts)
-    
+
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1, max_disj_len=3):
+        r = range(max_disj_len+1)[1:]
+        length = random.choice(r)
+        signature = {get_type_system().random_type(max_type_depth, 0.5, allow_variables=False, allow_disjunction=False) for i in range(length)}
+        args = [ctrl(typ=t) for t in signature]
+        return cls.factory(*args) # may not actually generate a Disjunctive
+
 TypedExpr.add_local("Disjunctive", Disjunctive.from_tuple)
 
 
@@ -1998,6 +2067,11 @@ class UnaryOpExpr(TypedExpr):
         return ensuremath("%s %s" % (self.op_name_latex,  
                                                 self.args[0].latex_str(**kwargs)))
 
+    @classmethod
+    def random(cls, ctrl):
+        return cls(ctrl(typ=type_t))
+
+
 class BinaryOpExpr(TypedExpr):
     """This class abstracts over expressions headed by specific binary operators.  It is not necessarily designed to be 
     instantiated directly, but rather subclassed for particular hard-coded operators.
@@ -2062,6 +2136,9 @@ class BinaryOpExpr(TypedExpr):
                 cur = cls(cur, l[i+1]) # will raise an error if the subclass doesn't define the constructor this way.
             return cur
 
+    @classmethod
+    def random(cls, ctrl):
+        return cls(ctrl(typ=type_t), ctrl(typ=type_t))
 
 
 # could make a factory function for these
@@ -2212,6 +2289,12 @@ class BinaryGenericEqExpr(BinaryOpExpr):
             else:
                 return self # this would require a solver for the general case
 
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1):
+        body_type = get_type_system().random_type(max_type_depth, 0.5)
+        return cls(ctrl(typ=body_type), ctrl(typ=body_type))
+
+
 def eq_factory(arg1, arg2):
     """If type is type t, return a biconditional.  Otherwise, build an equality statement."""
     arg1 = TypedExpr.ensure_typed_expr(arg1)
@@ -2240,6 +2323,11 @@ def binary_num_op(op, op_uni=None, op_latex=None, simplify_fun=None):
                 return derived(te(simplify_fun(self.args[0].op, self.args[1].op)), self, desc=op_uni)
             else:
                 return self
+
+        @classmethod
+        def random(cls, ctrl):
+            return cls(ctrl(typ=type_n), ctrl(typ=type_n))
+
     return BinOp
 
 def binary_num_rel(op, op_uni=None, op_latex=None, simplify_fun=None):
@@ -2260,6 +2348,10 @@ def binary_num_rel(op, op_uni=None, op_latex=None, simplify_fun=None):
                 return derived(te(simplify_fun(self.args[0].op, self.args[1].op)), self, desc=op_uni)
             else:
                 return self
+
+        @classmethod
+        def random(cls, ctrl):
+            return cls(ctrl(typ=type_n), ctrl(typ=type_n))
 
     return BinOp
 
@@ -2284,6 +2376,11 @@ class UnaryNegativeExpr(UnaryOpExpr):
             return derived(te(- self.args[0].op), self, desc="unary -")
         else:
             return self
+
+    @classmethod
+    def random(cls, ctrl):
+        return cls(ctrl(typ=type_n))
+
 
 class SetContains(BinaryOpExpr):
     """Binary relation of set membership.  This uses `<<` as the symbol.
@@ -2319,6 +2416,11 @@ class SetContains(BinaryOpExpr):
         if isinstance(self.args[1], ConditionSet):
             return True
         return False
+
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1):
+        content_type = get_type_system().random_type(max_type_depth, 0.5)
+        return SetContains(ctrl(typ=content_type), ctrl(typ=types.SetType(content_type)))
 
 
 class TupleIndex(BinaryOpExpr):
@@ -2377,6 +2479,13 @@ class TupleIndex(BinaryOpExpr):
             return True
         # no support for non-constant indices at present, not even ones that should be mathematically simplifiable
         return False
+
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1):
+        content_type = get_type_system().random_type(max_type_depth, 0.5)
+        tup = Tuple.random(ctrl, max_type_depth=max_type_depth, allow_empty=False)
+        index = random.choice(range(len(tup)-1))
+        return TupleIndex(tup, index)
 
 
 unary_symbols_to_op_exprs = {"~" : UnaryNegExpr,
@@ -2500,7 +2609,7 @@ class BindingOp(TypedExpr):
             logger.error("Unknown var_or_vtype: " + repr(var_or_vtype))
             raise NotImplementedError
         if not is_var_symbol(varname):
-            raise ValueError("Need variable name (got '%s')" % self.varname)
+            raise ValueError("Need variable name (got '%s')" % varname)
         if typ is not None:
             self.type = typ
         self.derivation = None
@@ -2801,6 +2910,16 @@ class BindingOp(TypedExpr):
         result = BindingOp.binding_op_factory(op_class, var_list, body, assignment=assignment)
         return result
 
+    @classmethod
+    def random(cls, ctrl, body_type=type_t, max_type_depth=1):
+        global random_used_vars
+        var_type = get_type_system().random_type(max_type_depth, 0.5)
+        variable = random_term(var_type, usedset=random_used_vars, prob_used=0.2, prob_var=1.0)
+        random_used_vars |= {variable}
+        return cls(variable, ctrl(typ=type_t))
+
+
+
 # not a classmethod...
 def calculate_partiality_cls(cls):
     def calculate_partiality(self):
@@ -2969,6 +3088,17 @@ class ListedSet(TypedExpr):
         result = self.local_copy(self.op, *content)
         return result
 
+    @classmethod
+    def random(self, ctrl, max_type_depth=1, max_members=5, allow_empty=True):
+        typ = get_type_system().random_type(max_type_depth, 0.5)
+        if allow_empty:
+            r = range(max_members+1)
+        else:
+            r = range(max_members+1)[1:]
+        length = random.choice(r)
+        members = [ctrl(typ=typ) for i in range(length)]
+        return ListedSet(members)
+
 
 
 class ForallUnary(BindingOp):
@@ -3065,7 +3195,6 @@ class IotaUnary(BindingOp):
         result = self.local_copy(self.op, sub_var, new_condition)
         return result
 
-
 BindingOp.add_op(IotaUnary)
 
 class LFun(BindingOp):
@@ -3158,6 +3287,12 @@ class LFun(BindingOp):
     def calculate_partiality(self):
         new_body = self.body.calculate_partiality()
         return self.local_copy(self.op, self.var_instance, new_body)
+
+    @classmethod
+    def random(self, ctrl):
+        # not great at reusing bound variables
+        ftyp = get_type_system().random_from_class(types.FunType)
+        return random_lfun(ftyp, ctrl)
 
 def geach_combinator(gtype, ftype):
     body = term("g", gtype)(term("f", ftype)(term("x", ftype.left)))
@@ -3709,34 +3844,15 @@ def random_tf_op_expr(ctrl_fun):
 
 random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
 
-def random_term(typ, blockset=None, usedset=set(), prob_used=0.8, prob_var=0.5):
-    if blockset is None:
-        blockset = set()
-    is_var = True
-    if random.random() > prob_var:
-        is_var = False
-    # need to first filter to see if there is a possible used term.  Decide whether we're generating
-    # a variable first so that this can be part of the filter.
-    used_typed = [x for x in list(usedset) if (x.type==typ and x.variable() == is_var)]
-    if random.random() < prob_used and len(used_typed) > 0:
-        varname = (random.choice(list(used_typed))).op
-    else:
-        if typ in random_term_base.keys():
-            base = random_term_base[typ]
-        else:
-            base = "f"
-        if not is_var:
-            base = base.upper()
-        varname = alpha_variant(base, blockset | {n.op for n in usedset})
-    return TypedExpr.term_factory(varname, typ)
+def random_term(typ=None, blockset=None, usedset=set(), prob_used=0.8, prob_var=0.5, max_type_depth=1):
+    return TypedTerm.random(random_ctrl_fun=None, typ=typ, blockset=blockset, usedset=usedset, prob_used=prob_used, prob_var=prob_var, max_type_depth=max_type_depth)
 
 # use this to try to get more reused bound variables (which tend to have odd types when generated randomly)
-def random_pred_combo_from_term(output_type, usedset):
+def random_pred_combo_from_term(output_type, ctrl, usedset):
     ts = get_type_system()
     term = (random.choice(list(usedset))).copy()
     pred_type = ts.unify_ar(term.type, output_type)
-    pred = random_term(pred_type, usedset=usedset)
-    usedset |= {pred}
+    pred = ctrl(typ=pred_type)
     return pred(term)
 
 def random_fa_combo(output_type, ctrl, max_type_depth=1):
@@ -3748,11 +3864,22 @@ def random_fa_combo(output_type, ctrl, max_type_depth=1):
 
 def random_lfun(typ, ctrl):
     global random_used_vars
+    typ = get_type_system().unify(typ, tp("<?,?>"))
     input_type = typ.left
     body_type = typ.right
     variable = random_term(input_type, usedset=random_used_vars, prob_used=0.2, prob_var=1.0)
     random_used_vars |= {variable}
     return LFun(variable, ctrl(typ=body_type))
+
+def random_lfun_force_bound(typ, ctrl):
+    global random_used_vars
+    typ = get_type_system().unify(typ, tp("<?,?>"))
+    input_type = typ.left
+    body_type = typ.right
+    variable = random_term(input_type, usedset=random_used_vars, prob_used=0.2, prob_var=1.0)
+    random_used_vars |= {variable}
+    return LFun(variable, random_pred_combo_from_term(body_type, ctrl, usedset=random_used_vars))
+
 
 def random_binding_expr(ctrl, max_type_depth=1):
     global random_used_vars
@@ -3763,6 +3890,19 @@ def random_binding_expr(ctrl, max_type_depth=1):
     variable = random_term(var_type, usedset=random_used_vars, prob_used=0.2, prob_var=1.0)
     random_used_vars |= {variable}
     return op_class(variable, ctrl(typ=type_t))
+
+def random_from_class(cls, max_depth=1, used_vars=None):
+    global random_used_vars
+    if used_vars is None:
+        used_vars = set()
+    random_used_vars = used_vars
+
+    def ctrl(**args):
+        global random_used_vars
+        return random_expr(depth=max_depth-1, used_vars=random_used_vars, **args)
+
+    return cls.random(ctrl)
+
 
 # ugh, need to find a way to do this not by side effect
 global random_used_vars
@@ -3802,8 +3942,9 @@ def random_expr(typ=None, depth=1, used_vars=None):
             options.append(3)
         if typ.functional():
             options.append(4)
+            options.append(5)
         if depth == 1 and len(random_used_vars) > 0:
-            options.extend([5,6,7,8]) # try to reuse vars a bit more
+            options.extend([6,7,8,9]) # try to reuse vars a bit more
         choice = random.choice(options)
         def ctrl(**args):
             global random_used_vars
@@ -3816,11 +3957,12 @@ def random_expr(typ=None, depth=1, used_vars=None):
             return random_binding_expr(ctrl)
         elif choice == 4:
             return random_lfun(typ, ctrl)
-        elif choice >= 5:
-            return random_pred_combo_from_term(typ, random_used_vars)
+        elif choice == 5:            
+            return random_lfun_force_bound(typ, ctrl)
+        elif choice >= 6:
+            return random_pred_combo_from_term(typ, ctrl, random_used_vars)
         else:
             raise NotImplementedError
-
 
 import unittest
 
@@ -3840,6 +3982,12 @@ def testsimp(self, a, b):
         print("Failed simplification test: '%s == %s'" % (repr(a), repr(b)))
     self.assertEqual(intermediate, teb)
     return intermediate
+
+te_classes = [ApplicationExpr, Tuple, TypedTerm, Partial, Disjunctive, 
+              UnaryNegExpr, UnaryNegativeExpr, BinaryAndExpr, BinaryOrExpr, BinaryArrowExpr, 
+              BinaryBiarrowExpr, BinaryNeqExpr, BinaryLExpr, BinaryLeqExpr, BinaryGExpr, 
+              BinaryGeqExpr, BinaryPlusExpr, BinaryMinusExpr, BinaryDivExpr, BinaryExpExpr, SetContains, 
+              TupleIndex, ConditionSet, ListedSet, ForallUnary, ExistsUnary, ExistsExact, IotaUnary, LFun]
 
 class MetaTest(unittest.TestCase):
     def setUp(self):
@@ -3863,6 +4011,11 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(self.testf, self.testf)
         self.assertNotEqual(self.P, self.Q)
         self.assertNotEqual(self.x, self.y)
+
+
+    def test_class_random(self):
+        for c in te_classes:
+            random_from_class(c)
 
     def test_parse(self):
         # overall: compare parsed TypedExprs with constructed TypedExprs
