@@ -498,7 +498,7 @@ class TypedExpr(object):
                 raise TypeMismatch(s, old, "Substitution for element %s of '%s'" % (i, repr(self)))
             s = s_a
         parts[i] = s
-        result = self.local_copy(*parts)
+        result = self.copy_local(*parts)
         return result
 
     @classmethod
@@ -903,7 +903,7 @@ class TypedExpr(object):
         c = TypedExpr(self.op, *self.args, defer=self.defer)
         return c
 
-    def local_copy(self, *args, type_check=True):
+    def copy_local(self, *args, type_check=True):
         raise NotImplementedError
 
     def deep_copy(self):
@@ -913,7 +913,7 @@ class TypedExpr(object):
                 accum.append(p.deep_copy())
             else:
                 accum.append(p)
-        return self.local_copy(*accum, type_check=False)
+        return self.copy_local(*accum, type_check=False)
 
     def type_env(self, constants=False, target=None, free_only=True):
         env = dict()
@@ -1001,7 +1001,7 @@ class TypedExpr(object):
                 accum.append(p.under_type_injection(mapping))
             else:
                 accum.append(p)
-        r = self.local_copy(*accum, type_check=False)
+        r = self.copy_local(*accum, type_check=False)
         r.type = r.type.sub_type_vars(mapping)
         if r.term():
             r.get_type_env(force_recalc=True)
@@ -1030,12 +1030,12 @@ class TypedExpr(object):
             else:
                 new_part = part
             parts.append(new_part)
-        # this may or may not be recalculated by local_copy.  The main case where it isn't is terms.
+        # this may or may not be recalculated by copy_local.  The main case where it isn't is terms.
         copy_type = copy.type.sub_type_vars(mapping)
         # Note: we still need to reset the subordinate type environments even in this case.
         if copy_type == self.type and not dirty:
             return self
-        result = copy.local_copy(*parts)
+        result = copy.copy_local(*parts)
         if result.term():
             result.type = copy_type
         if reset:
@@ -1180,7 +1180,7 @@ class TypedExpr(object):
                     dirty = True
                 args = result.args.copy()
                 args[i] = new_arg_i
-                next_step = result.local_copy(result.op, *args)
+                next_step = result.copy_local(result.op, *args)
                 if len(result.args) == 2 and isinstance(result, BindingOp):
                     reason = "Recursive reduction of body"
                 else:
@@ -1190,7 +1190,7 @@ class TypedExpr(object):
             new_op = result.op.reduce_all()
             if new_op is not result.op:
                 dirty = True
-                next_step = result.local_copy(new_op, *result.args)
+                next_step = result.copy_local(new_op, *result.args)
                 result = derived(next_step, result, desc="Recursive reduction of operator", subexpression=new_op)
         self_dirty = False
         while result.reducible():
@@ -1220,7 +1220,7 @@ class TypedExpr(object):
             else:
                 part_i = part
             new_parts.append(part_i)
-        new_self = self.local_copy(*new_parts)
+        new_self = self.copy_local(*new_parts)
         condition = condition.simplify_all()
         if condition is not true_term:
             return Partial(new_self, condition)
@@ -1386,9 +1386,9 @@ class ApplicationExpr(TypedExpr):
                 self.type_guessed = False
 
     def copy(self):
-        return self.local_copy(self.op, self.args[0])
+        return self.copy_local(self.op, self.args[0])
 
-    def local_copy(self, fun, arg, type_check=True):
+    def copy_local(self, fun, arg, type_check=True):
         result = ApplicationExpr(fun, arg, defer=self.defer, type_check=type_check)
         result.let = self.let
         result.type_guessed = self.type_guessed
@@ -1459,7 +1459,7 @@ class Tuple(TypedExpr):
     def copy(self):
         return Tuple(self.args)
 
-    def local_copy(self, op, *args, type_check=True):
+    def copy_local(self, op, *args, type_check=True):
         return Tuple(args, typ=self.type)
 
     def index(self, i):
@@ -1474,7 +1474,7 @@ class Tuple(TypedExpr):
 
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
         content = [self.args[i].try_adjust_type(unified_type[i], derivation_reason=derivation_reason, assignment=assignment) for i in range(len(self.args))]
-        return self.local_copy(self.op, *content)
+        return self.copy_local(self.op, *content)
 
     def __repr__(self):
         return "(" + ", ".join([repr(a) for a in self.args]) + ")"
@@ -1555,7 +1555,7 @@ class TypedTerm(TypedExpr):
     def copy(self):
         return TypedTerm(self.op, typ=self.type)
 
-    def local_copy(self, op, type_check=True):
+    def copy_local(self, op, type_check=True):
         result = TypedTerm(op, typ=self.type, latex_op_str = self.latex_op_str, type_check=type_check)
         if not type_check:
             result._type_env = self._type_env.copy()
@@ -1805,7 +1805,7 @@ class Partial(TypedExpr):
     def copy(self):
         return Partial(self.body, self.condition)
 
-    def local_copy(self, op, body, condition):
+    def copy_local(self, op, body, condition):
         return Partial(body, condition)
 
     def calculate_partiality(self):
@@ -1835,7 +1835,7 @@ class Partial(TypedExpr):
         tuple_version = self.meta_tuple()
         revised_type = types.TupleType(unified_type, types.type_t)
         result = tuple_version.try_adjust_type(unified_type, derivation_reason, assignment, env)
-        return self.local_copy(self.op, result[1], result[2])
+        return self.copy_local(self.op, result[1], result[2])
         
     def latex_str(self, **kwargs):
         if self.condition and self.condition != true_term:
@@ -1916,7 +1916,7 @@ class Disjunctive(TypedExpr):
     def copy(self):
         return Disjunctive(*self.args)
     
-    def local_copy(self, op, *disjuncts):
+    def copy_local(self, op, *disjuncts):
         return Disjunctive(*disjuncts)
     
     def term(self):
@@ -2038,7 +2038,7 @@ class UnaryOpExpr(TypedExpr):
         """This must be overriden in classes that are not produced by the factory."""
         return op_expr_factory(self.op, *self.args)
 
-    def local_copy(self, op, *args, type_check=True):
+    def copy_local(self, op, *args, type_check=True):
         return op_expr_factory(self.op, *args)
 
     def type_constraints(self):
@@ -2097,7 +2097,7 @@ class BinaryOpExpr(TypedExpr):
         """This must be overriden by classes that are not produced by the factory."""
         return op_expr_factory(self.op, *self.args)
 
-    def local_copy(self, op, *args, type_check=True):
+    def copy_local(self, op, *args, type_check=True):
         return op_expr_factory(self.op, *args)
 
     def type_constraints(self):
@@ -2399,7 +2399,7 @@ class SetContains(BinaryOpExpr):
     def copy(self):
         return SetContains(self.args[0], self.args[1])
 
-    def local_copy(self, op, arg1, arg2, type_check=True):
+    def copy_local(self, op, arg1, arg2, type_check=True):
         return SetContains(arg1, arg2)
 
     def reduce(self):
@@ -2441,7 +2441,7 @@ class TupleIndex(BinaryOpExpr):
     def copy(self):
         return TupleIndex(self.args[0], self.args[1])
 
-    def local_copy(self, op, arg1, arg2, type_check=True):
+    def copy_local(self, op, arg1, arg2, type_check=True):
         return TupleIndex(arg1, arg2)
 
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
@@ -2449,7 +2449,7 @@ class TupleIndex(BinaryOpExpr):
             ttype = list(self.args[0].type)
             ttype[self.args[1].op] = unified_type
             adjusted_tuple = self.args[0].try_adjust_type(types.TupleType(*ttype))
-            return self.local_copy(self.op, adjusted_tuple, self.args[1])
+            return self.copy_local(self.op, adjusted_tuple, self.args[1])
         else:
             logger.warning("Using non-constant index; not well-supported at present.")
             return None
@@ -2735,7 +2735,7 @@ class BindingOp(TypedExpr):
         # implement in subclass
         raise NotImplementedError
 
-    def local_copy(self, op, var, body, type_check=True):
+    def copy_local(self, op, var, body, type_check=True):
         raise NotImplementedError        
 
     def alpha_convert(self, new_varname):
@@ -2813,10 +2813,10 @@ class BindingOp(TypedExpr):
                 return new_body
             if self.varname in new_body.condition.free_variables():
                 # default: project with the some operator.  May need tweaking for specialized operators.
-                new_condition = self.local_copy(self.op, self.var_instance, new_body.condition)
+                new_condition = self.copy_local(self.op, self.var_instance, new_body.condition)
             else:
                 new_condition = new_body.condition
-            new_self = self.local_copy(self.op, self.var_instance, new_body.body)
+            new_self = self.copy_local(self.op, self.var_instance, new_body.body)
             return Partial(new_self, new_condition)
         else:
             return self
@@ -2933,7 +2933,7 @@ def calculate_partiality_cls(cls):
             else:
                 new_condition = new_body.condition
             # default: project with the some operator.  May need tweaking for specialized operators.
-            new_self = self.local_copy(self.op, self.var_instance, new_body.body)
+            new_self = self.copy_local(self.op, self.var_instance, new_body.body)
             return Partial(new_self, new_condition)
         else:
             return self
@@ -2957,7 +2957,7 @@ class ConditionSet(BindingOp):
     def copy(self):
         return ConditionSet(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, var, body, type_check=True):
+    def copy_local(self, op, var, body, type_check=True):
         return ConditionSet(var.type, body, varname=var.op)
 
     def structural_singleton(self):
@@ -2981,11 +2981,11 @@ class ConditionSet(BindingOp):
         char = self.to_characteristic()
         sub_var = TypedTerm(self.varname, inner_type)
         new_condition = char.apply(sub_var)
-        return self.local_copy(self.op, sub_var, new_condition)
+        return self.copy_local(self.op, sub_var, new_condition)
 
     def calculate_partiality(self):
         new_body = self.body.calculate_partiality()
-        return self.local_copy(self.op, self.var_instance, new_body)
+        return self.copy_local(self.op, self.var_instance, new_body)
 
 BindingOp.add_op(ConditionSet)
 
@@ -3020,7 +3020,7 @@ class ListedSet(TypedExpr):
     def copy(self):
         return ListedSet(self.args)
 
-    def local_copy(self, op, *args, type_check=True):
+    def copy_local(self, op, *args, type_check=True):
         return ListedSet(args)
 
     def term(self):
@@ -3084,7 +3084,7 @@ class ListedSet(TypedExpr):
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
         inner_type = unified_type.content_type
         content = [a.try_adjust_type(inner_type, derivation_reason=derivation_reason, assignment=assignment) for a in self.args]
-        result = self.local_copy(self.op, *content)
+        result = self.copy_local(self.op, *content)
         return result
 
     @classmethod
@@ -3112,7 +3112,7 @@ class ForallUnary(BindingOp):
     def copy(self):
         return ForallUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, var, arg, type_check=True):
+    def copy_local(self, op, var, arg, type_check=True):
         return ForallUnary(var, arg, type_check=type_check)
 
     def simplify(self):
@@ -3135,7 +3135,7 @@ class ExistsUnary(BindingOp):
     def copy(self):
         return ExistsUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, var, arg, type_check=True):
+    def copy_local(self, op, var, arg, type_check=True):
         return ExistsUnary(var, arg, type_check=type_check)        
 
     def simplify(self):
@@ -3159,7 +3159,7 @@ class ExistsExact(BindingOp):
     def copy(self):
         return ExistsExact(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, var, arg, type_check=True):
+    def copy_local(self, op, var, arg, type_check=True):
         return ExistsExact(var, arg, type_check=type_check)        
 
 BindingOp.add_op(ExistsExact)
@@ -3179,7 +3179,7 @@ class IotaUnary(BindingOp):
     def copy(self):
         return IotaUnary(self.vartype, self.body, self.varname)
 
-    def local_copy(self, op, var, arg, type_check=True):
+    def copy_local(self, op, var, arg, type_check=True):
         return IotaUnary(var, arg, type_check=type_check)        
 
     def to_test(self, x):
@@ -3191,7 +3191,7 @@ class IotaUnary(BindingOp):
         sub_var = TypedTerm(self.varname, unified_type)
         # TODO: does this need to pass in assignment?
         new_condition = self.to_test(sub_var)
-        result = self.local_copy(self.op, sub_var, new_condition)
+        result = self.copy_local(self.op, sub_var, new_condition)
         return result
 
 BindingOp.add_op(IotaUnary)
@@ -3231,7 +3231,7 @@ class LFun(BindingOp):
         r.let = self.let
         return r
 
-    def local_copy(self, op, var, arg, type_check=True):
+    def copy_local(self, op, var, arg, type_check=True):
         r = LFun(var, arg, type_check=type_check)
         r.let = self.let
         return r
@@ -3251,7 +3251,7 @@ class LFun(BindingOp):
 
         if self.type.right != unified_type.right:
             new_body = new_body.try_adjust_type(unified_type.right, derivation_reason=derivation_reason, assignment=assignment) # will only make copy if necessary
-        new_fun = self.local_copy(self.op, new_var, new_body)
+        new_fun = self.copy_local(self.op, new_var, new_body)
         env.merge(new_body.get_type_env())
         if self.varname in env.var_mapping:
             del env.var_mapping[self.varname]
@@ -3285,7 +3285,7 @@ class LFun(BindingOp):
 
     def calculate_partiality(self):
         new_body = self.body.calculate_partiality()
-        return self.local_copy(self.op, self.var_instance, new_body)
+        return self.copy_local(self.op, self.var_instance, new_body)
 
     @classmethod
     def random(self, ctrl):
@@ -3335,7 +3335,7 @@ def beta_reduce_ts(t, varname, subst):
                 parts.append(beta_reduce_ts(p, varname, subst))
             else:
                 parts.append(p)
-        t = t.local_copy(*parts)
+        t = t.copy_local(*parts)
     return t
 
 def variable_replace(expr, m):
@@ -3444,7 +3444,7 @@ def variable_transform_rebuild(expr, dom, fun):
                 # ???
                 raise ValueError("problem during variable conversion...") # TODO: make less cryptic
         if dirty:
-            expr = expr.local_copy(*seq)
+            expr = expr.copy_local(*seq)
     return expr
 
 
@@ -4022,7 +4022,7 @@ class MetaTest(unittest.TestCase):
             for i in range(50):
                 x = random_from_class(c)
                 self.assertEqual(x, x.copy())
-                self.assertEqual(x, x.local_copy(*x))
+                self.assertEqual(x, x.copy_local(*x))
 
 
     def test_parse(self):

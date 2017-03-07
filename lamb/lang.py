@@ -1790,9 +1790,9 @@ class PlaceholderTerm(meta.TypedTerm):
         return self(arg)
 
     def copy(self):
-        return self.local_copy(self.op)
+        return self.copy_local(self.op)
 
-    def local_copy(self, op, type_check=True):
+    def copy_local(self, op, type_check=True):
         result = PlaceholderTerm(op, self.placeholder_for, system=self.system, type_check=type_check)
         result.let = self.let
         result.type = self.type # type may have changed, e.g. via alphabetic conversion to a fresh type
