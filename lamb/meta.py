@@ -2990,9 +2990,7 @@ class ConditionSet(BindingOp):
 BindingOp.add_op(ConditionSet)
 
 class ListedSet(TypedExpr):
-    """A listed set is a set that simply lists members.
-
-    _NOTE_: order is not guaranteed to be stable in a ListedSet, which may create all sorts of issues."""
+    """A listed set is a set that simply lists members."""
     canonical_name = "ListedSet"
     op_name_uni="ListedSet"
     op_name_latex="ListedSet"
@@ -3000,6 +2998,7 @@ class ListedSet(TypedExpr):
     def __init__(self, iterable, typ=None, assignment=None):
         s = set(iterable) # just make it a set first, remove duplicates, flatten order
         args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
+        args = sorted(args, key=repr) # for a canonical ordering
         if len(args) == 0 and typ is None:
             typ = types.VariableType("X") # could be a set of anything
         elif typ is None:
@@ -3089,7 +3088,7 @@ class ListedSet(TypedExpr):
         return result
 
     @classmethod
-    def random(self, ctrl, max_type_depth=1, max_members=5, allow_empty=True):
+    def random(self, ctrl, max_type_depth=1, max_members=6, allow_empty=True):
         typ = get_type_system().random_type(max_type_depth, 0.5)
         if allow_empty:
             r = range(max_members+1)
@@ -4015,7 +4014,16 @@ class MetaTest(unittest.TestCase):
 
     def test_class_random(self):
         for c in te_classes:
-            random_from_class(c)
+            for i in range(50):
+                random_from_class(c)
+
+    def test_copy(self):
+        for c in te_classes:
+            for i in range(50):
+                x = random_from_class(c)
+                self.assertEqual(x, x.copy())
+                self.assertEqual(x, x.local_copy(*x))
+
 
     def test_parse(self):
         # overall: compare parsed TypedExprs with constructed TypedExprs
