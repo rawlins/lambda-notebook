@@ -3174,6 +3174,17 @@ class ExistsExact(BindingOp):
     def copy_local(self, op, var, arg, type_check=True):
         return ExistsExact(var, arg, type_check=type_check)        
 
+    def calculate_partiality(self):
+        # This is different from what would be most directly derived from applying calculate_partiality
+        # to the standard logical implementation of ∃!.  (That would lead to something like "∃x Q(x) & ∀x Q(x)" from a condition Q(x).)
+        new_body = self.body.calculate_partiality()
+        if isinstance(new_body, Partial):
+            return Partial(ExistsExact(self.var_instance, new_body.body), 
+                        ExistsExact(self.var_instance, new_body.body & new_body.condition))
+        else:
+            return ExistsExact(self.var_instance, new_body)
+
+
 BindingOp.add_op(ExistsExact)
 
 class IotaUnary(BindingOp):
@@ -3182,17 +3193,19 @@ class IotaUnary(BindingOp):
     op_name_uni = "ι"
     op_name_latex="\\iota{}"
     secondary_names = {"ι"}
-    calculate_partiality = calculate_partiality_cls(ExistsExact)
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
         super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment, type_check=type_check)
         self.type = self.vartype
+        self.partiality_calculated = False
 
     def copy(self):
         return IotaUnary(self.vartype, self.body, self.varname)
 
     def copy_local(self, op, var, arg, type_check=True):
-        return IotaUnary(var, arg, type_check=type_check)        
+        result = IotaUnary(var, arg, type_check=type_check)
+        result.partiality_calculated = self.partiality_calculated
+        return result
 
     def to_test(self, x):
         """Return a LFun based on the condition used to describe the set."""
@@ -3205,6 +3218,21 @@ class IotaUnary(BindingOp):
         new_condition = self.to_test(sub_var)
         result = self.copy_local(self.op, sub_var, new_condition)
         return result
+
+    def calculate_partiality(self):
+        # because this is guaranteed to generate a Partial, we don't want to keep redoing it.
+        if self.partiality_calculated:
+            return self
+        new_body = self.body.calculate_partiality()
+        if isinstance(new_body, Partial):
+            new_body = new_body.body & new_body.condition
+        new_condition = new_body.copy()
+
+        new_body = IotaUnary(self.var_instance, new_body)
+        new_body.partiality_calculated = True
+        if self.varname in new_condition.free_variables():
+            new_condition = ExistsExact(self.var_instance, new_condition)
+        return Partial(new_body, new_condition)
 
 BindingOp.add_op(IotaUnary)
 
