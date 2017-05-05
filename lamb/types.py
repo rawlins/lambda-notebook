@@ -1444,6 +1444,10 @@ class PolyTypeSystem(TypeSystem):
         else:
             return (result.principal, result.principal.left, result.principal.right)
 
+    def fun_arg_check_bool(self, fun, arg):
+        f, l, r = self.unify_fa(fun.type, arg.type)
+        return f is not None
+
     # There's really got to be a better way to do this...
     def alpha_equiv(self, t1, t2):
         """Are `t1` and `t2` alpha equivalents of each other?"""
