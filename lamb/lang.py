@@ -552,7 +552,7 @@ class CompositionTree(Tree, Composable):
 
     def flatten_iter(self):
         # prone to combinatorial explosion?
-        if self.content and len(self.content) > 0:
+        if self.content is not None and len(self.content) > 0:
             yield from self.content_iter() # double check -- is source set properly?
         else:
             if len(self) == 0:
@@ -947,7 +947,7 @@ class TreeComposite(Composite, Tree):
             else:
                 part_i = self[i].build_display_tree(derivations=derivations, recurse=recurse, style=style)
             parts.append(part_i)
-        if self.content:
+        if self.content is not None:
             content_str = utils.ensuremath(self.content.latex_str())
         else:
             content_str = "N/A"
@@ -1684,9 +1684,10 @@ class LexiconOp(TreeCompositionOp):
         # TODO: revisit
         if isinstance(t, TreeComposite) and t.label() is None and t.source is not None:
             name = t.source.label()
-        elif t.label() and isinstance(t.label(), PlaceholderTerm) and t.source is not None:
+        elif t.label() is not None and isinstance(t.label(), PlaceholderTerm) and t.source is not None:
             name = t.source.label()
         else:
+            print(repr(t.label()), t.label().__class__)
             assert(isinstance(t.label(), str))
             name = t.label()
         den = self.system.lookup_item(name)
@@ -1790,10 +1791,10 @@ class PlaceholderTerm(meta.TypedTerm):
         return self(arg)
 
     def copy(self):
-        return self.copy_local(self.op)
+        return self.copy_local()
 
-    def copy_local(self, op, type_check=True):
-        result = PlaceholderTerm(op, self.placeholder_for, system=self.system, type_check=type_check)
+    def copy_local(self, type_check=True):
+        result = PlaceholderTerm(self.op, self.placeholder_for, system=self.system, type_check=type_check)
         result.let = self.let
         result.type = self.type # type may have changed, e.g. via alphabetic conversion to a fresh type
         return result
