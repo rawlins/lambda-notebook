@@ -122,6 +122,7 @@ def try_parse_item_name(s, env=None, ambiguity=False):
         return (None, None)
     lex_name = match.group(1).replace(" ", "_")
     if lex_name != match.group(1):
+        from lamb import meta
         meta.logger.info("Exporting item ||%s|| to python variable `%s`." % (match.group(1), lex_name))
     index = None
     index_str = match.group(2)
