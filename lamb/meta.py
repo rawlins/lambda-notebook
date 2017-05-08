@@ -1609,6 +1609,9 @@ class TypedTerm(TypedExpr):
             assignment[self.op] = coerced_op
         return coerced_op
 
+    def __hash__(self):
+        return hash("TypedTerm") ^ super().__hash__()
+
     def latex_str(self, show_types=True, assignment=None, **kwargs):
         if self.latex_op_str is None:
             op = self.op
