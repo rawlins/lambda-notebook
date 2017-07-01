@@ -2948,7 +2948,7 @@ class ConditionSet(BindingOp):
         return False
 
     def latex_str(self, parens=True, **kwargs):
-        return ensuremath("\{%s_{%s}\:|\: " % (self.varname, self.vartype.latex_str(**kwargs)) + self.body.latex_str(**kwargs) + "\}")
+        return ensuremath("\{%s_{%s}\:|\: " % (self.varname, self.vartype.latex_str()) + self.body.latex_str(**kwargs) + "\}")
 
     def __lshift__(self, i):
         return SetContains(i, self)
