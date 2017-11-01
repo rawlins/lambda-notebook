@@ -3189,9 +3189,6 @@ class IotaUnary(BindingOp):
         return result
 
     def calculate_partiality(self):
-        # because this is guaranteed to generate a Partial, we don't want to keep redoing it.
-        if self.partiality_calculated:
-            return self
         new_body = self.body.calculate_partiality()
         if isinstance(new_body, Partial):
             new_body = new_body.body & new_body.condition
@@ -3201,7 +3198,13 @@ class IotaUnary(BindingOp):
         new_body.partiality_calculated = True
         if self.varname in new_condition.free_variables():
             new_condition = ExistsExact(self.var_instance, new_condition)
-        return Partial(new_body, new_condition)
+        # We don't want to generate a new partial on successive calculations.
+        # In fact, we want to eliminate any extra conditions generated, e.g.
+        # from further beta reductions.
+        if self.partiality_calculated:
+            return new_body
+        else:
+            return Partial(new_body, new_condition)
 
 BindingOp.add_op(IotaUnary)
 
