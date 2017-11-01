@@ -1828,6 +1828,8 @@ class Partial(TypedExpr):
 
     @classmethod
     def from_Tuple(cls, t):
+        if (isinstance(t, TypedExpr) and (not isinstance(t, Tuple) or len(t) != 2)):
+            raise parsing.ParseError("Partial requires a Tuple of length 2.  (Received `%s`.)" % repr(t))
         return Partial(t[0], t[1])
         
     @classmethod
