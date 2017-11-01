@@ -1828,7 +1828,7 @@ class Partial(TypedExpr):
 
     @classmethod
     def from_Tuple(cls, t):
-        return Partial(t[1], t[2])
+        return Partial(t[0], t[1])
         
     @classmethod
     def get_condition(cls, p):
