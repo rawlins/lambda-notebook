@@ -3117,6 +3117,22 @@ class ExistsUnary(BindingOp):
             return self.body
         return self
 
+    def calculate_partiality(self,vars=None):
+        # This is different from what would be most directly derived from applying calculate_partiality
+        # to the standard logical implementation of ∃!.  (That would lead to something like "∃x Q(x) & ∀x Q(x)" from a condition Q(x).)
+        new_body = self.body.calculate_partiality(vars=vars)
+        # defer any further calculation if there are bound variables in the body
+        if vars is not None:
+            if vars | new_body.free_variables():
+                return self.copy_local(self.var_instance, new_body)
+        if isinstance(new_body, Partial):
+            return Partial(ExistsUnary(self.var_instance, new_body.body), 
+                        ExistsUnary(self.var_instance, new_body.body & new_body.condition))
+        else:
+            return ExistsUnary(self.var_instance, new_body)
+
+
+
 BindingOp.add_op(ExistsUnary)
 
 class ExistsExact(BindingOp):
