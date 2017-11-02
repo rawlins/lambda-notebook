@@ -1137,11 +1137,11 @@ class TypedExpr(object):
         return result # could instead just do all the derivedness in one jump here
 
 
-    def calculate_partiality(self):
+    def calculate_partiality(self, vars=None):
         condition = true_term
         new_parts = list()
         for part in self:
-            part_i = part.calculate_partiality()
+            part_i = part.calculate_partiality(vars=vars)
             if isinstance(part_i, Partial):
                 condition = condition & part_i.condition
                 part_i = part_i.body
@@ -1407,6 +1407,13 @@ class ApplicationExpr(TypedExpr):
             return self
         else:
             return derived(self.args[0].apply(self.args[1]), self, desc="Reduction")
+
+    def calculate_partiality(self, vars=None):
+        # defer calculation until beta reduction has occurred
+        if isinstance(self.args[0], LFun) or (vars is not None and self.args[0] in vars):
+            return self.copy_local(self.args[0].calculate_partiality(), self.args[1].calculate_partiality())
+        else:
+            return super().calculate_partiality()
 
     @classmethod
     def random(self, random_ctrl_fun):
@@ -1789,9 +1796,9 @@ class Partial(TypedExpr):
     def copy_local(self, body, condition):
         return Partial(body, condition)
 
-    def calculate_partiality(self):
-        new_body = self.body.calculate_partiality()
-        new_condition = self.condition.calculate_partiality()
+    def calculate_partiality(self, vars=None):
+        new_body = self.body.calculate_partiality(vars=vars)
+        new_condition = self.condition.calculate_partiality(vars=vars)
         if isinstance(new_condition, Partial):
             new_condition = new_condition.body & new_condition.condition
         if isinstance(new_body, Partial):
@@ -2789,8 +2796,12 @@ class BindingOp(TypedExpr):
     def term(self):
         return False
 
-    def calculate_partiality(self):
-        new_body = self.body.calculate_partiality()
+    def calculate_partiality(self, vars=None):
+        new_body = self.body.calculate_partiality(vars=vars)
+        # defer any further calculation if there are bound variables in the body
+        if vars is not None:
+            if vars | new_body.free_variables():
+                return self.copy_local(self.var_instance, new_body)
         if isinstance(new_body, Partial):
             if new_body.condition is true_term:
                 return new_body
@@ -2902,27 +2913,6 @@ class BindingOp(TypedExpr):
         return cls(variable, ctrl(typ=type_t))
 
 
-
-# not a classmethod...
-def calculate_partiality_cls(cls):
-    def calculate_partiality(self):
-        new_body = self.body.calculate_partiality()
-        if isinstance(new_body, Partial):
-            if new_body.condition is true_term:
-                return new_body
-            if self.varname in new_body.condition.free_variables():
-                # default: project with the some operator.  May need tweaking for specialized operators.
-                new_condition = cls(self.var_instance, new_body.condition)
-            else:
-                new_condition = new_body.condition
-            # default: project with the some operator.  May need tweaking for specialized operators.
-            new_self = self.copy_local(self.var_instance, new_body.body)
-            return Partial(new_self, new_condition)
-        else:
-            return self
-    return calculate_partiality
-
-
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
 
@@ -2966,8 +2956,8 @@ class ConditionSet(BindingOp):
         new_condition = char.apply(sub_var)
         return self.copy_local(sub_var, new_condition)
 
-    def calculate_partiality(self):
-        new_body = self.body.calculate_partiality()
+    def calculate_partiality(self, vars=None):
+        new_body = self.body.calculate_partiality(vars=vars)
         return self.copy_local(self.var_instance, new_body)
 
 BindingOp.add_op(ConditionSet)
@@ -3134,7 +3124,6 @@ class ExistsExact(BindingOp):
     canonical_name = "ExistsExact"
     op_name_uni="∃!"
     op_name_latex="\\exists{}!"
-    calculate_partiality = calculate_partiality_cls(ForallUnary)
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
         super().__init__(var_or_vtype, types.type_t, body, varname=varname, assignment=assignment, type_check=type_check)
@@ -3145,10 +3134,14 @@ class ExistsExact(BindingOp):
     def copy_local(self, var, arg, type_check=True):
         return ExistsExact(var, arg, type_check=type_check)        
 
-    def calculate_partiality(self):
+    def calculate_partiality(self,vars=None):
         # This is different from what would be most directly derived from applying calculate_partiality
         # to the standard logical implementation of ∃!.  (That would lead to something like "∃x Q(x) & ∀x Q(x)" from a condition Q(x).)
-        new_body = self.body.calculate_partiality()
+        new_body = self.body.calculate_partiality(vars=vars)
+        # defer any further calculation if there are bound variables in the body
+        if vars is not None:
+            if vars | new_body.free_variables():
+                return self.copy_local(self.var_instance, new_body)
         if isinstance(new_body, Partial):
             return Partial(ExistsExact(self.var_instance, new_body.body), 
                         ExistsExact(self.var_instance, new_body.body & new_body.condition))
@@ -3190,8 +3183,12 @@ class IotaUnary(BindingOp):
         result = self.copy_local(sub_var, new_condition)
         return result
 
-    def calculate_partiality(self):
-        new_body = self.body.calculate_partiality()
+    def calculate_partiality(self, vars=None):
+        new_body = self.body.calculate_partiality(vars=vars)
+        # defer any further calculation if there are bound variables in the body
+        if vars is not None:
+            if vars | new_body.free_variables():
+                return self.copy_local(self.var_instance, new_body)
         if isinstance(new_body, Partial):
             new_body = new_body.body & new_body.condition
         new_condition = new_body.copy()
@@ -3297,8 +3294,11 @@ class LFun(BindingOp):
         """Override `*` as function composition for LFuns.  Note that this _only_ works for LFuns currently, not functional constants/variables."""
         return self.compose(other)
 
-    def calculate_partiality(self):
-        new_body = self.body.calculate_partiality()
+    def calculate_partiality(self, vars=None):
+        if vars is None:
+            vars = set()
+        vars |= {self.var_instance}
+        new_body = self.body.calculate_partiality(vars=vars)
         return self.copy_local(self.var_instance, new_body)
 
     @classmethod
