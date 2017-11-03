@@ -2503,8 +2503,10 @@ def presup_pa(binder, content, assignment=None):
     vname = "var%i" % index
     outer_vname = content.content.find_safe_variable()
     new_a = Assignment(assignment)
+    bound_var = meta.term(vname, types.type_e)
     new_a.update({vname: meta.term(outer_vname, types.type_e)})
-    f = meta.LFun(types.type_e, content.content.calculate_partiality().under_assignment(new_a), outer_vname)
+    # TODO: the bound var here doesn't generally work.
+    f = meta.LFun(types.type_e, content.content.calculate_partiality({bound_var}).under_assignment(new_a), outer_vname)
     return BinaryComposite(binder, content, f)
 
 
