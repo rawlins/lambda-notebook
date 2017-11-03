@@ -2509,7 +2509,16 @@ def presup_pa(binder, content, assignment=None):
     f = meta.LFun(types.type_e, content.content.calculate_partiality({bound_var}).under_assignment(new_a), outer_vname)
     return BinaryComposite(binder, content, f)
 
-
+# this is a presuppositional PA based on Liz Coppock's Semantics Boot Camp
+# PA rule.
+def sbc_pa(binder, content, assignment=None):
+    if (binder.content is not None) or not binder.name.strip().isnumeric():
+        raise TypeMismatch(binder, content, "Predicate Abstraction")
+    index = int(binder.name.strip())
+    vname = "var%i" % index
+    bound_var = meta.term(vname, types.type_e)
+    f = meta.LFun(types.type_e, content.content.calculate_partiality({bound_var}), vname)
+    return BinaryComposite(binder, content, f)
 
 
 def setup_type_driven():
