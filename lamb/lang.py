@@ -2125,7 +2125,8 @@ class TreeCompositionSystem(CompositionSystem):
     """A composition system for doing composition in tree structures."""
     def __init__(self, rules=None, basictypes = None, name=None, a_controller=None):
         CompositionSystem.__init__(self, rules, basictypes, name, a_controller)
-        self.add_rule(LexiconOp(system=self))
+        if not ("Lexicon" in self.ruledict):
+            self.add_rule(LexiconOp(system=self))
 
     def copy(self):
         new_sys = TreeCompositionSystem(rules=self.rules, basictypes=self.basictypes, name=self.name, a_controller=self.assign_controller)
