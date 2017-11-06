@@ -2374,6 +2374,20 @@ def tree_pa_metalanguage_fun(t, assignment=None):
     f = meta.LFun(types.type_e, t[1].content.under_assignment(new_a), varname=outer_vname)
     return BinaryComposite(t[0], t[1], f, source=t)
 
+def tree_pa_sbc_fun(t, assignment=None):
+    """SBC-style Predicate Abstraction, implemented in the metalanguage.
+
+    This shifts the assignment for the interpretation of the sister of the binder to match up traces with the bound variable.
+    It assumes the binder is the left sister, and will generate a TypeMismatch otherwise."""
+    binder = t[0]
+    if (binder.content is not None) or not binder.name.strip().isnumeric():
+        raise types.TypeMismatch(t, None, "Predicate Abstraction")
+    index = int(binder.name.strip())
+    vname = "var%i" % index
+    f = meta.LFun(types.type_e, t[1].content.under_assignment(assignment), varname=vname)
+    return BinaryComposite(t[0], t[1], f, source=t)
+
+
 class IndexedPronoun(Item):
     def __init__(self, name, index, typ=None):
         if typ is None:
@@ -2561,7 +2575,7 @@ def setup_hk_chap3():
     tfa_l = TreeCompositionOp("FA/left", tree_left_fa_fun) # Function Application
     tfa_r = TreeCompositionOp("FA/right", tree_right_fa_fun) # Function Application
     tpm = TreeCompositionOp("PM", tree_pm_fun) # Predicate Modification
-    tpa = TreeCompositionOp("PA", tree_pa_metalanguage_fun, allow_none=True)
+    tpa = TreeCompositionOp("PA", tree_pa_sbc_fun, allow_none=True)
     nn = TreeCompositionOp("NN", tree_nn_fun, preconditions=tree_unary) # Non-branching Node
 
     hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn], basictypes={type_e, type_t}, name="H&K Tree version")
