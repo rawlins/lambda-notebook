@@ -14,26 +14,30 @@ random_len_cap = 5
 
 
 class OntoSet(object):
-    def __init__(self, finite, values):
+    def __init__(self, finite=False, values=None):
         self.finite = finite
-        self.values = values
+        if values is None:
+            values = set()
+        else:
+            self.domain = set(values)
 
     def check(self,x):
-        if self.values.finite:
-            return (x in self.values.values)
+        if self.finite:
+            return (x in self.domain)
         else:
-            return self.values.infcheck(x)
+            return self.infcheck(x)
 
-    def __contains__(self,x):
+    def __contains__(self, x):
         return self.check(x)
 
-    def infcheck(self,x):
-        raise NotImplementedError("No type checker for abstract infinite set")
+    def infcheck(self, x):
+        """Does `x` meet the criteria for being a member of a set if infinite?"""
+        raise NotImplementedError("No membership checker for abstract infinite set")
 
 class SimpleInfiniteSet(OntoSet):
     """Contains all strings prefaced with one char prefix."""
     def __init__(self,prefix):
-        OntoSet.__init__(self, 0, set())
+        OntoSet.__init__(self, False, set())
         self.prefix = prefix[0]
         # TODO better error checking
 
@@ -43,7 +47,7 @@ class SimpleInfiniteSet(OntoSet):
 class SimpleIntegerSet(OntoSet):
     """pretend infinite set for integers, does not implement full infinity"""
     def __init__(self):
-        OntoSet.__init__(self, 0,set())
+        OntoSet.__init__(self, False, set())
 
     def infcheck(self,x):
         return isinstance(x,int)
@@ -166,9 +170,9 @@ class BasicType(TypeConstructor):
         else:
             self.name = name
         if values is None:
-            self.values = SimpleInfiniteSet("c" + symbol)
+            self.domain = SimpleInfiniteSet("c" + symbol)
         else:
-            self.values = values
+            self.domain = values
         # pre-escape because of the use of "?" for undetermined type
         self.regex = re.compile(re.escape(self.symbol))
 
@@ -176,7 +180,7 @@ class BasicType(TypeConstructor):
         return False
 
     def check(self, x):
-        return self.values.check(x)
+        return self.domain.check(x)
 
     def __eq__(self, other):
         try:
@@ -185,7 +189,7 @@ class BasicType(TypeConstructor):
             return False
 
     def copy_local(self):
-        return BasicType(self.symbol, self.values, self.name)
+        return BasicType(self.symbol, self.domain, self.name)
 
     def equal(self, other):
         raise NotImplementedError
@@ -637,7 +641,7 @@ class VariableType(TypeConstructor):
         if self.number > VariableType.max_id:
             VariableType.max_id = self.number
         self.name = symbol
-        self.values = set()
+        self.domain = set()
         self.init_type_vars()
 
     def internal(self):
@@ -1615,7 +1619,7 @@ def setup_type_constants():
     global type_e, type_t, type_n, type_property, type_transitive, basic_system, poly_system
 
     type_e = BasicType("e", SimpleInfiniteSet("c"))
-    type_t = BasicType("t", OntoSet(0,[0,1]))
+    type_t = BasicType("t", OntoSet(False, [0,1]))
     type_n = BasicType("n", SimpleIntegerSet())
     type_property = FunType(type_e, type_t)
     type_transitive = FunType(type_e, type_property)
