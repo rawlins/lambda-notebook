@@ -1839,7 +1839,8 @@ class CompositionSystem(object):
         r.system = self
         if r.name is not None:
             if r.name in self.ruledict.keys():
-                meta.logger.warning("Composition rule named '%s' already present in system" % r.name)
+                meta.logger.warning("Composition rule named '%s' already present in system, replacing" % r.name)
+                self.rules = [r2 for r2 in self.rules if r2.name != r.name]
             self.ruledict[r.name] = r
         self.rules.append(r)
         self.update_typeshifts()
@@ -1888,6 +1889,12 @@ class CompositionSystem(object):
         return self.ruledict[name]
 
     # TODO: function for checking if system supports an arbitrary type
+
+    def add_basic_type(self, t):
+        ts = meta.get_type_system()
+        ts.add_atomic(t)
+        if not t in self.basictypes:
+            self.basictypes.add(t)
 
     def __repr__(self):
         if self.name is None:

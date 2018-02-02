@@ -1051,8 +1051,9 @@ class TypeSystem(object):
                 self.add_nonatomic(a)
 
     def add_atomic(self, atomic):
-        self._parse_cache[atomic.regex] = atomic
-        self.atomics.add(atomic)
+        if not atomic in self.atomics:
+            self._parse_cache[atomic.regex] = atomic
+            self.atomics.add(atomic)
 
     def remove_atomic(self, atomic):
         if atomic in self.atomics:
