@@ -1970,7 +1970,7 @@ class Disjunctive(TypedExpr):
 
     @classmethod
     def from_tuple(cls, t):
-        return Disjunctive(*t[1:])
+        return Disjunctive(*t)
 
     @classmethod
     def factory(cls, *disjuncts):
