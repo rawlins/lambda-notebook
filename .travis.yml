@@ -31,4 +31,8 @@ script:
   # run the unit tests
   - python3 -m unittest lamb.types
   - python3 -m unittest lamb.meta
-
+  - for nb in notebooks/*.ipynb; do jupyter nbconvert --execute --to notebook "$nb" || exit 1; done
+  - for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert --execute --to notebook "$nb" || exit 1; done
+  - for nb in notebooks/fragments/*.ipynb; do jupyter nbconvert --execute --to notebook "$nb" || exit 1; done
+  - for nb in notebooks/tutorials/*.ipynb; do jupyter nbconvert --execute --to notebook "$nb" || exit 1; done
+  - for nb in notebooks/misc/*.ipynb; do jupyter nbconvert --execute --to notebook "$nb" || exit 1; done
