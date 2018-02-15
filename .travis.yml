@@ -27,7 +27,7 @@ install:
 
 script:
   # test that kernel got installed
-  - echo 'te("x_e"); exit()' | jupyter run --kernel=lambda=notebook
+  - echo 'te("x_e"); exit()' | jupyter run --kernel=lambda-notebook
   # run the unit tests
   - python3 -m unittest lamb.types
   - python3 -m unittest lamb.meta
