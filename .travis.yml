@@ -1,0 +1,34 @@
+language: python
+python:
+  # We don't actually use the Travis Python, but this keeps it organized.
+  - "3.5"
+  - "3.6"
+
+notifications:
+  email: true
+
+before_install:
+  # override the default environment to test against conda, see:
+  # https://conda.io/docs/user-guide/tasks/use-conda-with-travis-ci.html
+  - wget http://repo.continuum.io/miniconda/Miniconda-latest-Linux-x86_64.sh -O miniconda.sh
+  - bash miniconda.sh -b -p $HOME/miniconda
+  - export PATH="$HOME/miniconda/bin:$PATH"
+  - hash -r
+  - conda config --set always_yes yes --set changeps1 no
+  - conda update -q conda
+  - conda info -a
+  - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION jupyter nltk
+  - source activate test-environment
+
+install:
+  # test kernel installation
+  - bash install_lambda_kernel.py
+  - jupyter kernelspec list
+
+script:
+  # test that kernel got installed
+  - echo 'te("x_e"); exit()' | jupyter run --kernel=lambda=notebook
+  # run the unit tests
+  - python3 -m unittest lamb.types
+  - python3 -m unittest lamb.meta
+
