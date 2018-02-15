@@ -22,7 +22,7 @@ before_install:
 
 install:
   # test kernel installation
-  - bash install_lambda_kernel.py
+  - ./install_lambda_kernel.py
   - jupyter kernelspec list
 
 script:
