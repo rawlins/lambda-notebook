@@ -4,9 +4,9 @@
 
 This project is a framework for linguists and especially semanticists developing analyses in compositional semantics.  It aims to provide a means of developing 'digital fragments', following from the method of fragments in Montague grammar.
 
-The project is in an alpha state.  While code is publicly up on github, expect bugs and rapid changes.  Contributions, requests, and suggestions are welcome.  To see an example, a pre-rendered demo notebook can be found at [http://nbviewer.jupyter.org/github/rawlins/lambda-notebook/blob/master/notebooks/Lambda%20Notebook%20Demo%20%28executed%29.ipynb](http://nbviewer.jupyter.org/github/rawlins/lambda-notebook/blob/master/notebooks/Lambda%20Notebook%20Demo%20%28executed%29.ipynb).
+The project is in an alpha state.  While code is publicly up on github, expect bugs and rapid (or occasionally, not-so-rapid) changes.  Contributions, requests, and suggestions are welcome.  To see an example, a pre-rendered demo notebook can be found at [http://nbviewer.jupyter.org/github/rawlins/lambda-notebook/blob/master/notebooks/Lambda%20Notebook%20Demo%20%28executed%29.ipynb](http://nbviewer.jupyter.org/github/rawlins/lambda-notebook/blob/master/notebooks/Lambda%20Notebook%20Demo%20%28executed%29.ipynb).
 
-The lead developer for this project is Kyle Rawlins, kgr at jhu dot edu.
+The lead developer for this project is [Kyle Rawlins](http://sites.krieger.jhu.edu/rawlins/), kgr at jhu dot edu. I'm an associate professor in the Cognitive Science Department at Johns Hopkins University, and I do both theoretical linguistic semantics and more computational semantics. My eventual goal is for any theoretical linguistics I do to come with a lambda notebook file. (I'm a long way from that dream.)
 
 ## Installation
 
