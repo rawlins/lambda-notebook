@@ -103,6 +103,11 @@ class Styled(object):
                 except:
                     return repr(x)
 
+    def __repr__(self):
+        # this is to avoid a unique object identifier showing up in
+        # notebooks in text/plain output, creating meaningless differences
+        return self.__class__.__name__ + " instance: HTML rendering only"
+
 class RecursiveDerivationDisplay(Styled):
     """Class for rendering some recursive (tree-structured) data.
     

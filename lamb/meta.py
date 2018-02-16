@@ -3745,7 +3745,7 @@ class Derivation(object):
             i += 1
         return s
 
-    def __str__(self):
+    def __repr__(self):
         return self.steps_str()
 
 
