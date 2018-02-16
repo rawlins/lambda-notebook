@@ -1,24 +1,26 @@
 [![Build Status](https://travis-ci.org/rawlins/lambda-notebook.svg?branch=master)](https://travis-ci.org/rawlins/lambda-notebook)
 
-# IPython Lambda Notebook
+# Lambda Notebook: Formal Semantics with Jupyter and Python
 
 This project is a framework for linguists and especially semanticists developing analyses in compositional semantics.  It aims to provide a means of developing 'digital fragments', following from the method of fragments in Montague grammar.
 
 The project is in an alpha state.  While code is publicly up on github, expect bugs and rapid changes.  Contributions, requests, and suggestions are welcome.  To see an example, a pre-rendered demo notebook can be found at [http://nbviewer.jupyter.org/github/rawlins/lambda-notebook/blob/master/notebooks/Lambda%20Notebook%20Demo%20%28executed%29.ipynb](http://nbviewer.jupyter.org/github/rawlins/lambda-notebook/blob/master/notebooks/Lambda%20Notebook%20Demo%20%28executed%29.ipynb).
 
-If you are interested in discussing this project, you can join the following mailing list, which currently very low traffic: [http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com](http://lists.lambdanotebook.com/listinfo.cgi/lnb-dev-lambdanotebook.com).  You can also ask questions directly to Kyle Rawlins, [kgr@jhu.edu](mailto:kgr@jhu.edu).
+The lead developer for this project is Kyle Rawlins, kgr at jhu dot edu.
 
 ## Installation
 
 See [https://github.com/rawlins/lambda-notebook/wiki/Installation](https://github.com/rawlins/lambda-notebook/wiki/Installation)
 
+Basically, download the repository and ensure you have Jupyter installed (probably via anaconda).
+
 ## Getting started
 
 To run the notebook relative to the repository file structure:
   * On a mac, double click `lambda_notebook.command`.
-  * Or, from a shell, run `lambda_notebook.py`.  On windows you may need to explicitly call something like `python3 lambda_notebook.py`.  (Untested.)
-  * To user a notebook directory other than the default `notebooks`, you can call something like `./lambda_notebook.py --notebook-dir=./local_notebooks/`.  Note that `local_notebooks` is untracked by git, so is a safe place to put testing notebooks etc.
-  * IPython >=2 includes a directory browser, and `notebooks/local_notebooks` is also untracked.
+  * Or, from a shell, run `lambda_notebook.py`.  On windows you may need to explicitly call something like `python3 lambda_notebook.py`.
+  * To user a notebook directory other than the default `notebooks`, you can call something like `./lambda_notebook.py --notebook-dir=~/Documents/notebooks/`. I recommend not keeping your working notebooks in the repository copy.
+  * Once the lambda-notebook kernel is installed, you can open lambda notebook files from any instance of Jupyter Notebook.
 
 This will start a server in the terminal and open your web browser to the notebook directory.  Then, look through the various notebooks to see examples of what can be done.  I recommend starting (for now) with:
   * Lambda Notebook Intro (start here).ipynb
@@ -27,9 +29,9 @@ This will start a server in the terminal and open your web browser to the notebo
 
 To stop the server from a terminal, hit Ctrl-C twice in the terminal window.  (To stop it from the 0.5 app, hit "Cancel".)
 
-It is also possible to load most of the facilities of the lambda notebook directly into a regularly-started notebook, or into an arbitrary Jupyter/IPython/python3 instance, by adding the base directory of the lambda notebook to the modules path, and then importing `lamb` (or directly importing the relevant modules).
+### Upgrading
 
-_Important note: lambda notebook files are running in a specialized Jupyter kernel that preloads a bunch of useful stuff for you; lamb (as well as several other things) are already in the namespace, meaning that the code in these kernels wouldn't work as vanilla python without importing some things.  See lamb.lnsetup for details._
+In most instances, you can upgrade by simply downloading a new repository version and running the lambda notebook from within there (or, minimally, running `install_lambda_kernel.py`).
 
 ### A note on the lambda notebook UI
 
@@ -48,6 +50,6 @@ Two additional files, magics.py and parsing.py provide support for using cell ma
 
 ## NLTK
 
-The file tree_mini.py provides nltk.tree, hacked to work in python 3.  Note that this is _not permanent_, and once nltk supports python 3 directly (in beta now) this will become part of a dependency.  I have also added IPython display routines that will in the future be installed via monkey patching.
+The file tree_mini.py provides nltk.tree, modified to work with the lambda notebook.  The long-term plan is to depend directly on nltk, but this isn't there yet.
 
 See [here](https://github.com/nltk/nltk/blob/develop/LICENSE.txt) for NLTK license information (Apache license).
