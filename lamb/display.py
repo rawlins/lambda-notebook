@@ -166,7 +166,7 @@ class RecursiveDerivationDisplay(Styled):
         for p in self.parts:
             part_cells.append("<td style=\"vertical-align:bottom;padding:5px\">%s</td>" % self.to_str(p, style=kwargs))
         s = "<table><tr>"
-        s += "<td style=\"vertical-align:bottom;padding:10px\">$\circ$</td>".join(part_cells)
+        s += "<td style=\"vertical-align:bottom;padding:10px\">$\\circ$</td>".join(part_cells)
         s += "</tr></table>"
         return s
     

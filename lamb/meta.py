@@ -1919,7 +1919,7 @@ class Disjunctive(TypedExpr):
         if disj_type:
             return ensuremath("{Disjunctive}^{%s}(%s)" % (self.type.latex_str(), ", ".join([a.latex_str(**kwargs) for a in self.args])))
         else:
-            return ensuremath("{Disjunctive}(\\left[%s\\right])" % ("\mid{}".join([a.latex_str(**kwargs) for a in self.args])))
+            return ensuremath("{Disjunctive}(\\left[%s\\right])" % (("\\mid{}").join([a.latex_str(**kwargs) for a in self.args])))
     
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
         ts = get_type_system()
@@ -2719,7 +2719,7 @@ class BindingOp(TypedExpr):
         else:
             regex = "(" + ("|".join(op_names)) + ")"
             BindingOp.op_regex = re.compile(regex)
-            BindingOp.init_op_regex = re.compile("^\s*" + regex)
+            BindingOp.init_op_regex = re.compile(r'^\s*' + regex)
 
     def copy(self):
         # implement in subclass
@@ -2940,7 +2940,7 @@ class ConditionSet(BindingOp):
         return False
 
     def latex_str(self, parens=True, **kwargs):
-        return ensuremath("\{%s_{%s}\:|\: " % (self.varname, self.vartype.latex_str()) + self.body.latex_str(**kwargs) + "\}")
+        return ensuremath("\\{%s_{%s}\\:|\\: " % (self.varname, self.vartype.latex_str()) + self.body.latex_str(**kwargs) + "\\}")
 
     def __lshift__(self, i):
         return SetContains(i, self)
@@ -3052,7 +3052,7 @@ class ListedSet(TypedExpr):
 
     def latex_str(self, **kwargs):
         inner = ", ".join([a.latex_str(**kwargs) for a in self.args])
-        return ensuremath("\{" + inner + "\}")
+        return ensuremath("\\{" + inner + "\\}")
 
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
         inner_type = unified_type.content_type
