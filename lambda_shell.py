@@ -5,13 +5,19 @@ import sys, os, signal
 # refactored into lamb.setup
 
 try:
-	import IPython
-	from IPython.html import notebookapp
+    import IPython
+    from IPython.terminal.ipapp import TerminalIPythonApp
+    from jupyter_client import kernelspec
+except ImportError:
+	print("You don't seem to have Jupyter installed, or the dependencies of ")
+	print("Jupyter notebook are not met.")
+	raise
+try:
 	import lamb
 except ImportError:
-	print("You don't seem to have IPython installed, or the dependencies of ")
-	print("ipython notebook are not met, or the lambda notebook library can't be found.")
+	print("The lambda notebook library can't be found; can't start a shell.")
 	raise
+
 
 def launch_lambda_shell(args):
 	# assume we are running in the repository filesystem: this script will have an adjacent directory called "notebooks".
