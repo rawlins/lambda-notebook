@@ -149,8 +149,7 @@ def launch_lambda_console(args, lib_dir=None, kernel_dir=None):
     app.initialize(argv=args[1:])
     app.start()
 
-
-def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=None, kernel_dir=None):
+def launch_lambda_notebook(args, lab=False, nb_path=None, lib_dir=None, package_nb_path=None, kernel_dir=None):
     # originally based on branded notebook recipe here: https://gist.github.com/timo/1497850
     # that recipe is for a much earlier version of IPython, so the method is quite a bit different now
 
@@ -175,7 +174,16 @@ def launch_lambda_notebook(args, nb_path=None, lib_dir=None, package_nb_path=Non
 
     c.NotebookApp.notebook_dir = nb_path
 
-    app = notebookapp.NotebookApp(config=c)
+    app = None
+    if lab:
+        try:
+            from jupyterlab import labapp
+            app = labapp.LabApp(config = c)
+        except:
+            print("Failed to start jupyterlab, falling back on notebook.")
+            app = None
+    if app is None:
+        app = notebookapp.NotebookApp(config=c)
 
     app.initialize(args[1:])
      

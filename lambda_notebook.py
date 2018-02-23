@@ -19,6 +19,7 @@ def setup_argparser():
 	parser.add_argument('--version', action='store_true', default=False)
 	parser.add_argument('--install-kernel', action='store_true', default=False)
 	parser.add_argument('--notebook-dir', type=str, default='')
+	parser.add_argument('--lab', action='store_true', default=False)
 	return parser
 
 def launch_lambda_notebook(parsed_args, args):
@@ -26,17 +27,17 @@ def launch_lambda_notebook(parsed_args, args):
 	# can modify this for custom installations.
 	import lamb.lnsetup
 	base_path = os.path.abspath(os.path.dirname(__file__))
-	#sys.path.append(base_path)
-	#os.chdir(base_path)
 	print(lamb.lnsetup.version_str())
-	print("Starting Jupyter notebook...")
+	if parsed_args.lab:
+		print("Starting Jupyter lab...")
+	else:
+		print("Starting Jupyter notebook...")
+
 	if len(parsed_args.notebook_dir) > 0:
 		nb_path = parsed_args.notebook_dir
 	else:
 		nb_path = os.path.join(base_path, "notebooks")
-	lamb.lnsetup.launch_lambda_notebook(args, nb_path=nb_path, lib_dir=base_path)
-	#lamb.lnsetup.launch_lambda_notebook(args, nb_path=None, package_nb_path=os.path.join(base_path, "notebooks"))
-	#lamb.lnsetup.launch_lambda_notebook(args)
+	lamb.lnsetup.launch_lambda_notebook(args, lab=parsed_args.lab, nb_path=nb_path, lib_dir=base_path)
 
 def install_kernel(parsed_args):
 	import lamb.lnsetup

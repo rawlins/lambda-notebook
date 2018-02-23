@@ -18,4 +18,4 @@ if __name__ == "__main__":
 	import lamb.lnsetup
 	base_path = os.path.abspath(os.path.dirname(__file__))
 	r = lamb.lnsetup.install_kernelspec(lib_dir=base_path)
-	print("Kernel installed in '%s'" % r)
+	print("Kernel installed in '%s' using python executable '%s'" % (r, sys.executable))
