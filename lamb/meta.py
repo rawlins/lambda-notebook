@@ -129,6 +129,12 @@ def text_op_in_latex(op):
         return basic_ops_to_latex[op]
     return op
 
+global partiality_analysis, partiality_strict, partiality_weak
+partiality_strict = "strict"
+partiality_weak = "weak"
+partiality_analysis = partiality_weak
+
+
 class TypeEnv(object):
     def __init__(self, var_mapping=None, type_mapping=None):
         self.type_var_set = set()
@@ -1148,10 +1154,11 @@ class TypedExpr(object):
             new_parts.append(part_i)
         new_self = self.copy_local(*new_parts)
         condition = condition.simplify_all()
-        if condition is not true_term:
-            return Partial(new_self, condition)
+        if condition is true_term:
+            intermediate = derived(Partial(new_self, condition), self, "Partiality simplification")
+            return derived(new_self, intermediate, "Partiality simplification")
         else:
-            return self
+            return derived(Partial(new_self, condition), self, "Partiality simplification")
 
 
     def __call__(self, *args):
@@ -1409,9 +1416,9 @@ class ApplicationExpr(TypedExpr):
             return derived(self.args[0].apply(self.args[1]), self, desc="Reduction")
 
     def calculate_partiality(self, vars=None):
-        # defer calculation until beta reduction has occurred
-        if isinstance(self.args[0], LFun) or (vars is not None and self.args[0] in vars):
-            return self.copy_local(self.args[0].calculate_partiality(), self.args[1].calculate_partiality())
+        # defer calculation of the argument until beta reduction has occurred
+        if isinstance(self.args[0], LFun):
+            return self
         else:
             return super().calculate_partiality()
 
@@ -1767,7 +1774,6 @@ class MiniOp(object):
     def from_op(cls, op):
         return MiniOp(op.op_name, op.op_name_latex)
 
-
 ###############
 #
 # Partiality
@@ -1790,12 +1796,6 @@ class Partial(TypedExpr):
         self.condition = condition
         self.body = body
 
-    def copy(self):
-        return Partial(self.body, self.condition)
-
-    def copy_local(self, body, condition):
-        return Partial(body, condition)
-
     def calculate_partiality(self, vars=None):
         new_body = self.body.calculate_partiality(vars=vars)
         new_condition = self.condition.calculate_partiality(vars=vars)
@@ -1805,7 +1805,7 @@ class Partial(TypedExpr):
             new_condition = new_condition & new_body.condition
             new_body = new_body.body
         new_condition = new_condition.simplify_all()
-        return Partial(new_body, new_condition)
+        return derived(Partial(new_body, new_condition), self, "Partiality simplification")
     
     def term(self):
         return self.body.term()
@@ -1816,9 +1816,6 @@ class Partial(TypedExpr):
     def meta_tuple(self):
         return Tuple(self.args)
     
-    def __repr__(self):
-        return "Partial(%s, %s)" % (repr(self.body), repr(self.condition))
-
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment, env):
         tuple_version = self.meta_tuple()
         revised_type = types.TupleType(unified_type, types.type_t)
@@ -1864,7 +1861,6 @@ class Partial(TypedExpr):
         
 TypedExpr.add_local("Partial", Partial.from_Tuple)
 
-
 ###############
 #
 # more type underspecification
@@ -1906,7 +1902,7 @@ class Disjunctive(TypedExpr):
     def copy(self):
         return Disjunctive(*self.args)
     
-    def copy_local(self, *disjuncts):
+    def copy_local(self, *disjuncts, type_check=True):
         return Disjunctive(*disjuncts)
     
     def term(self):
@@ -2012,50 +2008,50 @@ class UnaryOpExpr(TypedExpr):
     In logical terms, this corresponds to syncategorematic definitions of operators as is standard in definitions of logics.
     For example, statements like '~p is a sentence iff p is a sentence'.  While semantics is not currently implemented, it could be
     done in subclasses."""
-    def __init__(self, typ, op, arg1, op_name_uni=None, op_name_latex=None):
-        super().__init__(op, self.ensure_typed_expr(arg1, typ))
+    def __init__(self, typ, op, arg1, op_name_uni=None, op_name_latex=None, tcheck_args=True):
+        if tcheck_args:
+            super().__init__(op, self.ensure_typed_expr(arg1, typ))
+        else:
+            super().__init__(op, self.ensure_typed_expr(arg1))
+
         self.type = typ
         if op_name_uni is None:
             self.op_name = op
         else:
             self.op_name = op_name_uni
         if op_name_latex is None:
-            self.op_name_latex = op_name_uni
+            self.op_name_latex = self.op_name
         else:
             self.op_name_latex = op_name_latex
+        self.operator_style = True
 
     def copy(self):
-        """This must be overriden in classes that are not produced by the factory."""
-        return op_expr_factory(self.op, *self.args)
+        return self.copy_local(*self.args)
 
     def copy_local(self, *args, type_check=True):
+        """This must be overriden in classes that are not produced by the factory."""
         return op_expr_factory(self.op, *args)
-
-    def type_constraints(self):
-        # TODO: generalize somehow
-        ts = get_type_system()
-        unified = ts.unify(self.args[0].type, self.type)
-        if unified is None:
-            raise TypeMismatch(MiniOp.from_op(self), self.args[0], mode="Unary operator")
-        if self.args[0].type != unified:
-            if isinstance(self.args[0], TypedTerm):
-                self.args[0] = self.args[0].copy()
-                self.args[0].type = unified
-            else:
-                logger.warning("Unify suggested a strengthened arg type, but could not accommodate: %s -> %s" % (self.args[0].type, unified))
 
     def __str__(self):
         return "%s%s\nType: %s" % (self.op_name, repr(self.args[0]), self.type)
 
     def __repr__(self):
-        return "%s%s" % (self.op_name, repr(self.args[0]))
+        if (self.operator_style):
+            return "%s%s" % (self.op_name, repr(self.args[0]))
+        else:
+            return "%s(%s)" % (self.op_name, repr(self.args[0]))
 
     def latex_str_long(self):
         return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
 
     def latex_str(self, **kwargs):
-        return ensuremath("%s %s" % (self.op_name_latex,  
-                                                self.args[0].latex_str(**kwargs)))
+        if (self.operator_style):
+            return ensuremath("%s %s" % (self.op_name_latex,
+                                            self.args[0].latex_str(**kwargs)))
+        else:
+            return ensuremath("%s(%s)" % (self.op_name_latex,
+                                            self.args[0].latex_str(**kwargs)))
+
 
     @classmethod
     def random(cls, ctrl):
@@ -2079,22 +2075,16 @@ class BinaryOpExpr(TypedExpr):
         else:
             self.op_name = op_name_uni
         if op_name_latex is None:
-            self.op_name_latex = op_name_uni
+            self.op_name_latex = self.op_name
         else:
             self.op_name_latex = op_name_latex
 
     def copy(self):
-        """This must be overriden by classes that are not produced by the factory."""
-        return op_expr_factory(self.op, *self.args)
+        return self.copy_local(*self.args)
 
     def copy_local(self, *args, type_check=True):
+        """This must be overriden by classes that are not produced by the factory."""
         return op_expr_factory(self.op, *args)
-
-    def type_constraints(self):
-        """Default behavior: types of arguments must match type of whole expression."""
-        ts = get_type_system()
-        if len(self.args) != 2 or not ts.eq_check(self.args[0].type, self.type)or not ts.eq_check(self.args[1].type, self.type):
-            raise TypeMismatch(MiniOp.from_op(self), self.args, mode="Binary operator")
 
     def __str__(self):
         return "%s\nType: %s" % (repr(self), self.type)
@@ -2558,6 +2548,8 @@ class BindingOp(TypedExpr):
     op_name_uni = None
     op_name_latex = None
 
+    partiality_weak = True
+
     @classmethod
     def binding_op_factory(self, op_class, var_list, body, assignment=None):
         for i in range(len(var_list)):
@@ -2622,6 +2614,9 @@ class BindingOp(TypedExpr):
             self.init_var_by_instance(self.var_instance.under_type_assignment(body_env.type_mapping, merge_intersect=False))
         else:
             self.init_body(body)
+
+    def copy_local(self, *args, type_check=True):
+        return type(self)(*args, type_check=type_check)
 
     def scope_assignment(self, assignment=None):
         if assignment is None:
@@ -2721,13 +2716,6 @@ class BindingOp(TypedExpr):
             BindingOp.op_regex = re.compile(regex)
             BindingOp.init_op_regex = re.compile(r'^\s*' + regex)
 
-    def copy(self):
-        # implement in subclass
-        raise NotImplementedError
-
-    def copy_local(self, var, body, type_check=True):
-        raise NotImplementedError        
-
     def alpha_convert(self, new_varname):
         """Produce an alphabetic variant of the expression w.r.t. the bound variable, with new_varname as the new name.
 
@@ -2796,24 +2784,51 @@ class BindingOp(TypedExpr):
     def term(self):
         return False
 
+    def project_partiality_strict(b, body, condition):
+        b_cls = type(b)
+        if isinstance(b, ConditionSet) or isinstance(b, LFun):
+            return b
+        else: # IotaPartial handled in subclass
+            return Partial(b_cls(b.var_instance, body), ForallUnary(b.var_instance, body))
+
+    def project_partiality_weak(b, body, condition):
+        b_cls = type(b)
+        if isinstance(b, ForallUnary):
+            return Partial(b_cls(b.var_instance, body), b_cls(b.var_instance, condition))
+        elif isinstance(b, ExistsUnary) or isinstance(b, ExistsExact):
+            return Partial(b_cls(b.var_instance, body & condition), b_cls(b.var_instance, condition))
+        elif isinstance(b, IotaUnary): # does this lead to scope issues for the condition?
+            return Partial(b_cls(b.var_instance, body & condition), ExistsUnary(b.var_instance, condition))
+        elif isinstance(b, ConditionSet) or isinstance(b, LFun):
+            return b
+        else: # IotaPartial handled in subclass
+            raise TypeMismatch(b, None, "No way of projecting partiality for BindingOp %s" % repr(type(b).__name__))
+
     def calculate_partiality(self, vars=None):
-        new_body = self.body.calculate_partiality(vars=vars)
+        if vars is None:
+            vars = set()
+        if isinstance(self, LFun):
+            vars |= {self.varname}
+
         # defer any further calculation if there are bound variables in the body
-        if vars is not None:
-            if vars | new_body.free_variables():
-                return self.copy_local(self.var_instance, new_body)
+        if vars & self.body.free_variables():
+            return self
+
+        new_body = self.body.calculate_partiality(vars=vars)
         if isinstance(new_body, Partial):
             if new_body.condition is true_term:
-                return new_body
+                return derived(self.copy_local(self.var_instance, new_body), self, "Partiality simplification")
             if self.varname in new_body.condition.free_variables():
-                # default: project with the some operator.  May need tweaking for specialized operators.
-                new_condition = self.copy_local(self.var_instance, new_body.condition)
+                if BindingOp.partiality_weak:
+                    return derived(self.project_partiality_weak(new_body.body, new_body.condition), self, "Partiality simplification")
+                else:
+                    return derived(self.project_partiality_strict(new_body.body, new_body.condition), self, "Partiality simplification")
             else:
                 new_condition = new_body.condition
-            new_self = self.copy_local(self.var_instance, new_body.body)
-            return Partial(new_self, new_condition)
+                new_self = self.copy_local(self.var_instance, new_body.body)
+                return derived(Partial(new_self, new_condition), self, "Partiality simplification")
         else:
-            return self
+            return derived(self.copy_local(self.var_instance, new_body), self, "Partiality simplification")
 
     @classmethod
     def try_parse_header(cls, s, assignment=None, locals=None):
@@ -2927,12 +2942,6 @@ class ConditionSet(BindingOp):
         super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment)
         self.type = types.SetType(self.vartype)
 
-    def copy(self):
-        return ConditionSet(self.vartype, self.body, self.varname)
-
-    def copy_local(self, var, body, type_check=True):
-        return ConditionSet(var.type, body, varname=var.op)
-
     def structural_singleton(self):
         pass
 
@@ -2955,10 +2964,6 @@ class ConditionSet(BindingOp):
         sub_var = TypedTerm(self.varname, inner_type)
         new_condition = char.apply(sub_var)
         return self.copy_local(sub_var, new_condition)
-
-    def calculate_partiality(self, vars=None):
-        new_body = self.body.calculate_partiality(vars=vars)
-        return self.copy_local(self.var_instance, new_body)
 
 BindingOp.add_op(ConditionSet)
 
@@ -3117,22 +3122,6 @@ class ExistsUnary(BindingOp):
             return self.body
         return self
 
-    def calculate_partiality(self,vars=None):
-        # This is different from what would be most directly derived from applying calculate_partiality
-        # to the standard logical implementation of ∃!.  (That would lead to something like "∃x Q(x) & ∀x Q(x)" from a condition Q(x).)
-        new_body = self.body.calculate_partiality(vars=vars)
-        # defer any further calculation if there are bound variables in the body
-        if vars is not None:
-            if vars | new_body.free_variables():
-                return self.copy_local(self.var_instance, new_body)
-        if isinstance(new_body, Partial):
-            return Partial(ExistsUnary(self.var_instance, new_body.body), 
-                        ExistsUnary(self.var_instance, new_body.body & new_body.condition))
-        else:
-            return ExistsUnary(self.var_instance, new_body)
-
-
-
 BindingOp.add_op(ExistsUnary)
 
 class ExistsExact(BindingOp):
@@ -3150,25 +3139,10 @@ class ExistsExact(BindingOp):
     def copy_local(self, var, arg, type_check=True):
         return ExistsExact(var, arg, type_check=type_check)        
 
-    def calculate_partiality(self,vars=None):
-        # This is different from what would be most directly derived from applying calculate_partiality
-        # to the standard logical implementation of ∃!.  (That would lead to something like "∃x Q(x) & ∀x Q(x)" from a condition Q(x).)
-        new_body = self.body.calculate_partiality(vars=vars)
-        # defer any further calculation if there are bound variables in the body
-        if vars is not None:
-            if vars | new_body.free_variables():
-                return self.copy_local(self.var_instance, new_body)
-        if isinstance(new_body, Partial):
-            return Partial(ExistsExact(self.var_instance, new_body.body), 
-                        ExistsExact(self.var_instance, new_body.body & new_body.condition))
-        else:
-            return ExistsExact(self.var_instance, new_body)
-
-
 BindingOp.add_op(ExistsExact)
 
 class IotaUnary(BindingOp):
-    """Iota operator.  Partiality is implemented via `calculate_partiality`."""
+    """Iota operator.  This is best construed as Russellian."""
     canonical_name = "Iota"
     op_name_uni = "ι"
     op_name_latex="\\iota{}"
@@ -3177,15 +3151,12 @@ class IotaUnary(BindingOp):
     def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
         super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment, type_check=type_check)
         self.type = self.vartype
-        self.partiality_calculated = False
 
     def copy(self):
         return IotaUnary(self.vartype, self.body, self.varname)
 
     def copy_local(self, var, arg, type_check=True):
-        result = IotaUnary(var, arg, type_check=type_check)
-        result.partiality_calculated = self.partiality_calculated
-        return result
+        return IotaUnary(var, arg, type_check=type_check)
 
     def to_test(self, x):
         """Return a LFun based on the condition used to describe the set."""
@@ -3199,29 +3170,39 @@ class IotaUnary(BindingOp):
         result = self.copy_local(sub_var, new_condition)
         return result
 
+
+class IotaPartial(IotaUnary):
+    canonical_name = "IotaPartial"
+    op_name_uni = "ι"
+    op_name_latex="\\iota{}"
+    secondary_names = {}
+
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
+        super().__init__(var_or_vtype, body, varname, assignment, type_check)
+
+    def copy(self):
+        return IotaPartial(self.vartype, self.body, self.varname)
+
+    def copy_local(self, var, arg, type_check=True):
+        return IotaPartial(var, arg, type_check=type_check)
+
     def calculate_partiality(self, vars=None):
         new_body = self.body.calculate_partiality(vars=vars)
         # defer any further calculation if there are bound variables in the body
         if vars is not None:
             if vars | new_body.free_variables():
-                return self.copy_local(self.var_instance, new_body)
+                return derived(self.copy_local(self.var_instance, new_body), self, "Partiality simplification")
         if isinstance(new_body, Partial):
             new_body = new_body.body & new_body.condition
         new_condition = new_body.copy()
 
         new_body = IotaUnary(self.var_instance, new_body)
-        new_body.partiality_calculated = True
         if self.varname in new_condition.free_variables():
             new_condition = ExistsExact(self.var_instance, new_condition)
-        # We don't want to generate a new partial on successive calculations.
-        # In fact, we want to eliminate any extra conditions generated, e.g.
-        # from further beta reductions.
-        if self.partiality_calculated:
-            return new_body
-        else:
-            return Partial(new_body, new_condition)
+        return derived(Partial(new_body, new_condition), self, "Partiality simplification")
 
 BindingOp.add_op(IotaUnary)
+BindingOp.add_op(IotaPartial)
 
 class LFun(BindingOp):
     """A typed function.  Can itself be used as an operator in a TypedExpr.
@@ -3309,13 +3290,6 @@ class LFun(BindingOp):
     def __mul__(self, other):
         """Override `*` as function composition for LFuns.  Note that this _only_ works for LFuns currently, not functional constants/variables."""
         return self.compose(other)
-
-    def calculate_partiality(self, vars=None):
-        if vars is None:
-            vars = set()
-        vars |= {self.var_instance}
-        new_body = self.body.calculate_partiality(vars=vars)
-        return self.copy_local(self.var_instance, new_body)
 
     @classmethod
     def random(self, ctrl):
