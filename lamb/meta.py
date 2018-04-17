@@ -1435,11 +1435,11 @@ class Tuple(TypedExpr):
 
     This works basically as a python tuple would, and is indicated using commas within a parenthetical.
     `args` is a list containing the elements of the tuple."""
-    def __init__(self, args, typ=None):
+    def __init__(self, args, typ=None, type_check=True):
         new_args = list()
         type_accum = list()
         for i in range(len(args)):
-            if typ is None:
+            if typ is None or not type_check:
                 a_i = self.ensure_typed_expr(args[i])
             else:
                 a_i = self.ensure_typed_expr(args[i], typ=typ[i])
@@ -1680,8 +1680,8 @@ class CustomTerm(TypedTerm):
 
     The main application is for English-like metalanguage a la Heim and Kratzer.  This isn't
     fully implemented as that metalanguage is actually extremely difficult to get right computationally..."""
-    def __init__(self, varname, custom_english=None, suppress_type=True, small_caps=True, typ=None, assignment=None):
-        TypedTerm.__init__(self, varname, typ=typ, assignment=assignment)
+    def __init__(self, varname, custom_english=None, suppress_type=True, small_caps=True, typ=None, assignment=None, type_check=True):
+        TypedTerm.__init__(self, varname, typ=typ, assignment=assignment, type_check=type_check)
         self.custom = custom_english
         self.sc = small_caps
         self.suppress_type = suppress_type
@@ -1781,7 +1781,7 @@ class MiniOp(object):
 ###############
 
 class Partial(TypedExpr):
-    def __init__(self, body, condition):
+    def __init__(self, body, condition, type_check=True):
         if condition is None:
             condition = true_term
         if isinstance(body, Partial):
@@ -1879,7 +1879,7 @@ TypedExpr.add_local("Partial", Partial.from_Tuple)
 #
 # In a very roundabout way, this class acts like a dictionary mapping types to expressions.
 class Disjunctive(TypedExpr):
-    def __init__(self, *disjuncts):
+    def __init__(self, *disjuncts, type_check=True):
         ts = get_type_system()
         principal_type = types.DisjunctiveType(*[d.type for d in disjuncts])
         t_adjust = set()
@@ -2367,7 +2367,7 @@ class SetContains(BinaryOpExpr):
 
     Note that this _does_ support reduction if the set describes its members by condition, 
     as set membership is equivalent to saturation of the characteristic function of the set."""
-    def __init__(self, arg1, arg2):
+    def __init__(self, arg1, arg2, type_check=True):
         # seems like the best way to do the mutual type checking here?  Something more elegant?
         arg1 = self.ensure_typed_expr(arg1)
         arg2 = self.ensure_typed_expr(arg2, types.SetType(arg1.type))
@@ -2404,7 +2404,7 @@ class SetContains(BinaryOpExpr):
 
 
 class TupleIndex(BinaryOpExpr):
-    def __init__(self, arg1, arg2):
+    def __init__(self, arg1, arg2, type_check=True):
         arg1 = self.ensure_typed_expr(arg1)
         if not isinstance(arg1.type, types.TupleType):
             raise types.TypeMismatch(arg1, arg2, mode="Tuple indexing (tuple required)")
@@ -2937,7 +2937,7 @@ class ConditionSet(BindingOp):
     op_name_uni="Set"
     op_name_latex="Set"
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None):
+    def __init__(self, var_or_vtype, body, varname=None, assignment=None, type_check=True):
         body = self.ensure_typed_expr(body, assignment=assignment)
         super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body, varname=varname, body_type=types.type_t, assignment=assignment)
         self.type = types.SetType(self.vartype)
@@ -2973,7 +2973,7 @@ class ListedSet(TypedExpr):
     op_name_uni="ListedSet"
     op_name_latex="ListedSet"
 
-    def __init__(self, iterable, typ=None, assignment=None):
+    def __init__(self, iterable, typ=None, assignment=None, type_check=True):
         s = set(iterable) # just make it a set first, remove duplicates, flatten order
         args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
         args = sorted(args, key=repr) # for a canonical ordering
