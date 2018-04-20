@@ -8,6 +8,13 @@ The project is in an alpha state.  While code is publicly up on github, expect b
 
 The lead developer for this project is [Kyle Rawlins](http://sites.krieger.jhu.edu/rawlins/), kgr at jhu dot edu. I'm an associate professor in the Cognitive Science Department at Johns Hopkins University, and I do both theoretical linguistic semantics and more computational semantics. My eventual goal is for any theoretical linguistics I do to come with a lambda notebook file. (I'm a long way from that dream.)
 
+While this repository comes with many demo and documentation notebooks, they are mostly saved unexecuted. If you would like to see some samples in nbviewer without downloading anything, the [notebook-collection](https://github.com/rawlins/notebook-collection) repository mirrors the (non-documentation) notebooks, but they are all pre-executed. Here are four samples.  The SVG MathJax renderer is highly recommended for viewing any of these (to select it, right click on any formula).
+
+* [Continuations and Quantifier scope](http://nbviewer.jupyter.org/github/rawlins/notebook-collection/blob/master/lambda-notebook/fragments/Continuations%20and%20quantifier%20scope.ipynb), implementing the 2002 proposal by Chris Barker.
+* [Intensional scope](http://nbviewer.jupyter.org/github/rawlins/notebook-collection/blob/master/lambda-notebook/fragments/Intensional%20scope.ipynb): three treatments of scope with respect to intensional items, building on the von Fintel & Heim lecture notes, work by Orin Percus, and by Ezra Keshet.
+* [Intro to neo-Davidsonian event semantics](http://nbviewer.jupyter.org/github/rawlins/notebook-collection/blob/master/lambda-notebook/fragments/Neo-davidsonian%20event%20semantics.ipynb).
+* [Compositional DRT](http://nbviewer.jupyter.org/github/rawlins/notebook-collection/blob/master/lambda-notebook/fragments/Compositional%20DRT.ipynb) (notebook by Dee Ann Reisinger) showing how to implement the basics of compositional DRT.
+
 ## Installation
 
 See [https://github.com/rawlins/lambda-notebook/wiki/Installation](https://github.com/rawlins/lambda-notebook/wiki/Installation)
@@ -31,7 +38,7 @@ To stop the server from a terminal, hit Ctrl-C twice in the terminal window.  (T
 
 ### Upgrading
 
-In most instances, you can upgrade by simply downloading a new repository version and running the lambda notebook from within there (or, minimally, running `install_lambda_kernel.py`).
+In most instances, you can upgrade by simply downloading a new repository version and running the lambda notebook from within there (or, minimally, running `install_lambda_kernel.py` from the new repository). Your old notebooks will typically work -- the notebook format is forward compatible, and I try to avoid metalanguage regressions, but because of the alpha state, the API may change. (There may be metalanguage changes before beta, though.)
 
 ### A note on the lambda notebook UI
 
@@ -41,9 +48,9 @@ In most instances, you can upgrade by simply downloading a new repository versio
 
 ## Code overview
 
-There are three main parts to the code, structured into meta.py (for metalanguage), types.py, and lang.py.
-  * meta.py and types.py together provide a typed logical metalanguage somewhat comparable to nltk.sem.  
-  * lang.py provides machinery for doing composition on an object language.
+There are three main parts to the code, structured into `meta.py` ("meta" for metalanguage), `types.py`, and `lang.py`.
+  * `meta.py` and `types.py` together provide a typed logical metalanguage somewhat comparable to `nltk.sem`.  
+  * `lang.py` provides machinery for doing composition on an object language.
 
 Two additional files, magics.py and parsing.py provide support for using cell magics in the notebook to directly type expressions in the metalanguage.  See the notebooks for demos of what this looks like; better documentation coming soon!  
 
