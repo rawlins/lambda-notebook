@@ -131,7 +131,6 @@ def nltk_tree_wrapper(t):
         import tkinter
     except:
         return "NLTK cannot draw trees without tkinter"
-    import os, platform
     tree = "NLTK tree drawing failed, please make sure you have `nltk` installed"
     try:
         import nltk
