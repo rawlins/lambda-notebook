@@ -126,3 +126,18 @@ def vname_split(vname):
     else:
         return g.groups()
 
+def nltk_tree_wrapper(t):
+    try:
+        import tkinter
+    except:
+        return "NLTK cannot draw trees without tkinter"
+    tree = "NLTK tree drawing failed, please make sure you have `nltk` installed"
+    try:
+        import nltk
+        tree = nltk.Tree.fromstring(t)
+    except tkinter.TclError:
+        tree = "Cannot use NLTK tree drawing in a headless state"
+    except:
+        pass
+
+    return tree
