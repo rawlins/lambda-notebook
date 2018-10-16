@@ -131,11 +131,19 @@ def nltk_tree_wrapper(t):
         import tkinter
     except:
         return "NLTK cannot draw trees without tkinter"
+    import os, platform
+    # this is really ugly, and probably has issues in some special cases, but
+    # I need to do something so that this function works on travis. The basic
+    # issue is that nltk's tree drawing code needs to open a gui app, and
+    # will fail on a headless linux system, but I cannot get TclError to be
+    # caught.
+    if platform.system() == "Linux" and os.environ.get('DISPLAY','') == '':
+        return "Cannot call NLTK tree drawing in a headless state"
     tree = "NLTK tree drawing failed, please make sure you have `nltk` installed"
     try:
         import nltk
         tree = nltk.Tree.fromstring(t)
-    except tkinter.TclError:
+    except tkinter.TclError: # this doesn't seem to work??
         tree = "Cannot use NLTK tree drawing in a headless state"
     except:
         pass
