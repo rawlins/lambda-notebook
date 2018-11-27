@@ -2,11 +2,11 @@
 testopts = "--ExecutePreprocessor.timeout=120"
 
 clear:
-	for nb in notebooks/*.ipynb; do jupyter nbconvert --clear-output "$$nb" || exit 1; done
-	for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert --clear-output "$$nb" || exit 1; done
-	for nb in notebooks/fragments/*.ipynb; do jupyter nbconvert --clear-output "$$nb" || exit 1; done
-	for nb in notebooks/misc/*.ipynb; do jupyter nbconvert --clear-output "$$nb" || exit 1; done
-	for nb in notebooks/tutorials/*.ipynb; do jupyter nbconvert --clear-output "$$nb" || exit 1; done
+	for nb in notebooks/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
+	for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
+	for nb in notebooks/fragments/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
+	for nb in notebooks/misc/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
+	for nb in notebooks/tutorials/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
 
 notebooks/Lambda\ Notebook\ Demo\ \(executed\).ipynb: notebooks/Lambda\ Notebook\ Demo.ipynb
 	cp notebooks/Lambda\ Notebook\ Demo.ipynb notebooks/Lambda\ Notebook\ Demo\ \(executed\).ipynb
