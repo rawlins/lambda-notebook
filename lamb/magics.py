@@ -14,7 +14,9 @@ def check_shadowing(words):
     return l
 
 def process_items(fun, *i, env=None):
-    """This function processes one or more lexical entries in various possible forms. 
+    """This function processes one or more lexical entries in various possible
+    forms.
+
     Possible forms: a list of lexical entries, a dict, or a lexicon.
     If the dict contains strs, it tries to use the "env" argument."""
     result = list()
@@ -30,7 +32,8 @@ def process_items(fun, *i, env=None):
             # Hamblinize an entire lexicon in one shot
             result.append(process_items(fun, item.lexicon)[0])
         elif isinstance(item, str) and env is not None and item in env.keys():
-            # for hamblinizing the contents of a dict that maps strings to hamblinizable things
+            # for hamblinizing the contents of a dict that maps strings to
+            # hamblinizable things
             env[item] = process_items(fun, env[item])[0]
         elif isinstance(item, lang.Item):
             result.append(fun(item))
@@ -55,7 +58,8 @@ class LambMagics(Magics):
     def shadow_warnings(self, dict):
         l = check_shadowing(dict.keys())
         for k in l:
-            print("Warning: variable name '%s' is reserved and will be shadowed in python" % k)
+            print("Warning: variable name '%s' is reserved and will be "
+                "shadowed in python" % k)
 
     @line_cell_magic
     def lamb(self, line, cell=None):
@@ -72,7 +76,8 @@ class LambMagics(Magics):
                 r = self.control_line(line)
                 if r is not None:
                     return r #TODO fix this up, not right
-            (accum, env) = parsing.parse(cell, self.env, ambiguity=self.cur_ambiguity)
+            (accum, env) = parsing.parse(cell, self.env,
+                                                ambiguity=self.cur_ambiguity)
             self.env = env
             self.control_line(line, post=True, accum=accum)
         self.shadow_warnings(accum)

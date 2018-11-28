@@ -19,7 +19,9 @@ class ParseError(Exception):
         else:
             self.e = None
         self.msg = msg
-        self.met_preconditions = met_preconditions # set to False to indicate that a try_parse function did not find preconditions for what it is supposed to consume
+        # set to False to indicate that a try_parse function did not find
+        # preconditions for what it is supposed to consume
+        self.met_preconditions = met_preconditions
 
     def __str__(self):
         if self.e is not None:
@@ -31,7 +33,8 @@ class ParseError(Exception):
         elif self.i >= len(self.s):
             return "%s, at point '%s!here!" % (self.msg, self.s)
         else:
-            return "%s, at point '%s!here!%s'" % (self.msg, self.s[0:self.i], self.s[self.i:])
+            return "%s, at point '%s!here!%s'" % (self.msg, self.s[0:self.i],
+                                                                self.s[self.i:])
 
 
 def consume_char(s, i, match, error=None):
@@ -84,9 +87,11 @@ def consume_whitespace(s, i, error=None):
     return i
 
 def vars_only(env):
-    """Ensure that env is a 'pure' variable assignment -- exclude anything but TypedExprs."""
+    """Ensure that env is a 'pure' variable assignment -- exclude anything but
+    TypedExprs."""
     from lamb import meta
-    env2 = {key: env[key] for key in env.keys() if isinstance(env[key], meta.TypedExpr)}
+    env2 = {key: env[key] for key in env.keys()
+                                    if isinstance(env[key], meta.TypedExpr)}
     return env2
 
 def parse_te(line, env=None, use_env=False):
@@ -117,13 +122,15 @@ def parse_te(line, env=None, use_env=False):
     return (result, accum)
 
 def try_parse_item_name(s, env=None, ambiguity=False):
-    match = re.match(r'^\|\|([a-zA-Z _]+[a-zA-Z0-9 _]*)(\[-?([0-9]+|\*)\])?\|\|$', s)
+    match = re.match(
+                r'^\|\|([a-zA-Z _]+[a-zA-Z0-9 _]*)(\[-?([0-9]+|\*)\])?\|\|$', s)
     if not match:
         return (None, None)
     lex_name = match.group(1).replace(" ", "_")
     if lex_name != match.group(1):
         from lamb import meta
-        meta.logger.info("Exporting item ||%s|| to python variable `%s`." % (match.group(1), lex_name))
+        meta.logger.info("Exporting item ||%s|| to python variable `%s`."
+                                % (match.group(1), lex_name))
     index = None
     index_str = match.group(2)
     if not index_str or len(index_str) == 0 or index_str == "[*]":
@@ -165,7 +172,8 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
 
     # right side should be typed expr no matter what
     left_s = l[0].strip()
-    lex_name, item_index = try_parse_item_name(left_s, env=env, ambiguity=ambiguity)
+    lex_name, item_index = try_parse_item_name(left_s, env=env,
+                                                        ambiguity=ambiguity)
     if lex_name:
         default = a_ctl.default()
         db_env = default.modify(var_env)
@@ -174,7 +182,8 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
             right_side = right_side.regularize_type_env(db_env)
             right_side = right_side.under_assignment(db_env)
         except Exception as e:
-            meta.logger.error("Parsing of assignment to '%s' failed with exception:" % left_s)
+            meta.logger.error(
+                "Parsing of assignment to '%s' failed with exception:" % left_s)
             meta.logger.error(e)
             return (dict(), env)
 
@@ -183,16 +192,19 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
             right_side = transform(right_side)
 
         item = lang.Item(lex_name, right_side)
-        # TODO: add to composition system's lexicon?  Different way of tracking lexicons?
+        # TODO: add to composition system's lexicon?  Different way of tracking
+        # lexicons?
         if item_index is None:
             env[lex_name] = item
-        else: # item_index is only set to a value if the item already exists in env.
+        else:
+            # item_index is only set to a value if the item already exists in
+            # env.
             if isinstance(env[lex_name], lang.Item):
                 tmp_list = list([env[lex_name]])
                 if item_index is True:
                     tmp_list.append(item)
                 else:
-                    tmp_list[item_index] = item # may throw an exception, currently
+                    tmp_list[item_index] = item # may throw an exception
                 item = lang.Items(tmp_list)
                 env[lex_name] = item
             else:
@@ -208,7 +220,8 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
             right_side = right_side.regularize_type_env(var_env, constants=True)
             right_side = right_side.under_assignment(var_env)
         except Exception as e:
-            meta.logger.error("Parsing of assignment to '%s' failed with exception:" % left_s)
+            meta.logger.error(
+                "Parsing of assignment to '%s' failed with exception:" % left_s)
             meta.logger.error(e)
             #raise e
             return (dict(), env)
@@ -220,13 +233,15 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
             raise ParseError("Assignment to non-variable term '%s'" % term)
         ts = meta.get_type_system()
         u_result = ts.unify(term.type, right_side.type)
-        # there are two ways in which unify could fail.  One is the built-in ad hoc type_guessed flag, and one is a genuine type mismatch.
-        # we want to silently override guessed types here.
+        # there are two ways in which unify could fail.  One is the built-in ad
+        # hoc type_guessed flag, and one is a genuine type mismatch. We want to
+        # silently override guessed types here.
         if u_result is None:
             if term.type_guessed:
                 term.type = right_side.type
             else:
-                raise types.TypeMismatch(term, right_side, "Variable assignment")
+                raise types.TypeMismatch(term, right_side,
+                                                        "Variable assignment")
         else:
             # brute force
             term.type = u_result
@@ -247,7 +262,8 @@ def parse_line(s, env=None, transforms=None, ambiguity=False):
     try:
         s = remove_comments(s)
         if len(s.strip()) > 0:
-            (accum, env) = parse_equality_line(s, transforms=transforms, env=env, ambiguity=ambiguity)
+            (accum, env) = parse_equality_line(s, transforms=transforms,
+                                                env=env, ambiguity=ambiguity)
             return (accum, env)
         else:
             return (dict(), env)
@@ -268,7 +284,8 @@ def parse_lines(s, env=None, transforms=None, ambiguity=False):
     accum = collections.OrderedDict()
     lines = s.splitlines()
     for l in lines:
-        (a, env) = parse_line(l, transforms=transforms, env=env, ambiguity=ambiguity)
+        (a, env) = parse_line(l, transforms=transforms, env=env,
+                                                        ambiguity=ambiguity)
         accum.update(a)
     return (accum, env)
 
@@ -290,7 +307,9 @@ def latex_output(accum, env):
     lines = list()
     for k in accum.keys():
         if isinstance(accum[k], meta.TypedExpr):
-            lines.append(ensuremath(fullvar(accum, k)._repr_latex_() + "\\:=\\:" + accum[k]._repr_latex_()))
+            lines.append(ensuremath(fullvar(accum, k)._repr_latex_()
+                                    + "\\:=\\:"
+                                    + accum[k]._repr_latex_()))
         elif isinstance(accum[k], lang.Composable):
             # item will automatically print an equality statement
             lines.append(accum[k]._repr_html_())
@@ -304,7 +323,8 @@ def parse_qtree(s, i=0):
     return r
 
 def consume_curly_bracketed(s, i):
-    """Parse a balanced expression with curly braces.  Accept any character inside the curly braces."""
+    """Parse a balanced expression with curly braces.  Accept any character
+    inside the curly braces."""
     # TODO: implement escaped curly braces?
     i = consume_char(s, i, "{", "Missing opening '{'")
     accum = ""
@@ -338,7 +358,8 @@ def consume_qtree_node(s, i):
 
 def parse_qtree_child(s, i):
     i = consume_whitespace(s, i)
-    # this is a bit hacky, maybe want to generalize to strings that may involve curly braces
+    # this is a bit hacky, maybe want to generalize to strings that may involve
+    # curly braces
     if s[i] == "{":
         return consume_curly_bracketed(s, i)
     elif s[i] == "[":
@@ -346,7 +367,8 @@ def parse_qtree_child(s, i):
     else: # should be just a string
         m_group, new_i = consume_pattern(s, i, r'([a-zA-Z0-9\(\)\:\-]*)')
         if m_group is None or len(m_group) == 0:
-            # redundant given the current regex but keeping it in case I want to change that
+            # redundant given the current regex but keeping it in case I want
+            # to change that
             return (None, i)
         else:
             return m_group, new_i
@@ -391,16 +413,19 @@ brackets = {"(" : ")"}
 close_brackets = {brackets[y] : y for y in brackets.keys()}
 
 def parse_paren_str(s, i, type_sys=None):
-    """Turn a string with parenthesis into a structured representation, checking balance.
+    """Turn a string with parenthesis into a structured representation,
+    checking balance.
 
-    The structure consists of a list of strings/lists.  Sub-elements that are lists have the same structure.
-    Each distinct sub-element represents a parenthesized grouping.
+    The structure consists of a list of strings/lists.  Sub-elements that are
+    lists have the same structure. Each distinct sub-element represents a
+    parenthesized grouping.
 
     Right now only pays attention to ().  TODO: check other bracketings?"""
     stack = list()
     (seq, i) = parse_paren_str_r(s, i, stack, type_sys=type_sys)
     if len(stack) != 0:
-        raise ParseError("Unbalanced '%s...%s' expression at end of string" % (stack[-1], brackets[stack[-1]]), s, i)
+        raise ParseError("Unbalanced '%s...%s' expression at end of string" %
+                                    (stack[-1], brackets[stack[-1]]), s, i)
     return (seq, i)
 
 
@@ -413,8 +438,9 @@ def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
     while i < len(s):
         if s[i] == "_" and type_sys != None:
             accum += "_"
-            # have to parse type here in order to handle bracketing in types correctly.
-            # I don't think there's a shortcut to this.  In the long run, this should do proper tokenizing of terms.
+            # have to parse type here in order to handle bracketing in types
+            # correctly. I don't think there's a shortcut to this.  In the long
+            # run, this should do proper tokenizing of terms.
             typ, end = type_sys.type_parser_recursive(s, i+1)
             assert(typ is not None)
             # oh good god
@@ -424,7 +450,8 @@ def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
             stack.append(s[i])
             i += 1
 
-            r, new_i = parse_paren_str_r(s, i, stack, initial_accum=stack[-1], type_sys=type_sys)
+            r, new_i = parse_paren_str_r(s, i, stack, initial_accum=stack[-1],
+                                                            type_sys=type_sys)
             if len(accum) > 0:
                 seq.append(accum)
                 accum = ""
@@ -440,7 +467,8 @@ def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
                 i += 1
                 return (seq, i)
             else:
-                raise ParseError("Unbalanced '%s...%s' expression" % (close_brackets[s[i]], s[i]), s, i)
+                raise ParseError("Unbalanced '%s...%s' expression"
+                                        % (close_brackets[s[i]], s[i]), s, i)
         else:
             accum += s[i]
             i += 1
@@ -455,7 +483,8 @@ def macro_parse_r(struc, parse_fun, h, vnum=1, vprefix="ilnb", always_var=True):
         if isinstance(sub, str):
             s += sub 
         else:
-            (sub_str, new_hash, vnum) = macro_parse_r(sub, parse_fun, h, vnum, vprefix=vprefix, always_var=always_var)
+            (sub_str, new_hash, vnum) = macro_parse_r(sub, parse_fun, h, vnum,
+                                        vprefix=vprefix, always_var=always_var)
             h = new_hash
             parsed_sub = parse_fun(sub_str, locals=h)
             if isinstance(parsed_sub, str) and not always_var:
@@ -476,13 +505,3 @@ def macro_parse(s, parse_fun):
     (s, h, vnum) = macro_parse_r(struc, parse_fun, dict(), vnum, vprefix)
     result = parse_fun(s, locals=h)
     return result
-
-
-
-
-
-
-
-
-
-

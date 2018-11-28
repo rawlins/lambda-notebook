@@ -4,7 +4,10 @@ from numbers import Number
 global tree_error_printed
 tree_error_printed = False
 global use_nltk
-use_nltk = False # for the moment this is off by default: subprocess in _repr_png_ seems to have weird behavior with respect to the python interface process it spawns, leading to unresponsive interface.  I'm not sure what's going on.
+use_nltk = False # for the moment this is off by default: subprocess in
+                 # _repr_png_ seems to have weird behavior with respect to the
+                 # python interface process it spawns, leading to unresponsive
+                 # interface.  I'm not sure what's going on.
 # to turn on full nltk support, call reload_lamb(use_nltk_tree=True)
 
 def get_tree_class():
@@ -118,8 +121,10 @@ def ensuremath(s):
     return "$" + s.replace("$", "") + "$"
 
 def vname_split(vname):
-    g = re.match('([a-zA-Z0-9]*[a-zA-Z0]+)([0-9]*)$', vname) # use character classes?
-    # 0 in first group exploits greedy match, will collect any leading zeros so "v001" if blocked becomes "v002"
+    # use character classes?
+    g = re.match('([a-zA-Z0-9]*[a-zA-Z0]+)([0-9]*)$', vname)
+    # 0 in first group exploits greedy match, will collect any leading zeros so
+    # "v001" if blocked becomes "v002"
     # TODO make this even better
     if g is None:
         return (vname, '') # TODO:  what are the failure cases for this?
