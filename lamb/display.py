@@ -128,24 +128,6 @@ class Styled(object):
         for x in defaults:
             target.setdefault(x, defaults[x])
         return target
-        
-    @classmethod
-    def to_str(cls, x, style=None):
-        if isinstance(x, str):
-            return x
-        try:
-            if style is None:
-                return x.html_render()
-            else:
-                return x.html_render(**style)
-        except:
-            try:
-                return x._repr_html_()
-            except:
-                try:
-                    return x._repr_latex_()
-                except:
-                    return repr(x)
 
     def __repr__(self):
         # this is to avoid a unique object identifier showing up in
@@ -180,11 +162,47 @@ class HTMLNodeDisplay(Styled):
         else:
             return ""
 
+    def vertical_divs(self, lines, **kwargs):
+        align = self.get_style(kwargs, "align", "center")
+        e = Element("div", style="display:table;table-layout:auto;",
+                                                                align=align)
+        for l in lines:
+            row = SubElement(e, "div", style="display:table-row;",)
+            if isinstance(l, str):
+                l = [l]
+            else:
+                try:
+                    iter(l)
+                except:
+                    l = [l]
+            for c in l:
+                cell = SubElement(row, "div",
+                    style="display:table-cell;padding-right:2px; padding-left:2px;",
+                    align=align)
+                cell.append(to_html(c, style=kwargs))
+        return e
+
+    def horiz_divs(self, lines, **kwargs):
+        align = self.get_style(kwargs, "align", "center")
+        e = Element("div", style="display:table;")
+        for l in lines:
+            row = SubElement(e, "div", style="display:table-cell;", align=align)
+            row.append(to_html(l, style=kwargs))
+            # TODO: implement l as an iterable?
+        return e
+
+    def direction_divs(self, lines, **kwargs):
+        direction = self.get_style(kwargs, "direction", Direction.TD)
+        if direction == Direction.TD:
+            return self.vertical_divs(lines, **kwargs)
+        else:
+            return self.horiz_divs(lines, **kwargs)
+
     def render_explanation(self, explanation, **kwargs):
         color = self.get_style(kwargs, "expl_color", "blue")
         if explanation is not None:
             expl = to_html(explanation, style=kwargs)
-            e = Element("div", style=("color:%s;" % color))
+            e = Element("div", style=("white-space:nowrap; color:%s;" % color))
             if self.get_style(kwargs, "expl_style", "default") == "bracket":
                 bold = SubElement(e, "b")
                 bold.text = "["
@@ -197,32 +215,35 @@ class HTMLNodeDisplay(Styled):
             return to_html("")
 
     def render_parts(self, parts, **kwargs):
-        align = self.get_style(kwargs, "align", "center")
-        e = Element("div")
-        for p in parts:
-            div = SubElement(e, "div", align=align,
-                style=self.display_style(**kwargs))
-            div.append(to_html(p, style=kwargs))
-        return e
+        if len(parts) == 1 and not isinstance(parts[0], list):
+            return to_html(parts[0], style=kwargs)
+        else:
+            return self.direction_divs(parts, **kwargs)
 
     def render(self, content, explanation, parts, **kwargs):
-        align = self.get_style(kwargs, "align", "left")
+        align = self.get_style(kwargs, "align", "center")
         e = Element("div", align=align,
-            style=(self.border_style(**kwargs)
-                   + self.padding_style(**kwargs)
-                   + self.display_style(direction=Direction.LR)))
+            style=("display:inline-block;"
+                   + self.border_style(**kwargs)
+                   + self.padding_style(**kwargs)))
+        node_parts = list()
         if content is not None:
-            e.append(self.render_content(content, **kwargs))
+            node_parts.append(self.render_content(content, **kwargs))
         if explanation is not None:
-            e.append(self.render_explanation(explanation, **kwargs))
+            node_parts.append(self.render_explanation(explanation, **kwargs))
         if len(parts):
-            e.append(self.render_parts(parts, **kwargs))
+            node_parts.append(self.render_parts(parts, **kwargs))
+        if len(node_parts) == 1:
+            e.append(node_parts[0])
+        elif len(node_parts) > 1:
+            e.append(self.direction_divs(node_parts, **kwargs))
         return e
 
 class TDBoxDisplay(HTMLNodeDisplay):
     def __init__(self, **style):
         style["border"] = True
         style["direction"] = Direction.LR
+        style["align"] = "center"
         super().__init__(**style)
 
     def render_parts(self, parts, **kwargs):
@@ -258,10 +279,9 @@ class TDBoxDisplay(HTMLNodeDisplay):
         content_row = SubElement(e, "div", align="center",
             style=("display:table-row;"
                    + self.padding_style(**kwargs)))
-        content_cell = SubElement(content_row, "div",
+        content_cell = SubElement(content_row, "div", align=align,
                                                 style="display:table-cell;")
-        content_cell.append(self.render_content(content, align="center",
-                                                                    **kwargs))
+        content_cell.append(self.render_content(content, **kwargs))
         if explanation is not None:
             SubElement(content_row, "div", style="display:table-cell;")
         return e
@@ -312,7 +332,7 @@ class TDProofDisplay(HTMLNodeDisplay):
         parts_row = SubElement(e, "div", align="center",
             style="display:table-row;")
         parts_inter = SubElement(parts_row, "div",
-            style="display:table-cell;vertical-align:bottom;border-bottom:1px solid #848482;")
+            style="display:table-cell;table-layout:auto;vertical-align:bottom;border-bottom:1px solid #848482;")
         parts_inter.append(self.render_parts(parts, **kwargs))
         SubElement(parts_row, "div", style="display:table-cell;")
         if explanation is not None:

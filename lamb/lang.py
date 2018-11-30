@@ -491,7 +491,8 @@ class CompositionTree(Tree, Composable):
                         ch = CompositionTree(ch, system=self.system)
                         self[i] = ch
                     elif isinstance(ch, Composable):
-                        ch = CompositionTree.tree_factory(ch, system=self.system)
+                        ch = CompositionTree.tree_factory(ch,
+                                                            system=self.system)
                         self[i] = ch
                     elif isinstance(ch, Tree):
                         ch = self.from_tree(ch, system=self.system)
@@ -662,22 +663,19 @@ class CompositionTree(Tree, Composable):
     def build_display_tree(self, derivations=False, recurse=True, style=None):
         defaultstyle = {"border": False}
         style = display.Styled.merge_styles(style, defaultstyle)
-        leaf_style = display.HTMLNodeDisplay(**style)
-        if style.get("style", "boxes") == "proof":
-            node_style = display.TDProofDisplay(**style)
-        else: # "boxes"
-            node_style = display.TDBoxDisplay(**style)
         parts = list()
         for i in range(len(self)):
             try:
                 part_i = self[i].build_display_tree(recurse=recurse,
                                         derivations=derivations, style=style)
             except AttributeError:
+                leaf_style = display.HTMLNodeDisplay(**style)
                 part_i = display.DisplayNode(content=self[i],
                                              style=leaf_style)
             parts.append(part_i)
         if self.composed():
             s = self.content.build_summary_for_tree(style=style)
+            leaf_style = display.HTMLNodeDisplay(**dict(style, align="center"))
             node = display.DisplayNode(parts=[self.short_str(latex=True,
                                                    children=False,
                                                    force_brackets=True),
@@ -688,6 +686,10 @@ class CompositionTree(Tree, Composable):
                 node = self.label()._repr_html_()
             except:
                 node = str(self.label())
+        if style.get("style", "boxes") == "proof":
+            node_style = display.TDProofDisplay(**style)
+        else: # "boxes"
+            node_style = display.TDBoxDisplay(**style)
         return display.DisplayNode(content=node, parts=parts, style=node_style)
 
     def __mul__(self, other):
@@ -932,7 +934,7 @@ class TreeComposite(Composite, Tree):
                 expl = None
             # TODO revisit and generalize this (maybe override Item in a better
             # way?)
-            if expl and len(parts) == 0:
+            if expl is not None and len(parts) == 0:
                 # no subparts but there is an explanation.  This is the case of
                 # a leaf node derived from a tree. show the short str in the
                 # slot for a part
@@ -953,6 +955,8 @@ class TreeComposite(Composite, Tree):
                     node_content = display.DisplayNode(
                             parts=[self.short_str_latex(), content_str],
                             style=leaf_style)
+        if expl is None and len(parts) == 0:
+            return node_content # don't add a superfluous containing div
         if len(parts):
             final_style = node_style
         else:
@@ -1086,7 +1090,7 @@ class CompositionResult(Composable):
         return MiniLatex(s)
 
     def build_summary_for_tree(self, style=None):
-        defaultstyle = dict()
+        defaultstyle = {"align": "left"}
         style = display.Styled.merge_styles(style, defaultstyle)
         leaf_style = display.HTMLNodeDisplay(**style)
         if len(self.results) == 0:
@@ -1097,10 +1101,10 @@ class CompositionResult(Composable):
             n = 0
             parts = list()
             for composite in self.results:
-                span = display.element_with_text("span", style="color:blue",
-                    text="[path %i]" % n)
-                span.tail = ": " + composite.latex_str()
-                parts.append(span)
+                span = display.element_with_text("span",
+                    style="color:blue; white-space:nowrap; display:inline-block;",
+                    text="[path %i]: " % n)
+                parts.append([span, composite.latex_str()])
                 n += 1
             return display.DisplayNode(parts=parts, style=leaf_style)
 
@@ -1414,7 +1418,8 @@ class CompositionOp(object):
                                         reduce=False,
                                         system=None,
                                         source=None):
-        """Build a composition operation given some function.  See also `unary_factory`.
+        """Build a composition operation given some function.  See also
+        `unary_factory`.
 
         `name`: the name of the operation, e.g. "FA".
         `operation`: a function implementing the operation.  Must take
@@ -1849,7 +1854,7 @@ class PlaceholderTerm(meta.TypedTerm):
     or not yet composed.  The primary use is in incrementally doing top-down
     composition."""
     def __init__(self, varname, placeholder_for, system=None, assignment=None,
-                                                                type_check=True):
+                                                               type_check=True):
         meta.TypedTerm.__init__(self, varname, types.UnknownType(),
                                 assignment=assignment, type_check=type_check)
         self.let = True
@@ -2714,7 +2719,8 @@ def setup_type_driven():
 
     Also exports a few basic lexical entries for testing purposes."""
     global td_system, cat, gray, john, pm, fa, pa, inP, texas, isV, julius
-    # note that PM is only commutative if the underlying logic has commutative conjunction...
+    # note that PM is only commutative if the underlying logic has commutative
+    # conjunction...
     oldlevel = meta.logger.level
     meta.logger.setLevel(logging.WARNING)
     pm = BinaryCompositionOp("PM", pm_fun, commutative=True, reduce=True)

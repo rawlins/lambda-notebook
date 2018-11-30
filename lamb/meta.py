@@ -4084,7 +4084,7 @@ class Derivation(object):
 
     def build_display_tree(self, recurse=False, parent=None, reason=None,
                                                                 style=None):
-        defaultstyle = dict()
+        defaultstyle = {"align": "left"}
         style = display.Styled.merge_styles(style, defaultstyle)
         node_style = display.LRDerivationDisplay(**style)
         l = self.steps_sequence(latex=True)
