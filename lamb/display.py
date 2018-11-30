@@ -247,7 +247,7 @@ class TDBoxDisplay(HTMLNodeDisplay):
             style=("display:table; margin:5px; border-collapse: collapse;"
                    + self.border_style(**kwargs)))
         parts_row = SubElement(e, "div", align="center",
-            style="display:table-row;")
+            style="display:table-row;border-bottom:1px solid #848482")
         parts_inter = SubElement(parts_row, "div",
             style="display:table-cell;vertical-align:middle;")
         parts_inter.append(self.render_parts(parts, **kwargs))
@@ -255,11 +255,15 @@ class TDBoxDisplay(HTMLNodeDisplay):
             expl_inter = SubElement(parts_row, "div",
                 style="display:table-cell;vertical-align:middle;border-left:1px solid #848482;padding:0.5em")
             expl_inter.append(self.render_explanation(explanation, **kwargs))
-        content_inter = SubElement(e, "div", align="center",
-            style=("display:table-row; border:1px solid #848482;"
+        content_row = SubElement(e, "div", align="center",
+            style=("display:table-row;"
                    + self.padding_style(**kwargs)))
-        content_inter.append(self.render_content(content, align="center",
+        content_cell = SubElement(content_row, "div",
+                                                style="display:table-cell;")
+        content_cell.append(self.render_content(content, align="center",
                                                                     **kwargs))
+        if explanation is not None:
+            SubElement(content_row, "div", style="display:table-cell;")
         return e
 
 class TDProofDisplay(HTMLNodeDisplay):
