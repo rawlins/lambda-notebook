@@ -236,7 +236,7 @@ class TDBoxDisplay(HTMLNodeDisplay):
         e = Element("div", style="display: table;")
         join = Element("div",
             style="align: center; vertical-align: middle; display: table-cell;")
-        join.append(element_with_text("span", text="$\\circ$",
+        join.append(element_with_text("span", text="*",
                         style=("padding:1em;")))
         elem_join(e, join, part_cells)
         return e
