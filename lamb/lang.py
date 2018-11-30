@@ -160,13 +160,6 @@ class Composable(object):
         return self.build_display_tree(derivations=derivations, recurse=recurse,
                                                                     style=style)
 
-    def latex_step_tree(self, derivations=False):
-        """Show the step-by-step derivation(s) as a proof tree."""
-        return self.tree(derivations=derivations)
-
-    def latex_step_tree_r(self, derivations=False):
-        raise NotImplementedError(repr(self))
-
     def __mul__(self, other):
         return self.compose(other)
 
@@ -645,9 +638,6 @@ class CompositionTree(Tree, Composable):
     def _repr_html_(self):
         return self.show()._repr_html_()
 
-    def print_ipython_mathjax(self):
-        return self.latex_step_tree()
-
     def tree(self, derivations=False, recurse=True, style=None):
         return self.build_display_tree(derivations=derivations, recurse=recurse,
                                                                     style=style)
@@ -670,43 +660,35 @@ class CompositionTree(Tree, Composable):
         return self.show(derivations=derivations, short=False, style=None)
 
     def build_display_tree(self, derivations=False, recurse=True, style=None):
-        defaultstyle = display.td_proof_style
+        defaultstyle = {"border": False}
         style = display.Styled.merge_styles(style, defaultstyle)
+        leaf_style = display.HTMLNodeDisplay(**style)
+        if style.get("style", "boxes") == "proof":
+            node_style = display.TDProofDisplay(**style)
+        else: # "boxes"
+            node_style = display.TDBoxDisplay(**style)
         parts = list()
         for i in range(len(self)):
             try:
                 part_i = self[i].build_display_tree(recurse=recurse,
                                         derivations=derivations, style=style)
             except AttributeError:
-                try:
-                    part_i = display.RecursiveDerivationLeaf(
-                                            self[i]._repr_html_(), style=style)
-                except AttributeError:
-                    part_i = display.RecursiveDerivationLeaf(str(self[i]),
-                                                             style=style)
+                part_i = display.DisplayNode(content=self[i],
+                                             style=leaf_style)
             parts.append(part_i)
         if self.composed():
             s = self.content.build_summary_for_tree(style=style)
-            node = display.RecursiveDerivationLeaf(
-                                    self.short_str(latex=True,
+            node = display.DisplayNode(parts=[self.short_str(latex=True,
                                                    children=False,
                                                    force_brackets=True),
-                                    s,
-                                    style=dict(style, leaf_border="1px"))
+                                              s],
+                                       style=leaf_style)
         else:
             try:
                 node = self.label()._repr_html_()
             except:
                 node = str(self.label())
-        return display.RecursiveDerivationDisplay(node, explanation=None,
-                                                    parts=parts, style=style)
-
-
-    def latex_step_tree_r(self, derivations=False):
-        if len(self.content) == 1:
-            return self.content[0].latex_step_tree_r(derivations=derivations)
-        else:
-            raise NotImplementedError(repr(self))
+        return display.DisplayNode(content=node, parts=parts, style=node_style)
 
     def __mul__(self, other):
         Composable.__mul__(self, other)
@@ -905,88 +887,24 @@ class TreeComposite(Composite, Tree):
                 steps.append(self[i].step_tree())
         return steps
 
-    def derivs_for_tree(self):
-        if self.content.derivation is None:
-            return None
-        l = self.content.derivation.steps_sequence(latex=True,
-                                                        ignore_trivial=True)
-        s = "<table>"
-        for (step, reason, subexpression) in l:
-            s += ("<tr><td style=\"padding-right:5px\"> $=$ </td><td style=\"align:left\">%s</td></tr>"
-                                                                    % step)
-        s += "</table>"
-        return s
-
-    def derivs_for_tree_rdd(self, content):
-        if self.content.derivation is None:
-            return None
-        l = self.content.derivation.steps_sequence(latex=True,
-                                                   ignore_trivial=True)
-        steps = [content,] + [step[0] for step in l]
-        return display.RecursiveDerivationLeaf(*steps,
-                                               style={"leaf_style": "eq"})
-
-    def latex_terminal_tree(self, derivations=False):
-        if self.content is None:
-            return ("<table align=\"center\"><tr><td align=\"center\">%s</td></tr><tr><td align=\"center\"><i>N/A</i></td></tr></table>\n"
-                                                    % (self.short_str_latex()))
-        else:
-            return self.local_latex_tree(derivations=derivations)
-
-
-    def local_latex_tree(self, mode=True, derivations=False):
-        if derivations and self.content.derivation is not None:
-            content_str = self.derivs_for_tree()
-        else:
-            if self.placeholder():
-                content_str = ensuremath(self.content.latex_str())
-            else:
-                content_str = ensuremath(" = " + self.content.latex_str())
-        if self.placeholder():
-            s = ("<table style=\"margin-top:10px\"><tr><td style=\"vertical-align:bottom\" align=\"center\">%s</td>"
-                                                            % (content_str))
-        else:
-            s = ("<table style=\"margin-top:10px\"><tr><td style=\"vertical-align:bottom\" align=\"center\">%s</td></tr><tr><td style=\"vertical-align:bottom\" align=\"center\">%s</td>"
-                                    % (self.short_str_latex(), content_str))
-        s += "</tr></table>\n"
-        return s
-
-    def latex_step_tree_r(self, derivations=False):
-        child_cells = []
-        for i in range(len(self)):
-            if not isinstance(self[i], Composable):
-                continue # TODO: revisit.  Right now allowing Trees here should
-                         # work, but instead produces odd visual problems.
-            if isinstance(self[i], str):
-                str_i = self[i]
-            else:
-                str_i = self[i].latex_step_tree_r(derivations=derivations)
-            child_cells.append(
-                "<td style=\"vertical-align:bottom\">%s</td>" % str_i)
-        if len(child_cells) == 0:
-            return self.latex_terminal_tree(derivations=derivations)
-        s = "<table><tr><td style=\"vertical-align:bottom;padding:0px 10px\" align=\"center\">" 
-        s += "<table><tr>"
-        s += "<td style=\"vertical-align:bottom;padding-bottom:5px\">&nbsp;&nbsp;&nbsp;$\circ$&nbsp;&nbsp;&nbsp;</td>".join(child_cells)
-        s += "</tr></table></td>"
-        if self.mode is None:
-            s += "</tr>"
-        else:
-            s += ("<td style=\"vertical-align:bottom;padding-bottom:5px;padding-left:10px\"><b>[%s]</b></td></tr>"
-                                                            % self.mode.name)
-        s += ("<tr style=\"border-top: 1px solid #848482\"><td align=\"center\">%s</td><td></td></tr></table>\n"
-                            % self.local_latex_tree(derivations=derivations))
-        return s
-
     def build_display_tree(self, derivations=False, recurse=True, style=None):
-        defaultstyle = display.td_box_style
-        style = display.Styled.merge_styles(style, defaultstyle)
+        defaults = {"direction": display.Direction.TD,
+                    "border": False,
+                    "expl_style": "bracket"}
+        style = display.Styled.merge_styles(style, defaults)
+
+        leaf_style = display.HTMLNodeDisplay(**style)
+        if style.get("style", "boxes") == "proof":
+            node_style = display.TDProofDisplay(**style)
+        else: # "boxes"
+            node_style = display.TDBoxDisplay(**style)
+
         parts = list()
         for i in range(len(self)):
             if not isinstance(self[i], Composable):
                 continue
             if isinstance(self[i], str):
-                part_i = display.RecursiveDerivationDisplay(self[i], style=style)
+                part_i = display.DisplayNode(parts=[self[i]], style=leaf_style)
             else:
                 part_i = self[i].build_display_tree(derivations=derivations,
                                                     recurse=recurse,
@@ -997,8 +915,8 @@ class TreeComposite(Composite, Tree):
         else:
             content_str = "N/A"
         if self.placeholder():
-            node_content = display.RecursiveDerivationLeaf(content_str,
-                                                                style=style)
+            node_content = display.DisplayNode(parts=[content_str],
+                                               style=leaf_style)
             expl = None
         else:
             if self.mode:
@@ -1008,8 +926,8 @@ class TreeComposite(Composite, Tree):
                     expl = self.mode.name
                 collapsed = self.collapsed_compose_str()
                 if len(collapsed) > 0:
-                    expl += ("<span style=\"font-size:x-small\"> (or: "
-                                + self.collapsed_compose_str() + ")</span>")
+                    expl = display.alternative_explanation(expl,
+                                                self.collapsed_compose_str())
             else:
                 expl = None
             # TODO revisit and generalize this (maybe override Item in a better
@@ -1018,24 +936,31 @@ class TreeComposite(Composite, Tree):
                 # no subparts but there is an explanation.  This is the case of
                 # a leaf node derived from a tree. show the short str in the
                 # slot for a part
-                parts.append(display.RecursiveDerivationLeaf(
-                                        self.short_str_latex(), style=style))
+                parts.append(display.DisplayNode(parts=[self.short_str_latex()],
+                                                 style=leaf_style))
                 if derivations and self.content.derivation is not None:
-                    node_content = self.derivs_for_tree_rdd(None)
+                    node_content = self.content.derivation.equality_display(
+                                                                        None)
                 else:
-                    node_content = display.RecursiveDerivationLeaf(
-                                                    content_str, style=style)
+                    node_content = display.DisplayNode(parts=[content_str],
+                                                       style=leaf_style)
             else:
                 if derivations and self.content.derivation is not None:
-                    node_content = self.derivs_for_tree_rdd(
+                    node_content = self.content.derivation.equality_display(
                                                         self.short_str_latex())
                 else:
-                    node_content = display.RecursiveDerivationLeaf(
-                            self.short_str_latex(), content_str, style=style)
-        return display.RecursiveDerivationDisplay(node_content,
-                                                  explanation=expl,
-                                                  parts=parts,
-                                                  style=style)
+                    # this is the normal case
+                    node_content = display.DisplayNode(
+                            parts=[self.short_str_latex(), content_str],
+                            style=leaf_style)
+        if len(parts):
+            final_style = node_style
+        else:
+            final_style = leaf_style
+        return display.DisplayNode(content=node_content,
+                                   explanation=expl,
+                                   parts=parts,
+                                   style=final_style)
 
     @property
     def name(self):
@@ -1161,22 +1086,23 @@ class CompositionResult(Composable):
         return MiniLatex(s)
 
     def build_summary_for_tree(self, style=None):
-        defaultstyle = display.td_box_style
+        defaultstyle = dict()
         style = display.Styled.merge_styles(style, defaultstyle)
+        leaf_style = display.HTMLNodeDisplay(**style)
         if len(self.results) == 0:
-            return display.RecursiveDerivationLeaf("Composition failure",
-                                        style=dict(style, leaf_style="alert"))
-        elif len(self.results) == 1:
-            return display.RecursiveDerivationLeaf(self.results[0].latex_str(),
-                                        style=dict(style, leaf_align="center"))
+            # TODO: reimplement alert style
+            return display.DisplayNode(parts=["Composition Failure!"],
+                style=leaf_style)
         else:
             n = 0
             parts = list()
             for composite in self.results:
-                parts.append(("<span style=\"color:blue\">[path %i]</span>: &nbsp;"
-                                % n) + composite.latex_str())
+                span = display.element_with_text("span", style="color:blue",
+                    text="[path %i]" % n)
+                span.tail = ": " + composite.latex_str()
+                parts.append(span)
                 n += 1
-            return display.RecursiveDerivationLeaf(*parts, style=style)
+            return display.DisplayNode(parts=parts, style=leaf_style)
 
     def failures_str_latex(self):
         return self.failures_str(latex=True)
@@ -1277,34 +1203,6 @@ class CompositionResult(Composable):
             s += rst._repr_html_() + "<br /><br />"
             i += 1
         return MiniLatex(s)
-
-    def build_display_trees(self, recurse=True, derivations=False, style=None):
-        defaultstyle = display.td_box_style
-        style = display.Styled.merge_styles(style, defaultstyle)
-
-        if len(self.results) == 0:
-            return display.RecursiveDerivationLeaf(
-                                "No succesful composition paths.", style=style)
-        else:
-            rows = list()
-            if len(self.results) == 1:
-                rows.append("1 composition path:")
-            else:
-                rows.append("%i composition paths:\n" % len(self.results))
-            i = 0
-            for r in self.results:
-                if len(self.results) > 1:
-                    rows.append("Path [%i]:\n" % i)
-                rst = r.build_display_tree(derivations=derivations,
-                                           recurse=recurse,
-                                           style=style)
-                rows.append(rst)
-                rows.append("<br />")
-                i += 1
-            return display.RecursiveDerivationLeaf(*rows, style=dict(style,
-                                                          leaf_align="left"))
-
-
 
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as
@@ -1496,22 +1394,14 @@ class Item(TreeComposite):
             a2["index"] = index
             return self.content.under_assignment(assignment)
 
-    def latex_step_tree_r(self, derivations=False):
-        if self.content is None:
-            return ("<table align=\"center\"><tr><td align=\"center\">%s</td></tr><tr><td align=\"center\"><i>N/A</i></td></tr></table>\n"
-                                            % (self.short_str_latex()))
-        else:
-            return ("<table align=\"center\"><tr><td align=\"center\">%s</td></tr><tr><td align=\"center\">%s</td></tr></table>\n"
-                        % (self.short_str_latex(),
-                            ensuremath(self.content.latex_str())))
-
     def build_display_tree(self, derivations=False, recurse=None, style=None):
-        defaultstyle = display.td_box_style
+        defaultstyle = {}
         style = display.Styled.merge_styles(style, defaultstyle)
+        leaf_style = display.HTMLNodeDisplay(**style)
         if not self.content:
-            return display.RecursiveDerivationLeaf(self.short_str_latex(),
-                                                   "N/A",
-                                                   style=style)
+            return display.DisplayNode(parts=[self.short_str_latex(),
+                                              "N/A"],
+                                              style=leaf_style)
         else:
             return super().build_display_tree(derivations=derivations,
                                               recurse=recurse,
@@ -2023,10 +1913,6 @@ class PlaceholderTerm(meta.TypedTerm):
         result.type = self.type # type may have changed, e.g. via alphabetic
                                 # conversion to a fresh type
         return result
-
-
-
-
 
 class CompositionSystem(object):
     """A CompositionSystem describes an overarching way of dealing with

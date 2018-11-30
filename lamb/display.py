@@ -1,53 +1,96 @@
 from lamb import utils
 
+import copy, enum
+from xml.etree import ElementTree
+Element = ElementTree.Element
+SubElement = ElementTree.SubElement
+
 def log_warning(m):
     from lamb import meta
     meta.logger.warning(m)
 
-global td_box_style, td_proof_style, lr_num_style, lr_table_style
-global leaf_derivs_style
+class Direction(enum.Enum):
+    TD = 0
+    LR = 1
 
-td_box_style = {"direction": "td", 
-                "style": "boxes",
-                "parts_style": "compose",
-                "expl_style": "bracket", 
-                "expl_color": "blue", 
-                "leaf_align": "center",
-                "leaf_style": "div"}
+def element_with_text(name, text="", **kwargs):
+    e = Element(name, **kwargs)
+    e.text = text
+    return e
 
-td_proof_style = {"direction": "td", 
-                  "style": "proof",
-                  "parts_style": "compose",
-                  "expl_style": "bracket", 
-                  "expl_color": "blue", 
-                  "leaf_align": "center",
-                  "leaf_style": "div"}
+def subelement_with_text(parent, name, text="", **kwargs):
+    e = Element(name, **kwargs)
+    e.text = text
+    parent.append(e)
+    return e
 
-leaf_derivs_style = {"direction": "td", 
-                     "style": "proof",
-                     "parts_style": "eq",
-                     "expl_style": "bracket", 
-                     "expl_color": "blue", 
-                     "leaf_align": "center",
-                     "leaf_style": "div"}
+def elem_join(parent, j, l):
+    if len(l) == 0:
+        return
+    for i in range(len(l) - 1):
+        parent.append(l[i])
+        parent.append(copy.deepcopy(j))
+    parent.append(l[-1])
+    return parent
 
-lr_num_style = {"direction": "lr",
-                "style": "boxes",
-                "parts_style": "steps",
-                "expl_style": "simple",
-                "expl_color": "blue",
-                "leaf_align": "left",
-                "leaf_style": "div"}
+def to_html(x, style=None):
+    if isinstance(x, str):
+        return element_with_text("span", text=x)
+    elif isinstance(x, Element):
+        return x
+    if style is None:
+        style = dict()
+    try:
+        return x.render(**style)
+    except:
+        try:
+            return ElementTree.fromstring(x._repr_html_())
+        except:
+            try:
+                return element_with_text("span", x._repr_latex_())
+            except:
+                return element_with_text("span", repr(x))
 
-lr_table_style = {"direction": "lr",
-                  "style": "rows",
-                  "parts_style": "steps",
-                  "expl_style": "simple",
-                  "expl_color": "blue",
-                  "leaf_align": "left",
-                  "leaf_style": "div"}
+def equality_table(lines):
+    e = Element("table")
+    i = 0
+    for l in lines:
+        row = SubElement(e, "tr")
+        if i > 0:
+            first_cell = " $=$ "
+        else:
+            first_cell = ""
+        subelement_with_text(row, "td", text=first_cell,
+            style="padding-right:5px")
+        l_cell = SubElement(row, "td", align="left", style="text-align:left;")
+        l_cell.append(to_html(l))
+        i += 1
+    return e
 
-table_reset = """<style>.rendered_html table, .rendered_html tr, .rendered_html td, .rendered_html th { border: 0px; text-align:center; }</style>"""
+def alternative_explanation(expl_str, alternative_str):
+    # TODO: this version tends towards linebreaks in very wide tables
+    e = Element("div", style="display: inline-block;")
+    e.append(to_html(expl_str))
+    e.append(element_with_text("span", " (or: " + alternative_str + ")",
+                                                style="font-size:x-small;"))
+    return e
+
+class DisplayNode(object):
+    def __init__(self, content=None, explanation=None, parts=None, style=None):
+        if parts is None:
+            parts = list()
+        self.content = content
+        self.explanation = explanation
+        self.parts = parts
+        self.style = style
+
+    def render(self, **kwargs):
+        return self.style.render(self.content, self.explanation, self.parts,
+                                                                    **kwargs)
+
+    def _repr_html_(self):
+        return ElementTree.tostring(self.render(), encoding="unicode",
+                                                   method="html")
 
 class Styled(object):
     def __init__(self, style=None):
@@ -109,386 +152,245 @@ class Styled(object):
         # notebooks in text/plain output, creating meaningless differences
         return self.__class__.__name__ + " instance: HTML rendering only"
 
-class RecursiveDerivationDisplay(Styled):
-    """Class for rendering some recursive (tree-structured) data.
-    
-    Each node has two parts, the content, and an "explanation".  (E.g. in a
-    derivation this is used to explain each step.)
-    A node may have parts."""
-    def __init__(self, content, explanation=None, parts=None, style=None):
-        if parts is None:
-            parts = list()
-        self.content = content
-        self.explanation = explanation
-        self.parts = parts
+class HTMLNodeDisplay(Styled):
+    def __init__(self, **style):
         super().__init__(style=style)
 
-        
-    def render_expl_bracket(self, **kwargs):
+    def render_content(self, c, **kwargs):
+        if c is not None:
+            return to_html(c, style=kwargs)
+        else:
+            return to_html("")
+
+    def border_style(self, **kwargs):
+        if self.get_style(kwargs, "border", True):
+            return "border: 1px solid #848482;"
+        else:
+            return ""
+
+    def padding_style(self, **kwargs):
+        return "padding: 5px;"
+
+    def display_style(self, **kwargs):
+        direct = self.get_style(kwargs, "direction", None)
+        if direct == Direction.TD:
+            return "display: block;"
+        elif direct == Direction.LR:
+            return "display: inline-block;"
+        else:
+            return ""
+
+    def render_explanation(self, explanation, **kwargs):
         color = self.get_style(kwargs, "expl_color", "blue")
-        if self.explanation:
-            return "<span style=\"color:%s\"><b>[%s]</b></span>" % (
-                            color, self.to_str(self.explanation, style=kwargs))
+        if explanation is not None:
+            expl = to_html(explanation, style=kwargs)
+            e = Element("div", style=("color:%s;" % color))
+            if self.get_style(kwargs, "expl_style", "default") == "bracket":
+                bold = SubElement(e, "b")
+                bold.text = "["
+                expl.tail = "]"
+                bold.append(expl)
+            else:
+                e.append(expl)
+            return e
         else:
-            return ""
-        
-    def render_expl_simple(self, **kwargs):
+            return to_html("")
+
+    def render_parts(self, parts, **kwargs):
+        align = self.get_style(kwargs, "align", "center")
+        e = Element("div")
+        for p in parts:
+            div = SubElement(e, "div", align=align,
+                style=self.display_style(**kwargs))
+            div.append(to_html(p, style=kwargs))
+        return e
+
+    def render(self, content, explanation, parts, **kwargs):
+        align = self.get_style(kwargs, "align", "left")
+        e = Element("div", align=align,
+            style=(self.border_style(**kwargs)
+                   + self.padding_style(**kwargs)
+                   + self.display_style(direction=Direction.LR)))
+        if content is not None:
+            e.append(self.render_content(content, **kwargs))
+        if explanation is not None:
+            e.append(self.render_explanation(explanation, **kwargs))
+        if len(parts):
+            e.append(self.render_parts(parts, **kwargs))
+        return e
+
+class TDBoxDisplay(HTMLNodeDisplay):
+    def __init__(self, **style):
+        style["border"] = True
+        style["direction"] = Direction.LR
+        super().__init__(**style)
+
+    def render_parts(self, parts, **kwargs):
+        part_cells = list()
+        for p in parts:
+            part_e = Element("div",
+                style=("display:table-cell;vertical-align:middle;"
+                       + self.padding_style(**kwargs)))
+            part_e.append(to_html(p, style=kwargs))
+            part_cells.append(part_e)
+        e = Element("div", style="display: table;")
+        join = Element("div",
+            style="align: center; vertical-align: middle; display: table-cell;")
+        join.append(element_with_text("span", text="$\\circ$",
+                        style=("padding:1em;")))
+        elem_join(e, join, part_cells)
+        return e
+
+    def render(self, content, explanation, parts, **kwargs):
+        align = self.get_style(kwargs, "align", "center")
+        e = Element("div", align=align,
+            style=("display:table; margin:5px; border-collapse: collapse;"
+                   + self.border_style(**kwargs)))
+        parts_row = SubElement(e, "div", align="center",
+            style="display:table-row;")
+        parts_inter = SubElement(parts_row, "div",
+            style="display:table-cell;vertical-align:middle;")
+        parts_inter.append(self.render_parts(parts, **kwargs))
+        if explanation is not None:
+            expl_inter = SubElement(parts_row, "div",
+                style="display:table-cell;vertical-align:middle;border-left:1px solid #848482;padding:0.5em")
+            expl_inter.append(self.render_explanation(explanation, **kwargs))
+        content_inter = SubElement(e, "div", align="center",
+            style=("display:table-row; border:1px solid #848482;"
+                   + self.padding_style(**kwargs)))
+        content_inter.append(self.render_content(content, align="center",
+                                                                    **kwargs))
+        return e
+
+class TDProofDisplay(HTMLNodeDisplay):
+    def __init__(self, **style):
+        style["border"] = False
+        style["direction"] = Direction.LR
+        super().__init__(**style)
+
+    def render_parts(self, parts, **kwargs):
+        part_cells = list()
+        for p in parts:
+            part_e = Element("div",
+                style=("vertical-align:bottom;display:table-cell;"
+                       + self.padding_style(**kwargs)))
+            part_e.append(to_html(p, style=kwargs))
+            part_cells.append(part_e)
+        e = Element("div", style="display: table;")
+        join = Element("div", style="display: table-cell; padding-left:4em;")
+        elem_join(e, join, part_cells)
+        return e
+
+    def render_explanation(self, explanation, **kwargs):
+        # TODO: this is duplicated only so that the transform can be applied,
+        # is there a simpler way?
         color = self.get_style(kwargs, "expl_color", "blue")
-        if self.explanation:
-            return "<span style=\"color:%s\">%s</span>" % (
-                            color, self.to_str(self.explanation, style=kwargs))
-        else:
-            return ""
-            
-    def render_expl(self, **kwargs):
-        """Render the 'explanation' of the tree node.  Styles ('expl_style'):
-        'simple': just a regular span.  (default)
-        'bracket': in brackets and bold.
-        
-        the key 'expl_color' determines the color of the span.  Default is
-        'blue'."""
-        style = self.get_style(kwargs, "expl_style", "default")
-        if style == "default" or style == "simple":
-            return self.render_expl_simple(**kwargs)
-        elif style == "bracket":
-            return self.render_expl_bracket(**kwargs)
-        else:
-            log_warning("Unknown style '%s'" % style)
-            return self.render_expl_simple(**kwargs)
-    
-    def render_content(self, **kwargs):
-        """Renders the content of the tree node."""
-        mainstyle = self.get_style(kwargs, "style", "default")
-        if not self.content:
-            return ""
-        if mainstyle == "rows":
-            return ("<td style=\"vertical-align:bottom;padding-right:10px\">%s</td>"
-                                    % self.to_str(self.content, style=kwargs))
-        else:
-            return self.to_str(self.content, style=kwargs)
-    
-    def render_parts_table_compose(self, **kwargs):
-        part_cells = []
-        for p in self.parts:
-            part_cells.append("<td style=\"vertical-align:bottom;padding:5px\">%s</td>"
-                                            % self.to_str(p, style=kwargs))
-        s = "<table><tr>"
-        s += "<td style=\"vertical-align:bottom;padding:10px\">$\\circ$</td>".join(part_cells)
-        s += "</tr></table>"
-        return s
-    
-    def render_parts_table_steps(self, **kwargs):
-        part_cells = []
-        i = 1
-        for p in self.parts:
-            if i < len(self.parts):
-                part_cells.append("<tr style=\"border-bottom:1px solid #848482;padding-bottom:5px\"><td style=\"padding-right:5px;vertical-align:bottom\">%2i. </td><td style=\"padding-left:10px;border-left:1px solid #848482;padding-bottom:3px\">%s</td></tr>"
-                                        % (i, self.to_str(p, style=kwargs)))
+        if explanation is not None:
+            expl = to_html(explanation, style=kwargs)
+            # align this div with the middle of the proof line
+            e = Element("div", style=("color:%s;" % color
+                + "transform: translateY(-1em); padding-left:0.5em;"))
+            if self.get_style(kwargs, "expl_style", "default") == "bracket":
+                bold = SubElement(e, "b")
+                bold.text = "["
+                expl.tail = "]"
+                bold.append(expl)
             else:
-                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px;vertical-align:bottom\">%2i. </td><td style=\"padding-left:10px;border-left:1px solid #848482;padding-bottom:3px\">%s</td></tr>"
-                                        % (i, self.to_str(p, style=kwargs)))
-            i += 1
-        s = "<table style=\"padding-bottom:5px\">"
-        s += "".join(part_cells)
-        s += "</table>"
-        return s
+                e.append(expl)
+            return e
+        else:
+            return to_html("")
 
-    def render_parts_eq_seq(self, **kwargs):
-        part_cells = []
-        i = 1
-        for p in self.parts:
-            if i == 1:
-                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px\"></td><td style=\"align:left\">%s</td></tr>"
-                                        % (self.to_str(p, style=kwargs)))
+    def render(self, content, explanation, parts, **kwargs):
+        align = self.get_style(kwargs, "align", "center")
+        e = Element("div", align=align,
+            style=("display:table;" + self.border_style(**kwargs)))
+        parts_row = SubElement(e, "div", align="center",
+            style="display:table-row;")
+        parts_inter = SubElement(parts_row, "div",
+            style="display:table-cell;vertical-align:bottom;border-bottom:1px solid #848482;")
+        parts_inter.append(self.render_parts(parts, **kwargs))
+        SubElement(parts_row, "div", style="display:table-cell;")
+        if explanation is not None:
+            # The elaborateness here and in render_explanation is to get the
+            # explanation centered relative to the line. TODO: is this ok
+            # across browsers?
+            mid = SubElement(e, "div", style="display:table-row;")
+            SubElement(mid, "div", style="display: table-cell;")
+            expl_inter = SubElement(mid, "div",
+                style="display:table-cell;vertical-align:middle;")
+            expl_inter2 = SubElement(expl_inter, "div",
+                style="vertical-align:middle;height:0px;overflow:visible")
+            expl_inter2.append(self.render_explanation(explanation, **kwargs))
+
+        content_inter = SubElement(e, "div", align="center",
+            style=("display:table-row;"
+                   + self.padding_style(**kwargs)))
+        content_inter.append(self.render_content(content, align="center",
+                                                                    **kwargs))
+        SubElement(content_inter, "div", style="display: table-cell;")
+
+        return e
+
+class LRDerivationDisplay(HTMLNodeDisplay):
+    def __init__(self, **style):
+        style["border"] = False
+        super().__init__(**style)
+
+    def render_parts(self, parts, **kwargs):
+        align = self.get_style(kwargs, "align", "center")
+        e = Element("div", align=align,
+            style="display:table;border-collapse:collapse;")
+
+        inter_style = "display:table-row;border-bottom:1px solid #848482;"
+        last_style = "display:table-row;"
+        for i in range(len(parts)):
+            if i < len(parts) - 1:
+                row_style = inter_style
             else:
-                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px\"> $=$ </td><td style=\"align:left\">%s</td></tr>"
-                                        % (self.to_str(p, style=kwargs)))
-            i += 1
-        s = "<table style=\"padding-bottom:5px\">"
-        s += "".join(part_cells)
-        s += "</table>"
-        return s
+                row_style = last_style
+            row = SubElement(e, "div", style=row_style)
+            subelement_with_text(row, "div", text=("%2d. " % (i+1)),
+                style="display:table-cell;padding-right:5px;vertical-align:bottom;")
+            kwargs["parent_table"] = row
+            result = to_html(parts[i], style=kwargs)
+            if result is not row:
+                # otherwise, the to_html call has already done the appending
+                sub_cell = SubElement(row, "div",
+                    style="display:table-cell; vertical-align:bottom;padding-left:5px;padding-right:5px;")
+                sub_cell.append(result)
+        return e
 
-    def render_parts_table_steps_rows(self, **kwargs):
-        part_cells = []
-        i = 1
-        for p in self.parts:
-            if i < len(self.parts):
-                part_cells.append("<tr style=\"border-bottom:1px solid #848482;padding-bottom:5px\"><td style=\"padding-right:5px;vertical-align:bottom\">%2i. </td>%s</tr>"
-                                        % (i, self.to_str(p, style=kwargs)))
-            else:
-                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px;vertical-align:bottom\">%2i. </td>%s</tr>"
-                                        % (i, self.to_str(p, style=kwargs)))
-            i += 1
-        s = "<table style=\"padding-bottom:5px\">"
-        s += "".join(part_cells)
-        s += "</table>"
-        return s
-    
-    def render_parts(self, **kwargs):
-        """Renders the child nodes.  Styles ('parts_style'):
-        'compose': horizontally chained with a mathjax open circle.
-        'steps': each child in a numbered row.  This will react to the main style.
-        """
-        style = self.get_style(kwargs, "parts_style", "default")
-        main_style = self.get_style(kwargs, "style", "default")
-        if style == "default" or style == "compose":
-            return self.render_parts_table_compose(**kwargs)
-        elif style == "steps":
-            if main_style == "rows":
-                return self.render_parts_table_steps_rows(**kwargs)
-            else:
-                return self.render_parts_table_steps(**kwargs)
-        elif style == "eq":
-            return self.render_parts_eq_seq(**kwargs)
+    def render(self, content, explanation, parts, parent_table=None, **kwargs):
+        align = self.get_style(kwargs, "align", "left")
+        if parent_table:
+            e = parent_table
         else:
-            log_warning("Unknown style '%s'" % style)
-            return self.render_parts_table_steps(**kwargs)
-        
-    def terminal_render(self, **kwargs):
-        return self.render_content(**kwargs)
-         
-    def nonterminal_render_proof(self, **kwargs):
-        expl_loc = self.get_style(kwargs, "expl_loc", "above")
-        above = expl_loc == "above"
-        s = "<table><tr><td style=\"vertical-align:bottom;padding:0px 10px\" align=\"center\">"
-        s += self.render_parts(**kwargs)
-        s += "</td>"
-        expl = self.render_expl(**kwargs)
-        if above and len(expl) > 0:
-            s += "<td style=\"border:1px solid #848482;vertical-align:center;padding:10px\">"
-            s += expl
-            s += "</td></tr>"
-        else:
-            s += "<td></td></tr>"
-        s += ("<tr style=\"border-top: 1px solid #848482\"><td align=\"center\">%s</td>"
-                                            % self.render_content(**kwargs))
-        if (not above) and len(expl) > 0:
-            s += "<td style=\"vertical-align:bottom;padding-bottom:5px;padding-left:10px\">"
-            s += expl
-            s += "</td></tr></table>\n"
-        else:
-            s += "<td></td></tr></table>\n"
-        return s
-    
-    def nonterminal_render_td_boxes(self, **kwargs):
-        expl_loc = self.get_style(kwargs, "expl_loc", "above")
-        above = expl_loc == "above"
-        s = "<table><tr style=\"border:1px solid #848482\"><td style=\"vertical-align:bottom;padding:0px 10px\" align=\"center\">"
-        s += self.render_parts(**kwargs)
-        s += "</td>"
-        expl = self.render_expl(**kwargs)
-        if above and len(expl) > 0:
-            s += "<td style=\"border-left:1px solid #848482;vertical-align:center;padding:10px\">"
-            s += expl
-            s += "</td></tr>"
-        else:
-            s += "<td></td></tr>"
-        s += ("<tr style=\"border-style:solid;border-color:#848482;border-width:0px 1px 1px 1px\"><td style=\"padding:5px\" align=\"center\">%s</td>"
-                                            % self.render_content(**kwargs))
-        if ((not above) and len(expl) > 0):
-            s += "<td style=\"border-top:1px solid #848482;vertical-align:center;padding:5px\">"
-            s += expl
-            s += "</td></tr></table>\n"
-        else:
-            s += "<td></td></tr></table>"
-        return s
-        
-    def nonterminal_render_lr_boxes(self, **kwargs):
-        expl = self.render_expl(**kwargs)
-        s = "<table>"
-        if len(expl) > 0 and len(self.parts) > 0:
-            s += ("<tr style=\"border:0px\"><td></td><td style=\"border-left:1px solid #848482\">%s</td></tr>"
-                                                                        % expl)
-        s += ("<tr style=\"border:0px\"><td style=\"vertical-align:bottom;padding-right:10px\">%s</td>"
-                                            % self.render_content(**kwargs))
-        if len(self.parts) > 0:
-            s += "<td style=\"border: 1px solid #848482;vertical-align:bottom;padding:0px 10px\">"
-            s += self.render_parts(**kwargs)
-            s += "</td></tr>"
-        else: # align explanation and content if there are no subparts
-            s += ("<td style=\"border-left:1px solid #848482\">%s</td></tr>"
-                                                                        % expl)
-        s += "</table>"
-        return s
+            e = Element("div", align=align,
+                style=("display:table;" + self.border_style(**kwargs)))
+        if content is not None:
+            content_cell = SubElement(e, "div",
+                style="display:table-cell;vertical-align:bottom;border-right:1px solid #848482;padding-right:5px;")
+            content_cell.append(self.render_content(content, **kwargs))
+        if explanation is not None or len(parts):
+            expl_cell = SubElement(e, "div",
+                style="display:table-cell;vertical-align:bottom;padding-left:5px;padding-right:5px;padding-top:0.5em")
+            sub_table = SubElement(expl_cell, "div", style="display:table;")
+            if explanation is not None:
+                expl_row = SubElement(sub_table, "div",
+                    style="display:table-row;")
+                expl_row.append(self.render_explanation(explanation, **kwargs))
+            if len(parts):
+                parts_row = SubElement(sub_table, "div",
+                    style="display:table-row;vertical-align:bottom;")
+                parts_row.append(self.render_parts(parts, **kwargs))
+        return e
 
-    def nonterminal_render_lr_boxes_rows(self, **kwargs):
-        expl = self.render_expl(**kwargs)
-        s = self.render_content(**kwargs)
-        s += "<td style=\"border-left:1px solid #848482\">"
-        if len(self.parts) > 0:
-            if len(expl) > 0:
-                s += "<div>%s</div>" % expl
-            s += "<div>%s</div>" % self.render_parts(**kwargs)
-        else: # align explanation and content if there are no subparts
-            s += expl
-        s += "</td>"        
-        return s
-    
-    def nonterminal_render(self, **kwargs):
-        """
-        Renders a non-terminal (or actually, a terminal under certain
-        conditions).  This is the main function.  
-        
-        Responds to 'style' and 'direction'.  Direction is either 'lr' or 'td'.
-        'proof': proof-tree style, 'td' direction only.
-        'boxes': recursive boxes for each subtree.  In the 'td' direction this
-                 looks similar to a proof-tree, in the 'lr' direction it is a
-                 non-vertically-aligned version of 'rows'.
-        'rows': each child in a numbered row; each row is _not_ self-contained
-                but rather a sequence of '<td>'s.  Has the appearance of
-                recursive tables.  Careful modifying this one, it's easy to get
-                the html wrong which can produce unpredictable results. 'lr'
-                only, may not work with all other styles.
-        
-        To use 'rows' you should just use 'lr_table_style'.  Unfortunately it
-        looks nice, despite the annoying internal complexity.
-        Note hack in `_repr_latex_` for this style.
-        """
-        style = self.get_style(kwargs, "style", "default")
-        direction = self.get_style(kwargs, "direction", "td")
-        if direction == "td" or direction == "default":
-            if style == "boxes" or style == "default":
-                return self.nonterminal_render_td_boxes(**kwargs)
-            elif style == "proof":
-                return self.nonterminal_render_proof(**kwargs)
-            else:
-                log_warning("Unknown td style '%s'" % style)
-                return self.nonterminal_render_td_boxes(**kwargs)
-        elif direction == "lr":
-            if style == "boxes":
-                return self.nonterminal_render_lr_boxes(**kwargs)
-            elif style == "rows":
-                return self.nonterminal_render_lr_boxes_rows(**kwargs)
-            else:
-                log_warning("Unknown lr style '%s'" % style)
-                return self.nonterminal_render_lr_boxes(**kwargs)
-        else:
-            log_warning("Unknown direction '%s'" % direction)
-            return self.nonterminal_render_td_boxes(**kwargs)
-        
-    def html_render(self, **kwargs):
-        """Render the structure given some style specified by kwargs."""
-        if len(self.parts) > 0 or self.explanation:
-            return self.nonterminal_render(**kwargs)
-        else:
-            return self.terminal_render(**kwargs)
-    
-    def restyle(self, **kwargs):
-        """Uses `kwargs` to override the stored style.  This displays the
-        result; it does not actually modify `self`."""
-        if self.get_style(kwargs, "style", "default") == "rows":
-            out = table_reset + ("<table><tr>%s</tr></table>"
-                                        % self.html_render(**kwargs))
-        else:
-            out = table_reset + self.html_render(**kwargs)
-        return utils.MiniLatex(out)
-    
-    def _repr_html_(self):
-        if self.get_style(None, "style", "default") == "rows":
-            return table_reset + ("<table><tr>%s</tr></table>"
-                                                % self.html_render())
-        else:
-            return table_reset + self.html_render()
-        
-class RecursiveDerivationLeaf(Styled):
-    """Class for leaf nodes.  Note that RecursiveDerivationDisplay can handle
-    leaf nodes as well; this class is mainly intended for using a very
-    different style."""
-    def __init__(self, *parts, style=None):
-        self.parts = parts
-        super().__init__(style)
-        
-    def html_render(self, **kwargs):
-        style = self.get_style(kwargs, "leaf_style", "div")
-        if style == "div" or style == "default":
-            return self.div_render(**kwargs)
-        elif style == "table":
-            return self.table_rows_render(**kwargs)
-        elif style == "alert":
-            return self.alert_render(**kwargs)
-        elif style == "eq":
-            return self.render_eq_seq(**kwargs)
-        else:
-            log_warning("Unknown style '%s'" % style)
-            return self.div_render(**kwargs)
-    
-    def div_render(self, **kwargs):
-        align = self.get_style(kwargs, "leaf_align", "center")
-        border = self.get_style(kwargs, "leaf_border", "0px")
-        if len(self.parts) == 0:
-            return ""
-        elif len(self.parts) == 1:
-            return ("<div style=\"margin-top:3px;border-width:%s;border-style:solid;border-color:#848482;vertical-align:bottom;text-align:%s\">%s</div>"
-                    % (border, align, self.to_str(self.parts[0], style=kwargs)))
-        else:
-            s = ("<div style=\"margin-top:10px;border-style:solid;border-color:#848482;border-width:%s\">"
-                                                                    % border)
-            for p in self.parts:
-                s += ("<div style=\"vertical-align:bottom;text-align:%s\">%s</div>"
-                                    % (align, self.to_str(p, style=kwargs)))
-            s += "</div>"
-        return s
-
-    def alert_render(self, **kwargs):
-        align = self.get_style(kwargs, "leaf_align", "center")
-        color = self.get_style(kwargs, "leaf_alert_color", "red")
-        border = self.get_style(kwargs, "leaf_border", "0px")
-        if len(self.parts) == 0:
-            return ""
-        elif len(self.parts) == 1:
-            return ("<div style=\"margin-top:3px;vertical-align:bottom;border-style:solid;border-color:#848482;border-width:%s;text-align:%s\"><span style=\"color:%s\">%s</span></div>"
-                % (border, align, color,
-                    self.to_str(self.parts[0], style=kwargs)))
-        else:
-            s = ("<div style=\"margin-top:10px;border-style:solid;border-color:#848482;border-width:%s\">"
-                                                                    % border)
-            for i in range(len(self.parts)):
-                if i == 0:
-                    s += ("<div style=\"margin-top:5px;vertical-align:bottom;text-align:%s\"><span style=\"color:%s\">%s</span></div>"
-                            % (align, color,
-                                self.to_str(self.parts[i], style=kwargs)))
-                else:
-                    s += ("<div style=\"margin-top:5px;vertical-align:bottom;text-align:%s\">%s</div>"
-                            % (align, self.to_str(self.parts[i], style=kwargs)))
-            s += "</div>"
-        return s
-
-
-    def render_eq_seq(self, **kwargs):
-        align = self.get_style(kwargs, "leaf_align", "center")
-        if len(self.parts) == 0:
-            return ""
-        part_cells = []
-        i = 1
-        for p in self.parts:
-            if i == 1:
-                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px\"></td><td style=\"text-align:%s\">%s</td></tr>"
-                                    % (align, self.to_str(p, style=kwargs)))
-            else:
-                part_cells.append("<tr style=\"padding-bottom:5px\"><td style=\"padding-right:5px\"> $=$ </td><td style=\"text-align:%s\">%s</td></tr>"
-                                    % (align, self.to_str(p, style=kwargs)))
-            i += 1
-        s = "<table style=\"padding-bottom:5px\">"
-        s += "".join(part_cells)
-        s += "</table>"
-        return s
-        
-    def table_rows_render(self, **kwargs):
-        align = self.get_style(kwargs, "leaf_align", "center")
-        if len(self.parts) == 0:
-            return ""
-        elif len(self.parts) == 1:
-            return ("<table style=\"margin-top:10px\"><tr><td style=\"vertical-align:bottom; text-align:%s; \">%s</td></tr></table>"
-                            % (align,self.to_str(self.parts[0], style=kwargs)))
-        else:
-            s = "<table style=\"margin-top:10px\">"
-            for p in self.parts:
-                s += ("<tr><td style=\"vertical-align:bottom; text-align:%s;\" >%s</td></tr>"
-                            % (align,self.to_str(p, style=kwargs)))
-            s += "</table>"
-        return s
-
-    def _repr_html_(self):
-        return self.html_render()
-
+class EqualityDisplay(HTMLNodeDisplay):
+    def render(self, content, explanation, parts, parent_table=None, **kwargs):
+        lines = list()
+        if content is not None:
+            lines.append(to_html(content))
+        lines.extend([to_html(p) for p in parts])
+        e = equality_table(lines)
+        return e

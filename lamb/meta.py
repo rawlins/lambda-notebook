@@ -4076,36 +4076,17 @@ class Derivation(object):
                                    self.steps[i].subexpression))
         return l
 
-    def latex_steps_str(self, recurse=False):
-        l = self.steps_sequence(latex=True)
-        s = "<table>"
-        i = 1
-        bare_tr = "<tr>"
-        uline_tr = "<tr style=\"border-bottom:1px solid #848482\">"
-        for (expr, reason, subexpression) in l:
-            if reason is None:
-                reason_str = ""
-            else:
-                reason_str = "<span style=\"color:blue\">%s</span>" % reason
-
-            if recurse and subexpression and subexpression.derivation:
-                s += ("%s<td style=\"padding-right:5px;vertical-align:bottom\"></td><td style=\"padding-right:5px;vertical-align:bottom\"></td><td style=\"padding-left:10px;border-left:1px solid #848482\">%s</td></tr>"
-                        % (bare_tr, reason_str))
-                s += ("%s<td style=\"padding-right:5px;vertical-align:bottom\">%2i. </td><td style=\"padding-right:5px;vertical-align:bottom\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482;padding-bottom:3px\">%s</td></tr>"
-                    % (uline_tr, i, expr,
-                        subexpression.derivation.latex_steps_str(recurse=True)))
-
-            else:
-                s += ("%s<td style=\"padding-right:5px;vertical-align:bottom\">%2i. </td><td style=\"padding-right:5px;vertical-align:bottom\">%s</td><td style=\"padding-left:10px;border-left:1px solid #848482\">%s</td></tr>"
-                    % (uline_tr, i, expr, reason_str))
-            i += 1
-        s += "</table>"
-        return s
+    def equality_display(self, content, style=None):
+        l = self.steps_sequence(latex=True, ignore_trivial=True)
+        n = display.DisplayNode(content=content, parts=[step[0] for step in l],
+                                style = display.EqualityDisplay())
+        return n
 
     def build_display_tree(self, recurse=False, parent=None, reason=None,
                                                                 style=None):
-        defaultstyle = display.lr_table_style
+        defaultstyle = dict()
         style = display.Styled.merge_styles(style, defaultstyle)
+        node_style = display.LRDerivationDisplay(**style)
         l = self.steps_sequence(latex=True)
         parts = list()
         for (expr, subreason, subexpression) in l:
@@ -4118,12 +4099,12 @@ class Derivation(object):
                         reason=subreason,
                         style=style))
             else:
-                parts.append(display.RecursiveDerivationDisplay(expr,
-                            explanation=subreason, parts=None, style=style))
+                parts.append(display.DisplayNode(content=expr,
+                        explanation=subreason, parts=None, style=node_style))
         if len(parts) == 0:
             parts = None
-        return display.RecursiveDerivationDisplay(parent, explanation=reason,
-                                                    parts=parts, style=style)
+        return display.DisplayNode(content=parent, explanation=reason,
+                                                parts=parts, style=node_style)
 
     def trace(self, recurse=True, style=None):
         return self.build_display_tree(recurse=recurse, style=style)

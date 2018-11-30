@@ -958,23 +958,33 @@ class Tree(list):
     def build_display_tree(self, derivations=False, recurse=True, style=None):
         import lamb
         from lamb import display
-        defaultstyle = display.td_proof_style
+        defaultstyle = {"style": "proof", "border": False}
         style = display.Styled.merge_styles(style, defaultstyle)
+        leaf_style = display.HTMLNodeDisplay(**style)
+        if style.get("style", "boxes") == "proof":
+            node_style = display.TDProofDisplay(**style)
+        else: # "boxes"
+            node_style = display.TDBoxDisplay(**style)
+
         parts = list()
         for i in range(len(self)):
             try:
-                part_i = self[i].build_display_tree(recurse=recurse, derivations=derivations, style=style)
+                part_i = self[i].build_display_tree(recurse=recurse,
+                                        derivations=derivations, style=style)
             except AttributeError:
                 try:
-                    part_i = display.RecursiveDerivationLeaf(self[i]._repr_html_(), style=style)
+                    part_i = display.DisplayNode(content=self[i]._repr_html_(),
+                                                            style=leaf_style)
                 except AttributeError:
-                    part_i = display.RecursiveDerivationLeaf(str(self[i]), style=style)
+                    part_i = display.DisplayNode(str(self[i]),
+                                                            style=leaf_style)
             parts.append(part_i)
         try:
             nodetext = self.label()._repr_html_()
         except:
             nodetext = str(self.label())
-        return display.RecursiveDerivationDisplay(nodetext, explanation=None, parts=parts, style=style)
+        return display.DisplayNode(content=nodetext, explanation=None,
+                                                parts=parts, style=node_style)
 
     def _repr_html_(self):
         return self.build_display_tree()._repr_html_()
