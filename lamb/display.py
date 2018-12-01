@@ -33,9 +33,18 @@ def elem_join(parent, j, l):
     parent.append(l[-1])
     return parent
 
+def html_text_wrap(t):
+    """The idea is that this is a safe wrapper for putting a string into an
+    html output somewhere. It's a bit convoluted, because of attempting to
+    work around various things that produce bad line breaking in mathjax
+    rendering."""
+    e = Element("div", style="display:inline-block;")
+    subelement_with_text(e, "span", text=t)
+    return e
+
 def to_html(x, style=None):
     if isinstance(x, str):
-        return element_with_text("span", text=x)
+        return html_text_wrap(x)
     elif isinstance(x, Element):
         return x
     if style is None:
@@ -47,9 +56,9 @@ def to_html(x, style=None):
             return ElementTree.fromstring(x._repr_html_())
         except:
             try:
-                return element_with_text("span", x._repr_latex_())
+                return html_text_wrap(x._repr_latex_())
             except:
-                return element_with_text("span", repr(x))
+                return html_text_wrap(repr(x))
 
 def equality_table(lines):
     e = Element("table")
