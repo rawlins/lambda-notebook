@@ -959,7 +959,7 @@ class Tree(list):
         import lamb
         from lamb import display
         defaultstyle = {"style": "proof", "border": False}
-        style = display.Styled.merge_styles(style, defaultstyle)
+        style = display.merge_styles(style, defaultstyle)
         leaf_style = display.HTMLNodeDisplay(**style)
         if style.get("style", "boxes") == "proof":
             node_style = display.TDProofDisplay(**style)

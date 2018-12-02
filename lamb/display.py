@@ -13,6 +13,38 @@ class Direction(enum.Enum):
     TD = 0
     LR = 1
 
+class DerivStyle(enum.Enum):
+    BOXES = "boxes"
+    PROOF = "proof"
+
+def default(**kwargs):
+    global default_default
+    default_default = dict(default_default, **kwargs)
+
+def reset_default():
+    global default_default
+    default_default = dict(style=DerivStyle.BOXES)
+
+reset_default()
+
+def merge_dicts(target, defaults):
+    """Merge default styles from `defaults` into `target`.
+    
+    returns the merged dict.  (Leaves `target` untouched.)"""
+    if target is None:
+        target = dict()
+    else:
+        target = dict(target)
+    if defaults is None:
+        defaults = dict()
+    for x in defaults:
+        target.setdefault(x, defaults[x])
+    return target
+
+def merge_styles(target, defaults):
+    global default_default
+    return merge_dicts(target, merge_dicts(defaults, default_default))
+
 def element_with_text(name, text="", **kwargs):
     e = Element(name, **kwargs)
     e.text = text
@@ -103,10 +135,10 @@ class DisplayNode(object):
 
 class Styled(object):
     def __init__(self, style=None):
+        global default_default
         if style is None:
-            self.style = dict()
-        else:
-            self.style = dict(style)
+            style = dict()
+        self.style = dict(default_default, **style)
     
     def get_style(self, kwargs, key, default):
         """Get the style named by `key`, if any; returns default if it can't be
@@ -122,21 +154,6 @@ class Styled(object):
             return self.style.get(key)
         else:
             return default   
-
-    @classmethod
-    def merge_styles(cls, target, defaults):
-        """Merge default styles from `defaults` into `target`.
-        
-        returns the merged dict.  (Leaves `target` untouched.)"""
-        if not target:
-            target = dict()
-        else:
-            target = dict(target)
-        if not defaults:
-            defaults = dict()
-        for x in defaults:
-            target.setdefault(x, defaults[x])
-        return target
 
     def __repr__(self):
         # this is to avoid a unique object identifier showing up in
@@ -427,3 +444,10 @@ class EqualityDisplay(HTMLNodeDisplay):
         lines.extend([to_html(p) for p in parts])
         e = equality_table(lines)
         return e
+
+def deriv_style(style):
+    deriv_style = style.get("style", DerivStyle.BOXES)
+    if (deriv_style == DerivStyle.PROOF):
+        return TDProofDisplay(**style)
+    else: # BOXES
+        return TDBoxDisplay(**style)

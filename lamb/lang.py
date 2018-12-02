@@ -662,7 +662,7 @@ class CompositionTree(Tree, Composable):
 
     def build_display_tree(self, derivations=False, recurse=True, style=None):
         defaultstyle = {"border": False}
-        style = display.Styled.merge_styles(style, defaultstyle)
+        style = display.merge_styles(style, defaultstyle)
         parts = list()
         for i in range(len(self)):
             try:
@@ -686,10 +686,8 @@ class CompositionTree(Tree, Composable):
                 node = self.label()._repr_html_()
             except:
                 node = str(self.label())
-        if style.get("style", "boxes") == "proof":
-            node_style = display.TDProofDisplay(**style)
-        else: # "boxes"
-            node_style = display.TDBoxDisplay(**style)
+
+        node_style = display.deriv_style(style)
         return display.DisplayNode(content=node, parts=parts, style=node_style)
 
     def __mul__(self, other):
@@ -893,13 +891,10 @@ class TreeComposite(Composite, Tree):
         defaults = {"direction": display.Direction.TD,
                     "border": False,
                     "expl_style": "bracket"}
-        style = display.Styled.merge_styles(style, defaults)
+        style = display.merge_styles(style, defaults)
 
         leaf_style = display.HTMLNodeDisplay(**style)
-        if style.get("style", "boxes") == "proof":
-            node_style = display.TDProofDisplay(**style)
-        else: # "boxes"
-            node_style = display.TDBoxDisplay(**style)
+        node_style = display.deriv_style(style)
 
         parts = list()
         for i in range(len(self)):
@@ -1091,7 +1086,7 @@ class CompositionResult(Composable):
 
     def build_summary_for_tree(self, style=None):
         defaultstyle = {"align": "left"}
-        style = display.Styled.merge_styles(style, defaultstyle)
+        style = display.merge_styles(style, defaultstyle)
         leaf_style = display.HTMLNodeDisplay(**style)
         if len(self.results) == 0:
             # TODO: reimplement alert style
@@ -1400,7 +1395,7 @@ class Item(TreeComposite):
 
     def build_display_tree(self, derivations=False, recurse=None, style=None):
         defaultstyle = {}
-        style = display.Styled.merge_styles(style, defaultstyle)
+        style = display.merge_styles(style, defaultstyle)
         leaf_style = display.HTMLNodeDisplay(**style)
         if not self.content:
             return display.DisplayNode(parts=[self.short_str_latex(),
