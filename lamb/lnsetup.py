@@ -129,7 +129,7 @@ def install_kernelspec(lib_dir, kernel_dir=None, user=True):
         # windows paths this may fail horribly on unix paths with backslashes,
         # but I don't have a better workaround for now
         lib_dir = lib_dir.replace("\\", "\\\\\\\\")
-        injection_path_opt = ("--IPKernelApp.exec_lines=[\"import sys\",\"sys.path.append(\\\"%s\\\")\", \"import lamb.lnsetup\", \"lamb.lnsetup.ipython_setup()\"]"
+        injection_path_opt = ("--IPKernelApp.exec_lines=[\"import sys\",\"sys.path.insert(1,\\\"%s\\\")\", \"import lamb.lnsetup\", \"lamb.lnsetup.ipython_setup()\"]"
                                 % lib_dir)
     else:
         injection_path_opt = "--IPKernelApp.exec_lines=[\"import lamb.lnsetup\", \"lamb.lnsetup.ipython_setup()\"]"
@@ -152,7 +152,7 @@ def launch_lambda_console(args, lib_dir=None, kernel_dir=None):
     # no idea why this doesn't work, but it doesn't...
     #c.IPythonConsoleApp.kernel_name="lambda-notebook"
     c.InteractiveShellApp.exec_lines = [
-            "import sys; sys.path.append(r\"%s\"); import lamb.lnsetup; lamb.lnsetup.ipython_setup()"
+            "import sys; sys.path.insert(1,r\"%s\"); import lamb.lnsetup; lamb.lnsetup.ipython_setup()"
             % lib_dir]
 
     app = TerminalIPythonApp.instance(config=c)
