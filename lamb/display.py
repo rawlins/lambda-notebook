@@ -102,7 +102,7 @@ def to_html(x, style=None):
                 return html_text_wrap(repr(x))
 
 def equality_table(lines):
-    e = Element("table")
+    e = Element("table", style="margin:0px;")
     i = 0
     for l in lines:
         row = SubElement(e, "tr")
@@ -417,8 +417,10 @@ class TreeNodeDisplay(HTMLNodeDisplay):
         kwargs["lr-padding"] = "0.5em"
         kwargs["padding"] = None
         expl_div = SubElement(e, "div",
-            style="align-self:center;justify-self:right;")
-        expl_div.append(self.render_explanation(explanation, **kwargs))
+            style="align-self:end;justify-self:right;")
+        expl_e = self.render_explanation(explanation, **kwargs)
+        expl_e.set("style", expl_e.get("style", "") + "padding-right:4px;")
+        expl_div.append(expl_e)
         content_div = SubElement(e, "div",
             style="justify-self:left;")
         content_div.append(self.render_content(content, **kwargs))
@@ -514,21 +516,29 @@ def deriv_style(style):
     if (deriv_style == DerivStyle.PROOF):
         return TDProofDisplay(**style)
     elif deriv_style == DerivStyle.TREE:
-        style["lr-padding"] = None
-        style["padding"] = None
-        return TreeNodeDisplay(**style)
+        defs = {
+            "lr-padding": None,
+            "padding": None
+        }
+        return TreeNodeDisplay(**merge_styles(style, defs))
     else: # BOXES
         return TDBoxDisplay(**style)
 
 def leaf_style(style):
     deriv_style = style.get("style", DerivStyle.BOXES)
     if deriv_style == DerivStyle.TREE:
-        style["definiendum"] = True
-        style["lr-padding"] = "1em"
+        defs = {
+            "definiendum": True,
+            "lr-padding": "1em"
+        }
+        style = merge_styles(style, defs)
     return HTMLNodeDisplay(**style)
 
 def internal_style(style):
     deriv_style = style.get("style", DerivStyle.BOXES)
     if deriv_style == DerivStyle.TREE:
-        style["definiendum"] = False
+        defs = {
+            "definiendum": False
+        }
+        style = merge_styles(style, defs)
     return HTMLNodeDisplay(**style)
