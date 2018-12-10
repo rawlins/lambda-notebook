@@ -1,4 +1,10 @@
 from lamb import utils
+try:
+    # for now, fail silently if this doesn't work.
+    import svgling
+    import svgling.html
+except:
+    pass
 
 import copy, enum
 from xml.etree import ElementTree
@@ -16,6 +22,7 @@ class Direction(enum.Enum):
 class DerivStyle(enum.Enum):
     BOXES = "boxes"
     PROOF = "proof"
+    TREE = "tree"
 
 def default(**kwargs):
     global default_default
@@ -43,6 +50,8 @@ def merge_dicts(target, defaults):
 
 def merge_styles(target, defaults):
     global default_default
+    if isinstance(target, DerivStyle):
+        target = {"style": target}
     return merge_dicts(target, merge_dicts(defaults, default_default))
 
 def element_with_text(name, text="", **kwargs):
@@ -129,6 +138,11 @@ class DisplayNode(object):
         return self.style.render(self.content, self.explanation, self.parts,
                                                                     **kwargs)
 
+    def build_tree(self, **kwargs):
+        # this may throw an exception if the style doesn't support build_tree
+        return self.style.build_tree(self.content, self.explanation, self.parts,
+                                                                    **kwargs)
+
     def _repr_html_(self):
         return ElementTree.tostring(self.render(), encoding="unicode",
                                                    method="html")
@@ -177,7 +191,20 @@ class HTMLNodeDisplay(Styled):
             return ""
 
     def padding_style(self, **kwargs):
-        return "padding: 5px;"
+        padding = {"padding-left": None,
+                   "padding-right": None,
+                   "padding-top": None,
+                   "padding-bottom": None}
+        lr_padding = self.get_style(kwargs, "lr-padding", "")
+        all_padding = self.get_style(kwargs, "padding", "5px")
+        s = ""
+        if all_padding:
+            padding = {k: all_padding for k in padding}
+        if lr_padding:
+            padding["padding-left"] = lr_padding
+            padding["padding-right"] = lr_padding
+        return "".join([("%s:%s;" % (k, padding[k]))
+                                            for k in padding if padding[k]])
 
     def display_style(self, **kwargs):
         direct = self.get_style(kwargs, "direction", None)
@@ -249,7 +276,7 @@ class HTMLNodeDisplay(Styled):
     def render(self, content, explanation, parts, **kwargs):
         align = self.get_style(kwargs, "align", "center")
         e = Element("div", align=align,
-            style=("display:inline-block;"
+            style=("display:block;"
                    + self.border_style(**kwargs)
                    + self.padding_style(**kwargs)))
         node_parts = list()
@@ -382,6 +409,43 @@ class TDProofDisplay(HTMLNodeDisplay):
 
         return e
 
+class TreeNodeDisplay(HTMLNodeDisplay):
+    def render_node(self, content, explanation, **kwargs):
+        e = Element("div",
+            style="display:grid;grid-template-columns:auto auto;"
+                  + self.padding_style(**kwargs))
+        kwargs["lr-padding"] = "0.5em"
+        kwargs["padding"] = None
+        expl_div = SubElement(e, "div",
+            style="align-self:center;justify-self:right;")
+        expl_div.append(self.render_explanation(explanation, **kwargs))
+        content_div = SubElement(e, "div",
+            style="justify-self:left;")
+        content_div.append(self.render_content(content, **kwargs))
+        return e
+
+    def tree_layout(self, content, explanation, parts, **kwargs):
+        # turn the structure into a tree-structured list, as far as possible:
+        tree = self.build_tree(content, explanation, parts, **kwargs)
+        # build an svgling.html.DivTreeLayout object:
+        # TODO: it would be nice to just be able to use the DivTreeLayout
+        # object overall...
+        return svgling.html.draw_tree(tree,
+                            horiz_spacing=svgling.core.HorizSpacing.TEXT)
+
+    def render(self, content, explanation, parts, **kwargs):
+        return self.tree_layout(content, explanation, parts, **kwargs).render()
+
+    def build_tree(self, content, explanation, parts, **kwargs):
+        tree = [self.render_node(content, explanation, **kwargs)]
+        for p in parts:
+            try:
+                tree.append(p.build_tree(**kwargs))
+            except:
+                tree.append(to_html(p, style=kwargs))
+        return tree
+
+
 class LRDerivationDisplay(HTMLNodeDisplay):
     def __init__(self, **style):
         style["border"] = False
@@ -449,5 +513,22 @@ def deriv_style(style):
     deriv_style = style.get("style", DerivStyle.BOXES)
     if (deriv_style == DerivStyle.PROOF):
         return TDProofDisplay(**style)
+    elif deriv_style == DerivStyle.TREE:
+        style["lr-padding"] = None
+        style["padding"] = None
+        return TreeNodeDisplay(**style)
     else: # BOXES
         return TDBoxDisplay(**style)
+
+def leaf_style(style):
+    deriv_style = style.get("style", DerivStyle.BOXES)
+    if deriv_style == DerivStyle.TREE:
+        style["definiendum"] = True
+        style["lr-padding"] = "1em"
+    return HTMLNodeDisplay(**style)
+
+def internal_style(style):
+    deriv_style = style.get("style", DerivStyle.BOXES)
+    if deriv_style == DerivStyle.TREE:
+        style["definiendum"] = False
+    return HTMLNodeDisplay(**style)

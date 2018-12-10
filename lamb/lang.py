@@ -669,18 +669,20 @@ class CompositionTree(Tree, Composable):
                 part_i = self[i].build_display_tree(recurse=recurse,
                                         derivations=derivations, style=style)
             except AttributeError:
-                leaf_style = display.HTMLNodeDisplay(**style)
+                leaf_style = display.leaf_style(style)
                 part_i = display.DisplayNode(content=self[i],
                                              style=leaf_style)
             parts.append(part_i)
         if self.composed():
             s = self.content.build_summary_for_tree(style=style)
-            leaf_style = display.HTMLNodeDisplay(**dict(style, align="center"))
-            node = display.DisplayNode(parts=[self.short_str(latex=True,
-                                                   children=False,
-                                                   force_brackets=True),
-                                              s],
-                                       style=leaf_style)
+            leaf_style = display.leaf_style(dict(style, align="center"))
+            node_parts = list()
+            if leaf_style.get_style(None, "definiendum", True):
+                node_parts.append(self.short_str(latex=True,
+                                                 children=False,
+                                                 force_brackets=True))
+            node_parts.append(s)
+            node = display.DisplayNode(parts=node_parts, style=leaf_style)
         else:
             try:
                 node = self.label()._repr_html_()
@@ -893,7 +895,8 @@ class TreeComposite(Composite, Tree):
                     "expl_style": "bracket"}
         style = display.merge_styles(style, defaults)
 
-        leaf_style = display.HTMLNodeDisplay(**style)
+        leaf_style = display.leaf_style(style)
+        int_style = display.internal_style(style)
         node_style = display.deriv_style(style)
 
         parts = list()
@@ -913,7 +916,7 @@ class TreeComposite(Composite, Tree):
             content_str = "N/A"
         if self.placeholder():
             node_content = display.DisplayNode(parts=[content_str],
-                                               style=leaf_style)
+                                               style=int_style)
             expl = None
         else:
             if self.mode:
@@ -940,17 +943,25 @@ class TreeComposite(Composite, Tree):
                                                                         None)
                 else:
                     node_content = display.DisplayNode(parts=[content_str],
-                                                       style=leaf_style)
+                                                       style=int_style)
             else:
                 if derivations and self.content.derivation is not None:
                     node_content = self.content.derivation.equality_display(
                                                         self.short_str_latex())
                 else:
                     # this is the normal case
-                    node_content = display.DisplayNode(
-                            parts=[self.short_str_latex(), content_str],
-                            style=leaf_style)
+                    if len(parts) == 0:
+                        cur_style = leaf_style # this is a mess
+                    else:
+                        cur_style = int_style
+                    node_parts = list()
+                    if cur_style.get_style(None, "definiendum", True):
+                        node_parts.append(self.short_str_latex())
+                    node_parts.append(content_str)
+                    node_content = display.DisplayNode(parts=node_parts,
+                                                       style=int_style)
         if expl is None and len(parts) == 0:
+            node_content.style = leaf_style
             return node_content # don't add a superfluous containing div
         if len(parts):
             final_style = node_style
@@ -1087,7 +1098,7 @@ class CompositionResult(Composable):
     def build_summary_for_tree(self, style=None):
         defaultstyle = {"align": "left"}
         style = display.merge_styles(style, defaultstyle)
-        leaf_style = display.HTMLNodeDisplay(**style)
+        leaf_style = display.leaf_style(style)
         if len(self.results) == 0:
             # TODO: reimplement alert style
             return display.DisplayNode(parts=["Composition Failure!"],
@@ -1396,7 +1407,7 @@ class Item(TreeComposite):
     def build_display_tree(self, derivations=False, recurse=None, style=None):
         defaultstyle = {}
         style = display.merge_styles(style, defaultstyle)
-        leaf_style = display.HTMLNodeDisplay(**style)
+        leaf_style = display.leaf_style(style)
         if not self.content:
             return display.DisplayNode(parts=[self.short_str_latex(),
                                               "N/A"],
