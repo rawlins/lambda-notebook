@@ -314,7 +314,8 @@ def latex_output(accum, env):
             # item will automatically print an equality statement
             lines.append(accum[k]._repr_html_())
         else:
-            print("(Unknown) %s \\:=\\: %s" % (k, accum[k]))
+            print("(Unknown class '%s') %s \\:=\\: %s" % (accum[k].__class__,
+                                                          k, accum[k]))
     return MiniLatex("<br />\n".join(lines))
 
 def parse_qtree(s, i=0):

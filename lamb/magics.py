@@ -5,6 +5,7 @@ from lamb.utils import *
 
 from IPython.core.magic import (Magics, magics_class, line_magic,
                                 cell_magic, line_cell_magic)
+import IPython.display
 
 def check_shadowing(words):
     l = list()
@@ -43,6 +44,11 @@ def process_items(fun, *i, env=None):
         return None
     return result
 
+lamb_magics = set()
+def reset_envs():
+    global lamb_magics
+    for m in lamb_magics:
+        m.reset()
 
 @magics_class
 class LambMagics(Magics):
@@ -50,7 +56,8 @@ class LambMagics(Magics):
     specials_post = dict()
     def __init__(self, shell):
         super(LambMagics, self).__init__(shell)
-        self.env = collections.OrderedDict()
+        global lamb_magics
+        lamb_magics.add(self)
         self.silent = False
         self.ambiguity = False
         self.cur_ambiguity = self.ambiguity
@@ -63,15 +70,12 @@ class LambMagics(Magics):
 
     @line_cell_magic
     def lamb(self, line, cell=None):
-        "Magic that works both as %lcmagic and as %%lcmagic"
+        """Magic that works both as %lcmagic and as %%lcmagic"""
         self.cur_ambiguity = self.ambiguity
         if cell is None:
-            #print("Called as line magic")
             (accum, env) = parsing.parse(line, self.env)
             self.env = env
         else:
-            #print("Called as cell magic")
-            #return line, cell
             if len(line) > 0:
                 r = self.control_line(line)
                 if r is not None:
@@ -82,7 +86,7 @@ class LambMagics(Magics):
             self.control_line(line, post=True, accum=accum)
         self.shadow_warnings(accum)
         self.shell.push(accum)
-        return parsing.latex_output(accum, self.env)
+        IPython.display.display(parsing.latex_output(accum, self.env))
     
     def reset(self):
         self.env = dict()
@@ -130,13 +134,13 @@ class LambMagics(Magics):
         self.shell.push(accum)
         return result
 
-
 def setup_magics():
     try:
         ip = get_ipython()
     except: # fail silently if there's no ipython kernel
         return
     ip.register_magics(LambMagics)
+    reset_envs() # for imp.reload calls
     
 setup_magics()
 
