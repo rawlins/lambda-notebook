@@ -115,6 +115,9 @@ def get_system():
 
 set_system(None)
 
+def compose(*args, **kwargs):
+    return get_system().compose(*args, **kwargs)
+
 class Composable(object):
     """Abstract mixin for objects that can be composed using a composition
     system; provides * and **.
@@ -408,6 +411,9 @@ class SingletonComposable(Composable):
         return (ensuremath(self.short_str(latex=True, i=i) + " \\:=\\: ")
                 + self.content.latex_str())
 
+    def show(self):
+        return MiniLatex(self.latex_str())
+
     def compose_str_latex(self):
         return self.latex_str()
 
@@ -460,7 +466,6 @@ class CompositionTree(Tree, Composable):
         return False
 
     def build_placeholder(self, override=True):
-
         """Inserts or replaces the content of this node with a PlaceholderTerm.
         If override is set, this will overwrite whatever might be here,
         unless that content itself is set to have its "constant" variable be
@@ -509,10 +514,12 @@ class CompositionTree(Tree, Composable):
     def content_iter(self):
         return iter(self.denotations)
 
-    def compose(self, override=True, assignment=None):
+    def compose(self, other=None, override=True, assignment=None):
         """Calculate the meaning of this node from the meanings (if available)
         of the parts.  If meanings of the parts are unknown, insert a
         placeholder."""
+        if other is not None:
+            return self.system.compose(self, other, assignment=assignment)
         if override:
             self.old_denotations = self.denotations
             self.denotations = None
@@ -657,8 +664,8 @@ class CompositionTree(Tree, Composable):
         else:
             raise NotImplementedError()
 
-    def paths(self,derivations=False, style=None):
-        return self.show(derivations=derivations, short=False, style=None)
+    def paths(self, derivations=False, style=None):
+        return self.show(derivations=derivations, short=False, style=style)
 
     def build_display_tree(self, derivations=False, recurse=True, style=None):
         defaultstyle = {"border": False}
@@ -693,7 +700,7 @@ class CompositionTree(Tree, Composable):
         return display.DisplayNode(content=node, parts=parts, style=node_style)
 
     def __mul__(self, other):
-        Composable.__mul__(self, other)
+        return Composable.__mul__(self, other)
 
     @classmethod
     def from_tree(cls, t, system=None):
@@ -723,6 +730,14 @@ class CompositionTree(Tree, Composable):
         if isinstance(composable, meta.TypedExpr):
             raise NotImplementedError()
         elif isinstance(composable, Composable):
+            if isinstance(composable, Item):
+                if not system.has_item(composable):
+                    meta.logger.info(
+                        "Adding item to lexicon before composing: "
+                        + repr(composable))
+                    system.add_item(composable)
+                t = Tree(composable.name, children=list())
+                return system.compose(t)
             if isinstance(composable, CompositionTree):
                 return composable
             elif isinstance(composable, TreeComposite):
@@ -998,7 +1013,8 @@ class TreeComposite(Composite, Tree):
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as
         possible."""
-        self.content = self.content.reduce_all().simplify_all()
+        if self.content is not None:
+            self.content = self.content.reduce_all().simplify_all()
         return self
 
     def _repr_latex_(self):
@@ -1224,6 +1240,8 @@ class CompositionResult(Composable):
         rcopy = list(self.results)
         dirty = False
         for r in rcopy:
+            if r.content is None:
+                continue
             old_c = r.content
             new_c = r.content.reduce_all().simplify_all()
             if new_c != old_c:
@@ -1335,6 +1353,13 @@ class Items(CompositionResult):
                 n += 1
         return MiniLatex(s)
 
+    @property
+    def name(self):
+        if len(self.results) == 0:
+            return ""
+        else:
+            return self.results[0].name
+
     def __setitem__(self, i, value):
         self.results[i] = value
 
@@ -1374,6 +1399,14 @@ class Item(TreeComposite):
             else:
                 self.index = 0
 
+    def __eq__(self, other):
+        if isinstance(other, Item):
+            return (self.name == other.name
+                and self.content == other.content
+                and self.index == other.index)
+        else:
+            return super().__eq__(other)
+
     @property
     def constant(self):
         return not self.placeholder()
@@ -1384,7 +1417,8 @@ class Item(TreeComposite):
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as
         possible."""
-        self.content = self.content.reduce_all().simplify_all()
+        if self.content is not None:
+            self.content = self.content.reduce_all().simplify_all()
         return self
 
     def reduce(self):
@@ -1782,7 +1816,9 @@ class LexiconOp(TreeCompositionOp):
 
     def lookup(self, t, assignment=None):
         # TODO: revisit
-        if (isinstance(t, TreeComposite)
+        if isinstance(t, str):
+            name = t
+        elif (isinstance(t, TreeComposite)
                             and t.label() is None and t.source is not None):
             name = t.source.label()
         elif (t.label() is not None
@@ -1790,8 +1826,6 @@ class LexiconOp(TreeCompositionOp):
                             and t.source is not None):
             name = t.source.label()
         else:
-            print(repr(t.label()), t.label().__class__)
-            assert(isinstance(t.label(), str))
             name = t.label()
         den = self.system.lookup_item(name)
         if den is None:
@@ -2079,6 +2113,12 @@ class CompositionSystem(object):
                 r.append(i)
         return r
 
+    def has_item(self, i):
+        if isinstance(i, Item):
+            return self.lookup_item(i.name) == i
+        else:
+            return i in self.lexicon
+
     def lookup_item(self, i):
         """Look up a single lexical item `i`.  Currently, `i` should be a
         string."""
@@ -2148,7 +2188,7 @@ class CompositionSystem(object):
 
     def compose_raw(self, *items, assignment=None, block_typeshift=False):
         """Attempts to compose the provided items.  This is the 'raw' version
-        not intended to be called directly, and  assumes that non-determinism
+        not intended to be called directly, and assumes that non-determinism
         is already taken care of.
 
         Brute force tries every composition rule and order of items.  Note that
@@ -2195,7 +2235,6 @@ class CompositionSystem(object):
                             e = e.e
                         else:
                             raise e
-                    #print(e)
                     if arity == 1:
                         failures.append(Composite(order[0], e, mode=mode))
                     else:
@@ -2239,40 +2278,17 @@ class CompositionSystem(object):
                     return result
         return None
 
-
-    #def compose(self, i1, i2):
-    #    return self.compose_long(i1, i2).result_items()
-
-    def compose_iterables(self, t1, t2=None, assignment=None,
-                                                    block_typeshift=False):
-        """Compose one or two iterables `t1` and `t2` (optional). Don't call
-        directly."""
-        iter1 = t1.content_iter()
-        if t2 is None:
-            iter2 = None
-        else:
-            iter2 = t2.content_iter()
-        r = self.compose_iterators(iter1, iter2, assignment=assignment,
+    def compose_iterables(self, *l, assignment=None, block_typeshift=False):
+        iters = [x.content_iter() for x in l]
+        return self.compose_iterators(*iters, assignment=assignment,
                                             block_typeshift=block_typeshift)
-        return r
 
-    def compose_iterators(self, iter1, iter2=None, assignment=None,
-                                                    block_typeshift=False):
-        """Compose one or two iterators.  Do not call directly."""
+    def compose_iterators(self, *iters, assignment=None, block_typeshift=False):
         r = CompositionResult(None, [],[])
-        if iter2 is None:
-            for i1 in iter1:
-                r.extend(self.compose_raw(i1, assignment=assignment,
-                                            block_typeshift=block_typeshift))
-        else:
-            # this seems like not the best way to do this...but can't use iter2
-            # directly because there's no way to reset it.  I considered
-            # itertools.tee, but the docs suggested that lists are more
-            # efficient for this case.
-            list_i2 = list(iter2)
-            for i1 in iter1:
-                for i2 in list_i2:
-                    r.extend(self.compose_raw(i1, i2, assignment=assignment,
+        # brute force: try every combination in the cartesian product of all
+        # iterators.
+        for seq in itertools.product(*iters):
+            r.extend(self.compose_raw(*seq, assignment=assignment,
                                             block_typeshift=block_typeshift))
         return r
 
@@ -2362,26 +2378,30 @@ class TreeCompositionSystem(CompositionSystem):
                                                     full_path=full_path + (i,))
             yield (tree, parent, path_from_par, full_path)
 
-
     def tree_factory(self, composable):
+        if composable is None:
+            return None
         return CompositionTree.tree_factory(composable, system=self)
 
-    def simple_composite_name(self, n1, n2):
-        return "[%s %s]" % (n1, n2)
+    def simple_composite_name(self, *nodes):
+        return "[" + " ".join(nodes) + "]"
 
-    def binary_tree_factory(self, c1, c2):
-        t1 = self.tree_factory(c1)
-        t2 = self.tree_factory(c2)
-        return CompositionTree(self.simple_composite_name(t1.label(),
-                                                                    t2.label()),
-                                children=[t1, t2], system=self)
+    def nary_tree_factory(self, *composables, unary_extend=False):
+        trees = [self.tree_factory(c) for c in composables]
+        trees = [t for t in trees if t is not None]
+        if len(trees) == 1 and not unary_extend:
+            return trees[0]
+        label = self.simple_composite_name(*[t.label() for t in trees])
+        return CompositionTree(label, children=trees, system=self)
 
-    def compose(self, c1, c2=None, override=False, assignment=None):
-        if c2 is None:
-            tree = self.tree_factory(c1)
-        else:
-            tree = self.binary_tree_factory(c1, c2)
-        return tree.compose(assignment=assignment)
+    def compose(self, *composables, override=True, assignment=None,
+                                                    unary_extend=False):
+        tree = self.nary_tree_factory(*composables, unary_extend=unary_extend)
+        return tree.compose(assignment=assignment, override=override)
+
+    def unary_extend(self, c, override=True, assignment=None):
+        return self.compose(c, override=override, assignment=assignment,
+            unary_extend=True)
 
     def search_for_unexpanded(self, tree, search_gen, expanded_fun, len_fun):
         gen = search_gen(tree, None, None, len_fun)
