@@ -147,6 +147,11 @@ class DisplayNode(object):
         return ElementTree.tostring(self.render(), encoding="unicode",
                                                    method="html")
 
+    def __repr__(self):
+        # this is to avoid a unique object identifier showing up in
+        # notebooks in text/plain output, creating meaningless differences
+        return self.__class__.__name__ + " instance: HTML rendering only"
+
 class Styled(object):
     def __init__(self, style=None):
         global default_default
