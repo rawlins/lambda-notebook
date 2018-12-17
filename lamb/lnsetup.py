@@ -47,6 +47,7 @@ def reload_lamb(use_nltk_tree=None):
     if use_nltk_tree is not None:
         # inherit default from currently running version. TODO: too confusing?
         lamb.utils.use_nltk = use_nltk_tree
+    lamb.magics.reset_envs()
     imp.reload(lamb.types)
     imp.reload(lamb.meta)
     imp.reload(lamb.lang)
