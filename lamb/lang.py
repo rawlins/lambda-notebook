@@ -329,10 +329,49 @@ class VacuousAssignmentController(object):
     def default(self):
         return Assignment()
 
-# TODO: this is not complete
-class Lexicon(object):
+class Lexicon(collections.MutableMapping):
     def __init__(self):
-        self.items = dict()
+        self.items = collections.OrderedDict()
+
+    def __getitem__(self, key):
+        return self.items[key]
+
+    def __setitem__(self, key, value):
+        self.items[key] = value
+
+    def __delitem__(self, key):
+        del self.items[key]
+
+    def __iter__(self):
+        # flatten before providing iterator
+        return iter(self.items)
+
+    def __len__(self):
+        return len(self.items)
+
+    def copy(self):
+        n = Lexicon()
+        for k in self:
+            n[k] = self[k]
+        return n
+
+    def update(self, *args, **kwargs):
+        self.items.update(*args, **kwargs)
+
+    def reset(self):
+        self.items = collections.OrderedDict()
+
+    def _repr_html_(self):
+        if len(self) == 0:
+            return "<i>(Empty lexicon)</i>"
+        lines = list()
+        for k in self:
+            if isinstance(self[k], Composable):
+                lines.append(self[k]._repr_html_())
+            else:
+                print("(Unknown class '%s') %s \\:=\\: %s" % (self[k].__class__,
+                                                          k, self[k]))
+        return "<br />\n".join(lines)
 
 
 class SingletonComposable(Composable):
@@ -1981,7 +2020,7 @@ class CompositionSystem(object):
         else:
             self.assign_controller = a_controller
         self.typecache = set()
-        self.lexicon = dict()
+        self.lexicon = Lexicon()
         self.update_typeshifts()
         self.typeshift_depth = 3
         self.typeshift = False
@@ -1992,7 +2031,7 @@ class CompositionSystem(object):
                                     basictypes=self.basictypes,
                                     name=(self.name + " (copy)"),
                                     a_controller=self.assign_controller)
-        new_sys.lexicon = self.lexicon
+        new_sys.lexicon = self.lexicon.copy()
         return new_sys
 
     def add_rule(self, r):
@@ -2315,7 +2354,7 @@ class TreeCompositionSystem(CompositionSystem):
                                         basictypes=self.basictypes,
                                         name=self.name,
                                         a_controller=self.assign_controller)
-        new_sys.lexicon = self.lexicon
+        new_sys.lexicon = self.lexicon.copy()
         return new_sys
 
     # Notes on how composition expansion should work in tree structures
@@ -2755,15 +2794,6 @@ def setup_type_driven():
     td_system = CompositionSystem(rules=[fa, pm, pa],
                                   basictypes={type_e, type_t},
                                   name="H&K simple")
-    cat = Item("cat", "L x_e: Cat(x)")
-    gray = Item("gray", "L x_e: Gray(x)")
-    john = Item("John", "John_e")
-    julius = Item("Julius", "Julius_e")
-    inP = Item("in", "L x: L y: In(y)(x)")
-    texas = Item("Texas", "Texas_e")
-    pvar = meta.TypedTerm("p", types.type_property)
-    isV = Item("is", meta.LFun(types.type_property, pvar, "p"))
-    td_system.add_items(cat, gray, john, julius, inP, texas, isV)
     set_system(td_system)
     meta.logger.setLevel(oldlevel)
 
@@ -2789,8 +2819,6 @@ def setup_hk_chap3():
     hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn],
                                        basictypes={type_e, type_t},
                                        name="H&K Tree version")
-    hk3_system.add_items(cat, gray, john, julius, inP, texas, isV)
-
 
 setup_hk_chap3()
 
@@ -2805,4 +2833,15 @@ def setup_td_presup():
     td_presup.add_rule(BinaryCompositionOp("PA", presup_pa, allow_none=True))
 
 setup_td_presup()
+
+def test_basic():
+    cat = Item("cat", "L x_e: Cat(x)")
+    gray = Item("gray", "L x_e: Gray(x)")
+    john = Item("John", "John_e")
+    julius = Item("Julius", "Julius_e")
+    inP = Item("in", "L x: L y: In(y)(x)")
+    texas = Item("Texas", "Texas_e")
+    pvar = meta.TypedTerm("p", types.type_property)
+    isV = Item("is", meta.LFun(types.type_property, pvar, "p"))
+    get_system().add_items(cat, gray, john, julius, inP, texas, isV)
 

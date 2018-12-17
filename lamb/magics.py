@@ -84,12 +84,17 @@ class LambMagics(Magics):
                                                 ambiguity=self.cur_ambiguity)
             self.env = env
             self.control_line(line, post=True, accum=accum)
-        self.shadow_warnings(accum)
-        self.shell.push(accum)
+        self.push_accum(accum)
         IPython.display.display(parsing.latex_output(accum, self.env))
     
+    def push_accum(self, accum):
+        self.shadow_warnings(accum)
+        self.shell.push(accum)
+        lang.get_system().lexicon.update(accum)
+
     def reset(self):
         self.env = dict()
+        lang.get_system().lexicon.reset()
 
     def control_line(self, line, post=False, accum=None):
         args = line.split(",")
