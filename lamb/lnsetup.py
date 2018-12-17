@@ -24,8 +24,6 @@ def inject_into_ipython():
         ip.user_ns["types"] = lamb.types
         ip.user_ns["meta"] = lamb.meta
         ip.user_ns["lang"] = lamb.lang
-        ip.user_ns["parsing"] = lamb.parsing
-        ip.user_ns["display"] = lamb.display
         ip.user_ns["combinators"] = lamb.combinators
 
         # inject some convenience functions
