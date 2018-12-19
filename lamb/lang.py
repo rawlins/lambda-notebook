@@ -101,7 +101,14 @@ def mathjax_indent():
     """Indentation suitable for MathJax output."""
     return "&nbsp;&nbsp;&nbsp;&nbsp;"
 
-latex_indent = mathjax_indent
+def indent(latex=False):
+    if latex:
+        return mathjax_indent()
+    else:
+        return "    "
+
+def latex_indent():
+    return indent(latex=True)
 
 def set_system(s):
     """Set the (module-level) current composition system."""
@@ -117,6 +124,62 @@ set_system(None)
 
 def compose(*args, **kwargs):
     return get_system().compose(*args, **kwargs)
+
+class CompositionFailure(Exception):
+    def __init__(self, *items, reason=None):
+        self.reason = reason
+        if isinstance(reason, types.TypeMismatch):
+            self.items = [reason.i1, reason.i2]
+        else:
+            self.items = list()
+        self.items.extend(items)
+
+    def item_str(self, i, latex=False):
+        if latex:
+            try:
+                return i._repr_latex_()
+            except:
+                return repr(i)
+        else:
+            return repr(i)
+
+    def items_str(self, latex=False):
+        return " * ".join(
+            [self.item_str(i, latex=latex) for i in self.items])
+
+    def class_desc(self, latex=False):
+        if latex:
+            return '<span style="color:red">Composition failure</span>'
+        else:
+            return "Composition failure"
+
+    def description(self, latex=False):
+        if isinstance(self.reason, types.TypeMismatch):
+            # TODO: do something with any extra items?
+            return self.reason.description(latex=latex)
+        else:
+            main_str = self.class_desc(latex=latex)
+            return "%s (%s) on: %s" % (main_str, self.reason,
+                self.items_str(latex=latex))
+
+    def latex_str(self):
+        return self.description(latex=True)
+
+    def _repr_html_(self):
+        return self.description(latex=True)
+
+    def __str__(self):
+        return self.description(latex=False)
+
+    def __repr__(self):
+        return str(self)
+
+class PreconditionFailure(CompositionFailure):
+    def class_desc(self, latex=False):
+        if latex:
+            return '<span style="color:red">Composition precondition failure</span>'
+        else:
+            return "Composition precondition failure"
 
 class Composable(object):
     """Abstract mixin for objects that can be composed using a composition
@@ -403,11 +466,8 @@ class SingletonComposable(Composable):
         a = self.assign_controller.default().merge(assignment)
         return self.content.under_assignment(a)
 
-    def composite_name(self, other=None):
-        if other is not None:
-            return "[%s %s]" % (self.name, other.name)
-        else:
-            return "[%s]" % self.name
+    def composite_name(self, *others):
+        return "[" + " ".join([self.name] + [o.name for o in others]) + "]"
 
     def __repr__(self):
         # TODO: make this parse?
@@ -459,6 +519,8 @@ class SingletonComposable(Composable):
     def content_iter(self):
         return iter((self,))
 
+    def failed(self):
+        return isinstance(self.content, Exception)
 
 class CompositionTree(Tree, Composable):
     """A CompositionTree is the most complex container object for denotations.
@@ -500,7 +562,9 @@ class CompositionTree(Tree, Composable):
 
     def placeholder(self):
         """Is the denotation a placeholder for something not yet composed?"""
-        if len(self.denotations) == 1 and self.denotations[0].placeholder():
+        if (self.denotations is not None
+                    and len(self.denotations) == 1
+                    and self.denotations[0].placeholder()):
             return True
         return False
 
@@ -520,7 +584,6 @@ class CompositionTree(Tree, Composable):
                 self.denotations = [placeholder,]
             else:
                 raise NotImplementedError()
-
 
     def build_local_tree(self, override=True):
         """This function ensures that any necessary PlaceholderTerms are
@@ -565,7 +628,9 @@ class CompositionTree(Tree, Composable):
         if self.denotations is None:
             self.build_local_tree(override=False) # do not want to override
                                                   # non-placeholder children
-            self.denotations = self.system.compose_container(self,
+            self.percolate_failures()
+            if not self.failed():
+                self.denotations = self.system.compose_container(self,
                                                         assignment=assignment)
         return self
 
@@ -650,9 +715,7 @@ class CompositionTree(Tree, Composable):
                     c_list.append(str(c.label()))
                 else:
                     c_list.append(str(c))
-        if len(c_list) == 0:
-            n = "[%s]" % n
-        else:
+        if len(c_list) > 0:
             n = "[%s %s]" % (n, " ".join(c_list))
         if force_brackets:
             if latex:
@@ -664,6 +727,10 @@ class CompositionTree(Tree, Composable):
                 return text_inbr(n)
         else:
             return n
+
+    @property
+    def name(self):
+        return self.short_str(children=False)
 
     def latex_str(self):
         if self.content is None:
@@ -682,6 +749,17 @@ class CompositionTree(Tree, Composable):
         else:
             return None
 
+    def failed(self):
+        return (not self.placeholder()
+                and self.content is not None
+                and self.content.failed())
+
+    def percolate_failures(self):
+        child_failures = [c.content for c in self.children if c.failed()]
+        if len(child_failures):
+            self.denotations = CompositionResult(self, list(), child_failures,
+                source=self)
+
     def _repr_html_(self):
         return self.show()._repr_html_()
 
@@ -689,13 +767,13 @@ class CompositionTree(Tree, Composable):
         return self.build_display_tree(derivations=derivations, recurse=recurse,
                                                                     style=style)
 
-    def show(self,derivations=False, short=True, style=None):
+    def show(self,derivations=False, short=True, failures=False, style=None):
         """Show the step-by-step derivation(s) as a proof tree."""
         if self.content is None:
             return self.build_display_tree(derivations=derivations, style=style)
         elif isinstance(self.content, CompositionResult):
             if short:
-                return self.content.show(style=style)
+                return self.content.show(style=style, failures=failures)
             else:
                 return self.content.tree(derivations=derivations, style=style)
         elif len(self.content) == 1:
@@ -1086,7 +1164,7 @@ class CompositionResult(Composable):
                  CompositionStep.  These might themselves be CompositionResults.
         `results`: a list of results from composition.
         `failures`: a list of failed composition paths, usually in the form of
-                    information-rich TypeMismatch objects.
+                    information-rich CompositionFailure objects.
         `source`: some representation of a natural language structure that led
                   to this composition step.
 
@@ -1110,21 +1188,31 @@ class CompositionResult(Composable):
     def __str__(self):
         s = str()
         if (len(self.results) == 0):
-            s += "Composition failed.  Attempts:\n"
+            s += "Composition failed:\n"
             s += self.failures_str()
         else:
             for composite in self.results:
                 s += "    " + composite.compose_str()
         return s
 
+    @property
+    def name(self):
+        try:
+            return self.source.name
+        except:
+            if self.source is None:
+                return "Anonymous CompositionResult"
+            else:
+                return str(self.source)
+
     def show(self, recurse=True, style=None, failures=False):
         s = str()
         if (len(self.results) == 0):
             if self.source is None:
-                s += "Composition failed.  Attempts:<br />\n"
+                s += "Composition failed:<br />\n"
             else:
-                s += ("Composition of %s failed.  Attempts:<br />\n"
-                                        % self.source.short_str(latex=True))
+                s += ("Composition of %s failed:<br />\n"
+                                        % self.name)
             s += self.failures_str_latex()
         else:
             if (len(self.results) == 1):
@@ -1154,9 +1242,17 @@ class CompositionResult(Composable):
         defaultstyle = {"align": "left"}
         style = display.merge_styles(style, defaultstyle)
         leaf_style = display.leaf_style(style)
-        if len(self.results) == 0:
-            # TODO: reimplement alert style
-            return display.DisplayNode(parts=["Composition Failure!"],
+        if self.failed():
+            failed_modes = [f.mode.name for f in self.failures if (
+                            isinstance(f, Composite)
+                            and not isinstance(f.content, PreconditionFailure))]
+            if len(failed_modes):
+                failed_modes = [display.alert_span("failed: " +
+                                                ", ".join(failed_modes))]
+            else:
+                failed_modes = []
+            return display.DisplayNode(
+                parts=["Composition Failure!"] + failed_modes,
                 style=leaf_style)
         else:
             n = 0
@@ -1172,24 +1268,42 @@ class CompositionResult(Composable):
     def failures_str_latex(self):
         return self.failures_str(latex=True)
 
-    def failures_str(self, latex=False):
+    def failures_str(self, latex=False, preconditions=False):
         s = str()
+        failed_precond = list()
         for f in self.failures:
             if isinstance(f, CompositionResult):
-                s += "Inheriting composition failure.  "
+                if f.source is None:
+                    s += "Inheriting composition failure. "
+                else:
+                    s += ("Inheriting composition failure from %s. " %
+                          f.name)
                 if latex:
                     s += f.latex_str()
                 else:
                     s += str(f)
             elif isinstance(f, Composite):
+                if (not preconditions
+                            and isinstance(f.content, PreconditionFailure)):
+                    failed_precond.append(f)
+                    continue
                 if latex:
                     s += latex_indent() + f.content.latex_str() + "<br />\n"
                 else:
                     s += "    " + str(f.content) + "\n"
             else:
-                raise NotImplementedError()
+                raise NotImplementedError(f.__class__)
+        if len(failed_precond):
+            s += (indent(latex=latex)
+                  + ("%d operations failed preconditions: %s."
+                     % (len(failed_precond),
+                        ", ".join([n.mode.name for n in failed_precond]))))
+            if latex:
+                s += "<br />\n"
+            else:
+                s += "\n"
         return s
-       
+
     def failures_trace_latex(self):
         raise NotImplementedError
 
@@ -1313,6 +1427,9 @@ class CompositionResult(Composable):
 
     def __len__(self):
         return len(self.results)
+
+    def failed(self):
+        return len(self.failures) > 0 and self.empty()
 
     def __getitem__(self, i):
         return self.results[i]
@@ -1632,7 +1749,8 @@ class BinaryCompositionOp(CompositionOp):
     def __call__(self, i1, i2, assignment=None):
         # handle None here, rather than in all individual functions.
         if (not self.allow_none) and (i1.content is None or i2.content is None):
-            raise TypeMismatch(i1, i2, self.name)
+            raise CompositionFailure(i1, i2, reason="%s disallows None"
+                                                                % self.name)
         result = self.operation(i1, i2, assignment=assignment)
         result.mode = self
         if self.reduce:
@@ -1682,7 +1800,7 @@ class UnaryCompositionOp(CompositionOp):
     def __call__(self, i1, assignment=None):
         # handle None here, rather than in all individual functions.
         if (not self.allow_none) and (i1.content is None):
-            raise TypeMismatch(i1, None, self.name)
+            raise CompositionFailure(i1, reason="%s disallows None" % self.name)
         result = self.operation(i1, assignment=assignment)
         result.mode = self
         if self.reduce:
@@ -1722,7 +1840,7 @@ class TreeCompositionOp(object):
         `operation`: a function implementing the operation. Must take a tree
                      structure and an optional assignment.
         `preconditions`: a function that checks some preconditions on a tree
-                         structure, returning a binary.  Defaults to checking
+                         structure, returning a boolean.  Defaults to checking
                          binarity.
         `commutative`: should the operation be tried in both orders?  NOTE:
                        currently not used.
@@ -1827,16 +1945,15 @@ class TreeCompositionOp(object):
         return tree
 
     def __call__(self, tree, assignment=None):
-        test = self.preconditions(tree)
-        if not test:
+        if not self.preconditions(tree):
             #return None
-            raise TypeMismatch(tree, None,
-                                mode="Failed preconditions for %s" % self.name)
+            raise PreconditionFailure(tree,
+                            reason="Failed preconditions for %s" % self.name)
         if (not self.allow_none):
             for d in tree:
                 if d.content is None:
-                    raise TypeMismatch(tree, None,
-                                    mode="None not allowed for %s" % self.name) 
+                    raise CompositionFailure(*tree.children,
+                                reason="%s disallows None" % self.name) 
         result = self.operation(tree, assignment=assignment)
         if self.reduce:
             result = result.reduce_all()
@@ -1868,8 +1985,8 @@ class LexiconOp(TreeCompositionOp):
             name = t.label()
         den = self.system.lookup_item(name)
         if den is None:
-            raise TypeMismatch(t, None,
-                                mode="No lexical entry for '%s' found." % name)
+            raise CompositionFailure(t,
+                            reason="No lexical entry for '%s' found." % name)
         return den
 
     def description(self):
@@ -2218,11 +2335,13 @@ class CompositionSystem(object):
                     except TypeMismatch as e:
                         #TODO: record this?
                         continue
+                    except CompositionFailure as e:
+                        continue
             l = new_l
         l = new_l
         if include_base:
             l.append(item)
-        return CompositionResult([item], l, list())
+        return CompositionResult([item], l, list(), source=item)
 
 
     def compose_raw(self, *items, assignment=None, block_typeshift=False):
@@ -2265,7 +2384,9 @@ class CompositionSystem(object):
                     else:
                         result.c_name = mode.composite_name(items[0], items[1])
                     results.append(result)
-                except (TypeMismatch, parsing.ParseError) as e:
+                except (CompositionFailure,
+                        TypeMismatch,
+                        parsing.ParseError) as e:
                     if isinstance(e, parsing.ParseError):
                         if e.e and isinstance(e.e, TypeMismatch):
                             # extract TypeMismatches that lead to ParseErrors
@@ -2288,6 +2409,14 @@ class CompositionSystem(object):
         ret = CompositionResult(items, results, failures)
         return ret
 
+    def composite_name(self, *items):
+        return "[" + " ".join([i.name for i in items]) + "]"
+
+    def source_from_list(self, *items):
+        if len(items) == 0:
+            return None
+        else:
+            return self.composite_name(*items)
 
     def last_resort_shift(self, *items, assignment=None):
         """Do last-resort style typeshifting (up to a constant depth).  That is,
@@ -2318,12 +2447,22 @@ class CompositionSystem(object):
         return None
 
     def compose_iterables(self, *l, assignment=None, block_typeshift=False):
+        failures = list()
+        for i in l:
+            if i.failed():
+                failures.append(i)
+        if len(failures):
+            return CompositionResult(l, list(), failures,
+                                        source=self.source_from_list(*l))
+
         iters = [x.content_iter() for x in l]
-        return self.compose_iterators(*iters, assignment=assignment,
+        result = self.compose_iterators(*iters, assignment=assignment,
                                             block_typeshift=block_typeshift)
+        result.source = self.source_from_list(*l)
+        return result
 
     def compose_iterators(self, *iters, assignment=None, block_typeshift=False):
-        r = CompositionResult(None, [],[])
+        r = CompositionResult(None, [],[]) # does not set source
         # brute force: try every combination in the cartesian product of all
         # iterators.
         for seq in itertools.product(*iters):
@@ -2584,10 +2723,10 @@ def tree_pa_metalanguage_fun(t, assignment=None):
 
     This shifts the assignment for the interpretation of the sister of the
     binder to match up traces with the bound variable. It assumes the binder is
-    the left sister, and will generate a TypeMismatch otherwise."""
+    the left sister, and will generate a CompositionFailure otherwise."""
     binder = t[0]
     if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise types.TypeMismatch(t, None, "Predicate Abstraction")
+        raise CompositionFailure(binder, t[1], reason="PA requires binder")
     index = int(binder.name.strip())
     vname = "var%i" % index
     outer_vname = t[1].content.find_safe_variable()
@@ -2602,10 +2741,10 @@ def tree_pa_sbc_fun(t, assignment=None):
 
     This shifts the assignment for the interpretation of the sister of the
     binder to match up traces with the bound variable. It assumes the binder is
-    the left sister, and will generate a TypeMismatch otherwise."""
+    the left sister, and will generate a CompositionFailure otherwise."""
     binder = t[0]
     if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise types.TypeMismatch(t, None, "Predicate Abstraction")
+        raise CompositionFailure(binder, t[1], reason="PA requires binder")
     index = int(binder.name.strip())
     vname = "var%i" % index
     f = meta.LFun(types.type_e, t[1].content.under_assignment(assignment),
@@ -2692,7 +2831,7 @@ def pa_fun(binder, content, assignment=None):
     name to abstract over, and replace any traces of the appropriate index with
     that variable.  This assumes a meta-language implementation of traces!"""
     if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise TypeMismatch(binder, content, "Predicate Abstraction")
+        raise CompositionFailure(binder, content, reason="PA requires binder")
     index = int(binder.name.strip())
     vname = "var%i" % index
     # there could be more natural ways to do this...should H&K assignment
@@ -2749,7 +2888,7 @@ def presup_pm(p1, p2):
 
 def presup_pa(binder, content, assignment=None):
     if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise TypeMismatch(binder, content, "Predicate Abstraction")
+        raise CompositionFailure(binder, content, reason="PA requires binder")
     index = int(binder.name.strip())
     vname = "var%i" % index
     outer_vname = content.content.find_safe_variable()
@@ -2766,7 +2905,7 @@ def presup_pa(binder, content, assignment=None):
 # PA rule.
 def sbc_pa(binder, content, assignment=None):
     if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise TypeMismatch(binder, content, "Predicate Abstraction")
+        raise CompositionFailure(binder, content, reason="PA requires binder")
     index = int(binder.name.strip())
     vname = "var%i" % index
     bound_var = meta.term(vname, types.type_e)

@@ -83,6 +83,9 @@ def html_text_wrap(t):
     subelement_with_text(e, "span", text=t)
     return e
 
+def alert_span(t):
+    return element_with_text("span", text=t, style="color:red;")
+
 def to_html(x, style=None):
     if isinstance(x, str):
         return html_text_wrap(x)
@@ -226,7 +229,7 @@ class HTMLNodeDisplay(Styled):
                                                                 align=align)
         for l in lines:
             row = SubElement(e, "div", style="display:table-row;",)
-            if isinstance(l, str):
+            if isinstance(l, str) or isinstance(l, Element):
                 l = [l]
             else:
                 try:
