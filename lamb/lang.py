@@ -1457,14 +1457,14 @@ class CompositionResult(Composable):
             pass
 
     def prune(self, i, reason=None):
-        """Remmove result `i` with some specified `reason`.
+        """Remove result `i` with some specified `reason`.
 
         Will move the derivation into the `failures` list."""
-        result = self.results[i]
-        del self.result_hash[result.content]
+        result = Composite(self.results[i],
+            CompositionFailure(self.results[i], reason=reason))
+        del self.result_hash[self.results[i].content]
         del self.results[i]
         self.failures.append(result)
-        #TODO: do something with reason
 
 class CRFilter(object):
     """A filter on CompositionResults that enforces some specified
@@ -1484,6 +1484,7 @@ class CRFilter(object):
         self.name = name
 
     def __call__(self, cresult):
+        #TODO this modifies cresult in place, perhaps should make a copy?
         i = 0
         while i < len(cresult.content):
             passes = self.filter_fun(cresult.content[i].content)
@@ -1524,7 +1525,10 @@ class Items(CompositionResult):
             return self.results[0].name
 
     def __setitem__(self, i, value):
+        if value.content in self.result_hash:
+            return
         self.results[i] = value
+        self.result_hash[value.content] = value
 
     def __getitem__(self, i):
         if isinstance(i, slice):
@@ -1533,11 +1537,13 @@ class Items(CompositionResult):
             return self.results[i]
 
     def __delitem__(self, i):
+        del self.result_hash[self.results[i].content]
         del self.results[i]
 
     def add_result(self, r):
-        # ignores the results hash...
-        self.results.append(r)
+        # disallow adding duplicates (allowed by CompositionResult)
+        if r.content not in self.result_hash:
+            CompositionResult.add_result(self, r)
 
 class Item(TreeComposite):
     """This class represents a lexical item.  It is implemented as a
