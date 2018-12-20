@@ -206,6 +206,9 @@ class Composable(object):
         except:
             return iter((self.content,))
 
+    def content_len(self):
+        return len(list(self.content_iter()))
+
     @property
     def constant(self):
         return False
@@ -847,7 +850,7 @@ class CompositionTree(Tree, Composable):
         if isinstance(composable, meta.TypedExpr):
             raise NotImplementedError()
         elif isinstance(composable, Composable):
-            if isinstance(composable, Item):
+            if isinstance(composable, Item) or isinstance(composable, Items):
                 if not system.has_item(composable):
                     meta.logger.info(
                         "Adding item to lexicon before composing: "
@@ -1442,12 +1445,16 @@ class CompositionResult(Composable):
             self.results.append(r)
 
     def extend(self, other):
-        """Extend this with another CompositionResult."""
-        if not isinstance(other, CompositionResult):
+        """Extend this with another Composable."""
+        if not isinstance(other, Composable):
             raise ValueError
-        for r in other.results:
+        for r in other.content_iter():
             self.add_result(r)
-        self.failures.extend(other.failures)
+        try:
+            # not all Composables implement failures
+            self.failures.extend(other.failures)
+        except AttributeError:
+            pass
 
     def prune(self, i, reason=None):
         """Remmove result `i` with some specified `reason`.
@@ -1970,6 +1977,22 @@ class LexiconOp(TreeCompositionOp):
                                     system=system,
                                     source=None)
 
+    def freshen(self, tree, c):
+        # This accomplishes two things: first, it doesn't include the raw
+        # Item in the tree (since this can lead to `mode` getting set on the
+        # Item in the lexicon), and second, it ensures that `mode` is set
+        # correctly when the lookup is non-deterministic. This latter part
+        # may need to be generalized if other composition ops have baked-in
+        # non-determinism.
+        contents = list(c.content_iter())
+        fresh = [TreeComposite(content=r, source=tree, mode=self)
+                    for r in contents]
+        # len 0 case should be impossible at this point...
+        if len(fresh) == 1:
+            return fresh[0]
+        else:
+            return CompositionResult(tree, fresh, list(), source=tree)
+
     def lookup(self, t, assignment=None):
         # TODO: revisit
         if isinstance(t, str):
@@ -1987,7 +2010,7 @@ class LexiconOp(TreeCompositionOp):
         if den is None:
             raise CompositionFailure(t,
                             reason="No lexical entry for '%s' found." % name)
-        return den
+        return self.freshen(t, den)
 
     def description(self):
         return "Lexicon lookup"
@@ -2270,7 +2293,7 @@ class CompositionSystem(object):
         return r
 
     def has_item(self, i):
-        if isinstance(i, Item):
+        if isinstance(i, Item) or isinstance(i, Items):
             return self.lookup_item(i.name) == i
         else:
             return i in self.lexicon
@@ -2353,9 +2376,8 @@ class CompositionSystem(object):
         currently this not handle arities > 2.
         """
         from lamb import parsing
-        results = list()
-        failures = list()
-        items = self.lookup(*items)
+        #items = self.lookup(*items)
+        ret = CompositionResult(items, list(), list())
         arity = len(items)
         for mode in self.rules:
             if arity != mode.arity:
@@ -2374,7 +2396,6 @@ class CompositionSystem(object):
                 raise NotImplementedError
             for order in orders:
                 try:
-                    #print(order)
                     result = mode(*order, assignment=assignment)
                     if arity == 1:
                         if isinstance(order[0], Tree):
@@ -2383,7 +2404,7 @@ class CompositionSystem(object):
                             result.c_name = order[0].name
                     else:
                         result.c_name = mode.composite_name(items[0], items[1])
-                    results.append(result)
+                    ret.extend(result)
                 except (CompositionFailure,
                         TypeMismatch,
                         parsing.ParseError) as e:
@@ -2396,17 +2417,15 @@ class CompositionSystem(object):
                         else:
                             raise e
                     if arity == 1:
-                        failures.append(Composite(order[0], e, mode=mode))
+                        ret.failures.append(Composite(order[0], e, mode=mode))
                     else:
-                        failures.append(BinaryComposite(order[0], order[1], e,
-                                                                    mode=mode))
-                    continue
+                        ret.failures.append(BinaryComposite(order[0], order[1],
+                                                            e, mode=mode))
         # typeshift as a last resort
-        if len(results) == 0 and self.typeshift and not block_typeshift:
+        if len(ret.results) == 0 and self.typeshift and not block_typeshift:
             shift_result = self.last_resort_shift(*items, assignment=assignment)
-            if shift_result is not None and len(shift_result.results) > 0:
-                return shift_result
-        ret = CompositionResult(items, results, failures)
+            if shift_result is not None:
+                ret.extend(shift_result)
         return ret
 
     def composite_name(self, *items):
