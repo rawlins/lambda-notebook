@@ -1104,8 +1104,6 @@ class TypedExpr(object):
             r.get_type_env(force_recalc=True)
         return r
 
-
-
     def under_type_assignment(self, mapping, reset=False, merge_intersect=True):
         # TODO: For somewhat irritating reasons, this is currently a _lot_
         # slower if reset=True
@@ -3297,7 +3295,8 @@ class ConditionSet(BindingOp):
                                                             type_check=True):
         body = self.ensure_typed_expr(body, assignment=assignment)
         super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body,
-                varname=varname, body_type=types.type_t, assignment=assignment)
+                varname=varname, body_type=types.type_t, assignment=assignment,
+                type_check=type_check)
         self.type = types.SetType(self.vartype)
 
     def structural_singleton(self):
