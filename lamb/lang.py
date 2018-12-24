@@ -1641,6 +1641,9 @@ class CompositionOp(object):
         `system`: the composition system that this is part of.  (Will be
                   set/changed automatically if this operation is added to a
                   system.)
+        `source`: if set, an object (can be a function or a metalanguage object)
+                  that provides some information about how the composition
+                  operation was built. Used for jupyter-style reprs.
         """
         self.operation = operation
         self.__name__ = name
@@ -1723,9 +1726,8 @@ class CompositionOp(object):
 class BinaryCompositionOp(CompositionOp):
     """A composition operation on two Composables."""
     def __init__(self, name, operation, commutative=False,
-                                        composite_name=None,
                                         allow_none=False,
-                                        reduce=False,
+                                        reduce=True,
                                         system=None,
                                         source=None):
         """Build a composition operation given some function.  See also
@@ -1735,17 +1737,17 @@ class BinaryCompositionOp(CompositionOp):
         `operation`: a function implementing the operation.  Must take two
                      Composables and an optional assignment.
         `commutative`: should the operation be tried in both orders?
-        `composite_name`: an optional function to determine the node name from
-                          the operands.
         `allow_none`: can either of the arguments to `operation` have content
                       None?  (See e.g. the PA rule.)
         `reduce`:  should `reduce_all` be called on the result?
         `system`: the composition system that this is part of.  (Will be
                   set/changed automatically if this operation is added to a
                   system.)
+        `source`: if set, an object (can be a function or a metalanguage object)
+                  that provides some information about how the composition
+                  operation was built. Used for jupyter-style reprs.
         """
-        super().__init__(name, operation, composite_name=composite_name,
-                                          allow_none=allow_none,
+        super().__init__(name, operation, allow_none=allow_none,
                                           reduce=reduce,
                                           system=system,
                                           source=source)
@@ -1778,7 +1780,7 @@ class UnaryCompositionOp(CompositionOp):
     def __init__(self, name, operation, typeshift=False,
                                         composite_name=None,
                                         allow_none=False,
-                                        reduce=False,
+                                        reduce=True,
                                         system=None,
                                         source=None):
         """Build a composition operation given some function. See also
@@ -2041,7 +2043,8 @@ def unary_factory(meta_fun, name, typeshift=False, reduce=True):
                                             reduce=reduce,
                                             source=meta_fun)
 
-def binary_factory(meta_fun, name, reduce=True, combinator_source=None):
+def binary_factory_uncurried(meta_fun, name, reduce=True,
+                                                    combinator_source=None):
     """Factory function to construct a binary composition operation given some
     function."""
     def op_fun(arg1, arg2, assignment=None):
@@ -2054,7 +2057,7 @@ def binary_factory(meta_fun, name, reduce=True, combinator_source=None):
         source = combinator_source
     return BinaryCompositionOp(name, op_fun, reduce=reduce, source=source)
 
-def binary_factory_curried(meta_fun, name, reduce=True, commutative=False):
+def binary_factory(meta_fun, name, reduce=True, commutative=False):
     """Factory function to construct a binary composition operation given some
     (curried) function.
 
@@ -2070,8 +2073,6 @@ def binary_factory_curried(meta_fun, name, reduce=True, commutative=False):
                                           reduce=reduce,
                                           source=meta_fun)
     return r
-
-
 
 
 class PlaceholderTerm(meta.TypedTerm):
@@ -2200,14 +2201,14 @@ class CompositionSystem(object):
         return rule
 
     def add_binary_rule(self, combinator, name, reduce=True, commutative=False):
-        rule = binary_factory_curried(combinator, name, reduce=reduce,
+        rule = binary_factory(combinator, name, reduce=reduce,
                                                         commutative=commutative)
         self.add_rule(rule)
         return rule
 
     def add_binary_rule_uncurried(self, fun, name, reduce=True,
                                                         combinator_source=None):
-        rule = binary_factory(fun, name, reduce=reduce,
+        rule = binary_factory_uncurried(fun, name, reduce=reduce,
                                         combinator_source=combinator_source)
         self.add_rule(rule)
         return rule
@@ -2952,8 +2953,8 @@ def setup_type_driven():
     # conjunction...
     oldlevel = meta.logger.level
     meta.logger.setLevel(logging.WARNING)
-    pm = BinaryCompositionOp("PM", pm_fun, commutative=True, reduce=True)
-    fa = BinaryCompositionOp("FA", fa_fun, reduce=True)
+    pm = BinaryCompositionOp("PM", pm_fun, commutative=True)
+    fa = BinaryCompositionOp("FA", fa_fun)
     pa = BinaryCompositionOp("PA", pa_fun, allow_none=True)
     td_system = CompositionSystem(rules=[fa, pm, pa],
                                   basictypes={type_e, type_t},
