@@ -2948,7 +2948,7 @@ def setup_type_driven():
     composition system.
 
     Also exports a few basic lexical entries for testing purposes."""
-    global td_system, cat, gray, john, pm, fa, pa, inP, texas, isV, julius
+    global td_system
     # note that PM is only commutative if the underlying logic has commutative
     # conjunction...
     oldlevel = meta.logger.level
@@ -2973,7 +2973,7 @@ def setup_hk_chap3():
 
     Note that the lexical items defined by `setup_type_driven` can be used here
     too, and are in fact added to the lexicon of this system by default."""
-    global hk3_system, tfa_l, tfa_r, tpm
+    global hk3_system
 
     tfa_l = TreeCompositionOp("FA/left", tree_left_fa_fun)
     tfa_r = TreeCompositionOp("FA/right", tree_right_fa_fun)
