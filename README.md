@@ -1,5 +1,3 @@
-[![Build Status](https://travis-ci.org/rawlins/lambda-notebook.svg?branch=master)](https://travis-ci.org/rawlins/lambda-notebook)
-
 # Lambda Notebook: Formal Semantics with Jupyter and Python
 
 This project is a framework for linguists and especially semanticists developing analyses in compositional semantics.  It aims to provide a means of developing 'digital fragments', following from the method of fragments in Montague grammar.
