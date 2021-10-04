@@ -1637,7 +1637,7 @@ class TypeMismatch(Exception):
             else:
                 return "type %s" % repr(i)
         elif isinstance(i, str):
-            if t is None or t is "?":
+            if t is None or t == "?":
                 return "'" + i + "'"
             else:
                 if latex:
@@ -1645,7 +1645,7 @@ class TypeMismatch(Exception):
                 else:
                     return "'%s'/%s" % (i, repr(t))
         else:
-            if t is None or t is "?":
+            if t is None or t == "?":
                 if latex:
                     return "'" + i.latex_str() + "'"
                 else:
