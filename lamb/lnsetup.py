@@ -103,22 +103,16 @@ def install_notebooks(nb_path, package_nb_path, force=False):
         if errors:
             raise shutil.Error(errors)
 
-kernelspec_str = """{
- "argv": ["python3", "-m", "ipykernel",
-          "-f", "{connection_file}", "%s"],
- "display_name": "Lambda Notebook (Python 3)",
- "language": "python"
-}"""
-
-def kernelspec_template(full_exec_path=True):
-    # TODO: maybe full path should never be used? There's an ugly interaction
-    # with envs here, but using just `python3` does not seem to necessarily
-    # find the python in use in the current env at the point where a kernel
-    # is started. Puzzling...
+def kernelspec_template(name_modifier="", full_exec_path=False):
+    # TODO: I've been occasionally seeing cases where not using the full
+    # path somehow ends up with a completely wrong version of python, very
+    # puzzling
     executable = full_exec_path and sys.executable or "python3"
     kernelspec_json = {
         "argv": [executable, "-m", "ipykernel", "-f", "{connection_file}"],
-        "display_name": "Lambda Notebook (Python 3)",
+        # put the name-modifier earlier in the display name so that it renders
+        # in the jupyter lab launch (which cuts off after 2 words).
+        "display_name": "Lambda Notebook" + name_modifier + " (Python 3)",
         "language": "python"
     }
     return kernelspec_json
@@ -134,22 +128,32 @@ def kernelspec_exec_lines(lib_dir):
                             + exec_lines)
     return exec_lines
 
-def install_kernelspec(lib_dir=None, user=True):
+def install_kernelspec(lib_dir=None, user=False, suffix=""):
+    # by default: install the kernelspec into the sys.prefix-based location
+    # for kernels
     exec_lines = kernelspec_exec_lines(lib_dir)
     injection_argv = ["--IPKernelApp.exec_lines=%s" % x for x in exec_lines]
 
-    k_json = kernelspec_template()
+    kernel_name = "lambda-notebook" + suffix
+
+    k_json = kernelspec_template(name_modifier=suffix)
     k_json["argv"].extend(injection_argv)
 
     with TemporaryDirectory() as td:
-        kernel_dir = os.path.join(td, "lambda-notebook")
+        kernel_dir = os.path.join(td, kernel_name)
         os.mkdir(kernel_dir)
         with open(os.path.join(kernel_dir, 'kernel.json'), 'w') as f:
             json.dump(k_json, f, sort_keys=True, indent=4)
 
-        kernelspec.install_kernel_spec(kernel_dir, user=user, replace=True)
+        prefix = None
+        if not user:
+            prefix = sys.prefix
+        # if you just pass this user=True, it tries to install into a global
+        # system prefix rather than the current env. So we need to explicitly
+        # use the current prefix.
+        kernelspec.install_kernel_spec(kernel_dir, replace=True, user=user, prefix=prefix)
 
-    location = kernelspec.find_kernel_specs()['lambda-notebook']
+    location = kernelspec.find_kernel_specs()[kernel_name]
     return location
 
 def launch_lambda_console(args, lib_dir=None):

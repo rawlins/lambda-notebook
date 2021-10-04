@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 import sys, os, signal
 
-# see branded notebook recipe here: https://gist.github.com/timo/1497850
-# refactored into lamb.setup
+# utility for installing various versions of the lambda notebook kernel in
+# various places, for development purposes. Actual installation code is in
+# lamb.lnsetup.
 
 try:
 	import IPython
@@ -17,7 +18,15 @@ except ImportError:
 if __name__ == "__main__":
 	import lamb.lnsetup
 	lib_dir = None
+	suffix = ""
+	user = False
+	# TODO: actual cli handling
 	if len(sys.argv) > 1 and sys.argv[1] == "--force-path":
 		lib_dir = os.path.abspath(os.path.dirname(__file__))
-	r = lamb.lnsetup.install_kernelspec(lib_dir=lib_dir)
-	print("Lambda notebook kernel installed in '%s' using python executable '%s'" % (r, sys.executable))
+		suffix = "-dev"
+		user = True
+	r = lamb.lnsetup.install_kernelspec(lib_dir=lib_dir, user=user, suffix=suffix)
+	result_msg = "Lambda notebook kernel installed in '%s'" % r
+	if lib_dir:
+		result_msg += ", using lamb module location '%s'" % lib_dir
+	print(result_msg)
