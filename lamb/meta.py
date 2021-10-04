@@ -3225,6 +3225,8 @@ class BindingOp(TypedExpr):
         Returns a subclass of BindingOp.
         """
 
+        if (len(struc) == 0):
+            return None
         if isinstance(struc[0], str) and struc[0] in parsing.brackets:
             potential_header = struc[1]
             bracketed = True
