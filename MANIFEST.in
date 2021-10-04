@@ -1,0 +1,4 @@
+graft notebooks
+prune notebooks/dropbox_notebooks
+global-exclude .ipynb_checkpoints/*
+global-exclude Untitled.ipynb
