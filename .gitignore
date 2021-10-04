@@ -5,6 +5,9 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 local_notebooks/
+dist/
+lambda_notebook.egg-info/
+
 notebooks/local_notebooks/
 build_support/build-python-lib/
 build_support/build_tmp/
@@ -16,6 +19,12 @@ Lambda Notebook.app
 build_support/Lambda Notebook.dmg
 kernel/lambda-notebook/kernel.json
 
+# don't ever want to merge this, probably:
+Untitled.ipynb
+
+# convenience symlinks that I use
+svgling
+notebooks/dropbox_notebooks
+
 # Sphinx documentation
 docs/_build/
-

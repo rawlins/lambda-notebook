@@ -16,6 +16,8 @@ except ImportError:
 
 if __name__ == "__main__":
 	import lamb.lnsetup
-	base_path = os.path.abspath(os.path.dirname(__file__))
-	r = lamb.lnsetup.install_kernelspec(lib_dir=base_path)
-	print("Kernel installed in '%s' using python executable '%s'" % (r, sys.executable))
+	lib_dir = None
+	if len(sys.argv) > 1 and sys.argv[1] == "--force-path":
+		lib_dir = os.path.abspath(os.path.dirname(__file__))
+	r = lamb.lnsetup.install_kernelspec(lib_dir=lib_dir)
+	print("Lambda notebook kernel installed in '%s' using python executable '%s'" % (r, sys.executable))
