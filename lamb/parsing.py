@@ -26,8 +26,12 @@ class ParseError(Exception):
     def __str__(self):
         aux = ""
         if self.e is not None:
-            # right now I think this doesn't recurse
-            aux = " (%s)" % str(self.e)
+            if (isinstance(self.e, SyntaxError)):
+                # SyntaxError's full str representation is not helpful when
+                # generated from an eval, so just show the message
+                aux = " (%s)" % str(self.e.msg)
+            else:
+                aux = " (%s)" % str(self.e)
         if self.s is None:
             return self.msg + aux
         if self.i is None:

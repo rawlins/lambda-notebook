@@ -598,19 +598,25 @@ class TypedExpr(object):
             locals = dict()
         # Replace the alternative spellings of operators with canonical
         # spellings
-        s = s.replace('==>', '>>').replace('<==', '<<')
-        s = s.replace('<=>', '%').replace('=/=', '^').replace('==', '%')
+        to_eval = s.replace('==>', '>>').replace('<==', '<<')
+        to_eval = to_eval.replace('<=>', '%').replace('=/=', '^').replace('==', '%')
         lcopy = locals.copy()
         lcopy.update(cls._parsing_locals)
-        s = TypedExpr.expand_terms(s, assignment=assignment,
+        to_eval = TypedExpr.expand_terms(to_eval, assignment=assignment,
                                                             ignore=lcopy.keys())
         # Now eval the string.  (A security hole; do not use with an adversary.)
         lcopy.update({'assignment': assignment, 'type_e': type_e})
 
         # cannot figure out a better way of doing this short of actually parsing
+        # TODO: reimplement as a real parser, don't rely on `eval`
         global _parser_assignment
         _parser_assignment = assignment # not remotely thread-safe
-        result = eval(s, dict(), lcopy) 
+        try:
+            result = eval(to_eval, dict(), lcopy)
+        except SyntaxError as e:
+            raise parsing.ParseError("Failed to parse expression", s=s, e=e)
+            # other exceptions just get raised directly -- what comes up in
+            # practice?
         _parser_assignment = None
         if isinstance(result, tuple):
             return Tuple(result)
