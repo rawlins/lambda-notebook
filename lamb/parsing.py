@@ -24,17 +24,20 @@ class ParseError(Exception):
         self.met_preconditions = met_preconditions
 
     def __str__(self):
+        aux = ""
         if self.e is not None:
-            return str(self.e)
+            # right now I think this doesn't recurse
+            aux = " (%s)" % str(self.e)
         if self.s is None:
-            return self.msg
+            return self.msg + aux
         if self.i is None:
-            return "%s, in string '%s'" % (self.msg, self.s)
+            return "%s, in string '%s'%s" % (self.msg, self.s, aux)
         elif self.i >= len(self.s):
-            return "%s, at point '%s!here!" % (self.msg, self.s)
+            # TODO: these would be better printed using some multiline approach
+            return "%s, at point '%s!here!'%s" % (self.msg, self.s, aux)
         else:
-            return "%s, at point '%s!here!%s'" % (self.msg, self.s[0:self.i],
-                                                                self.s[self.i:])
+            return "%s, at point '%s!here!%s'%s" % (self.msg, self.s[0:self.i],
+                                                        self.s[self.i:], aux)
 
 
 def consume_char(s, i, match, error=None):
