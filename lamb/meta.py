@@ -335,6 +335,7 @@ def merge_tes(te1, te2, symmetric=True):
     """
     ts = get_type_system()
     principal = ts.unify(te1.type, te2.type)
+    # TODO: these error messages are somewhat cryptic
     if principal is None:
         raise TypeMismatch(te1, te2,
                 "Failed to merge typed expressions (incompatible types)")
@@ -1439,8 +1440,10 @@ class ApplicationExpr(TypedExpr):
         if type_check and not defer:
             tc_result = self.fa_type_inference(fun, arg, assignment)
             if tc_result is None:
-                raise TypeMismatch(fun, arg,
-                    "Function argument combination (unification failed)")
+                if not fun.functional():
+                    raise TypeMismatch(fun, arg, "Function-argument expression: left subexpression is not a function")
+                else:
+                    raise TypeMismatch(fun, arg, "Function-argument expression: mismatched types")
             fun, arg, out_type, history = tc_result
             op = "Apply"
             args = [fun, arg]
@@ -2169,7 +2172,7 @@ class Disjunctive(TypedExpr):
 
     def apply(self, arg):
         if not self.type.functional():
-            raise TypeMismatch(self,arg, "Application to a disjunction")
+            raise TypeMismatch(self,arg, "Application to a non-functional Disjunction")
         applied_disjuncts = list()
         for d in self.args:
             if not d.functional():
@@ -2180,7 +2183,7 @@ class Disjunctive(TypedExpr):
                 continue
         result = self.factory(*applied_disjuncts)
         if result is None:
-            raise TypeMismatch(self,arg, "Application to a disjunction")
+            raise TypeMismatch(self,arg, "Application to a non-functional Disjunction")
         return result
 
 
@@ -2675,13 +2678,13 @@ class TupleIndex(BinaryOpExpr):
         arg1 = self.ensure_typed_expr(arg1)
         if not isinstance(arg1.type, types.TupleType):
             raise types.TypeMismatch(arg1, arg2,
-                                    mode="Tuple indexing (tuple required)")
+                    mode="Tuple indexing expression with a non-tuple")
         arg2 = self.ensure_typed_expr(arg2, types.type_n)
         if isinstance(arg2.op, Number): # TODO better way to determine whether
                                         # arg2 is a constant of type type_n?
             if arg2.op >= len(arg1.type):
                 raise TypeMismatch(arg1, arg2,
-                                    mode="Index out of range for tuple type")
+                    mode="Tuple indexing expression with out-of-range index")
             output_type = arg1.type[arg2.op]
         else:
             output_type = types.VariableType("X") # TODO this is problematic
@@ -3122,8 +3125,9 @@ class BindingOp(TypedExpr):
         elif isinstance(b, ConditionSet) or isinstance(b, LFun):
             return b
         else: # IotaPartial handled in subclass
+            # is this really a type issue?
             raise TypeMismatch(b, None,
-                    "No way of projecting partiality for BindingOp %s"
+                    "No implemented way of projecting partiality for BindingOp %s"
                     % repr(type(b).__name__))
 
     def calculate_partiality(self, vars=None):
@@ -3723,7 +3727,7 @@ def fun_compose(g, f):
     defined above."""
     if (not (g.type.functional() and f.type.functional()
              and g.type.left == f.type.right)):
-        raise types.TypeMismatch(g, f, "Function composition")
+        raise types.TypeMismatch(g, f, "Function composition type constraints not met")
     combinator = geach_combinator(g.type, f.type)
     result = (combinator(g)(f)).reduce_all()
     return result
@@ -3767,7 +3771,7 @@ def variable_replace_strict(expr, m):
     def transform(e):
         result = TypedExpr.factory(m[e.op])
         if result.type != e.type:
-            raise TypeMismatch(e, result, "Variable replace (strict types)")
+            raise TypeMismatch(e, result, "Strict variable replace failed with mismatched types")
         return result
     return variable_transform(expr, m.keys(), transform)
 
@@ -3778,7 +3782,7 @@ def variable_replace_unify(expr, m):
         if result.type != e.type:
             unify = ts.unify(result.type, e.type)
             if unify is None:
-                raise TypeMismatch(e, result, "Variable replace (unify failed)")
+                raise TypeMismatch(e, result, "Variable replace failed with mismatched types")
             if unify == e.type: # unify gives us back e.  Can we return e?
                 if result.term() and result.op == e.op:
                     return e

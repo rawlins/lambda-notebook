@@ -1671,14 +1671,14 @@ class TypeMismatch(Exception):
             tm_str = "Type mismatch"
         if is_1 is None:
             if is_2 is None:
-                return "%s, unknown context (mode: %s)" % (tm_str, self.mode)
+                return "%s, unknown context (%s)" % (tm_str, self.mode)
             else:
-                return "%s on %s (mode: %s)" % (tm_str, is_2, self.mode)
+                return "%s on %s (%s)" % (tm_str, is_2, self.mode)
         else:
             if is_2 is None:
-                return "%s on %s (mode: %s)" % (tm_str, is_1, self.mode)
+                return "%s on %s (%s)" % (tm_str, is_1, self.mode)
             else:
-                return ("%s: %s and %s conflict (mode: %s)"
+                return ("%s: %s and %s conflict (%s)"
                                             % (tm_str, is_1, is_2, self.mode))
 
     def _repr_html_(self):
