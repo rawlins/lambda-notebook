@@ -29,3 +29,7 @@ unittest:
 
 test: unittest testnb
 
+clean:
+	@rm -rf dist/
+	@rm -rf data_kernelspec/
+	@rm -rf build/

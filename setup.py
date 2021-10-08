@@ -17,6 +17,8 @@ if any(a.startswith(('bdist', 'install')) for a in sys.argv):
     dest = os.path.join(here, 'data_kernelspec')
     if os.path.exists(dest):
         shutil.rmtree(dest)
+
+    # TODO: I don't see how this can work on windows, dbl check
     lamb.lnsetup.install_kernelspec(prefix=dest)
 
     # possibly os.path.join should be used here (per setuptools docs?, but this
@@ -32,8 +34,7 @@ if any(a.startswith(('bdist', 'install')) for a in sys.argv):
 
     # seems to choke if the file to install is a pathlike?
     setup_args['data_files'] = [
-    				(p.relative_to('data_kernelspec'), [str(p),]) for p in ks_paths]
-    print(repr(setup_args))
+        (p.relative_to('data_kernelspec').parent, [str(p),]) for p in ks_paths]
 
 if __name__ == '__main__':
     setup(**setup_args)

@@ -1,11 +1,9 @@
 import os, os.path, shutil, json, sys
+from tempfile import TemporaryDirectory
 
 try:
     import IPython
-    from notebook import notebookapp
     from IPython.terminal.ipapp import TerminalIPythonApp
-    from IPython.utils.tempdir import TemporaryDirectory
-    from jupyter_client import kernelspec
     from traitlets.config import Config
 
 except:
@@ -13,8 +11,12 @@ except:
 
 import lamb
 # note: can't import this from any other module.
-from lamb import utils, types, meta, lang, tree_mini, parsing, magics
-from lamb import combinators
+from lamb import utils, types, meta, lang, tree_mini, parsing, combinators
+try:
+    # this will fail if IPython is not fully installed
+    from lamb import magics
+except:
+    pass
 
 KERNEL_NAME = "lambda-notebook"
 
@@ -131,6 +133,7 @@ def kernelspec_exec_lines(lib_dir):
     return exec_lines
 
 def install_kernelspec(lib_dir=None, user=False, suffix="", prefix=None):
+    from jupyter_client import kernelspec
     # by default: install the kernelspec into the sys.prefix-based location
     # for kernels
     exec_lines = kernelspec_exec_lines(lib_dir)
@@ -154,8 +157,11 @@ def install_kernelspec(lib_dir=None, user=False, suffix="", prefix=None):
         # use the current prefix.
         kernelspec.install_kernel_spec(kernel_dir, replace=True, user=user, prefix=prefix)
 
-    location = kernelspec.find_kernel_specs()[kernel_name]
-    return location
+    try:
+        return kernelspec.find_kernel_specs()[kernel_name]
+    except:
+        # will fail if prefix specifies something not in jupyter's search path
+        return None
 
 def launch_lambda_console(args, lib_dir=None):
     install_kernelspec(lib_dir)
@@ -205,6 +211,7 @@ def launch_lambda_notebook(args, lab=False, nb_path=None, lib_dir=None,
             print("Failed to start jupyterlab, falling back on notebook.")
             app = None
     if app is None:
+        from notebook import notebookapp
         app = notebookapp.NotebookApp(config=c)
 
     app.initialize(args[1:])
