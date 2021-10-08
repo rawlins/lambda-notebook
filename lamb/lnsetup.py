@@ -16,6 +16,8 @@ import lamb
 from lamb import utils, types, meta, lang, tree_mini, parsing, magics
 from lamb import combinators
 
+KERNEL_NAME = "lambda-notebook"
+
 def inject_into_ipython():
     try:
         ip = get_ipython()
@@ -128,13 +130,13 @@ def kernelspec_exec_lines(lib_dir):
                             + exec_lines)
     return exec_lines
 
-def install_kernelspec(lib_dir=None, user=False, suffix=""):
+def install_kernelspec(lib_dir=None, user=False, suffix="", prefix=None):
     # by default: install the kernelspec into the sys.prefix-based location
     # for kernels
     exec_lines = kernelspec_exec_lines(lib_dir)
     injection_argv = ["--IPKernelApp.exec_lines=%s" % x for x in exec_lines]
 
-    kernel_name = "lambda-notebook" + suffix
+    kernel_name = KERNEL_NAME + suffix
 
     k_json = kernelspec_template(name_modifier=suffix)
     k_json["argv"].extend(injection_argv)
@@ -145,8 +147,7 @@ def install_kernelspec(lib_dir=None, user=False, suffix=""):
         with open(os.path.join(kernel_dir, 'kernel.json'), 'w') as f:
             json.dump(k_json, f, sort_keys=True, indent=4)
 
-        prefix = None
-        if not user:
+        if not user and not prefix:
             prefix = sys.prefix
         # if you just pass this user=True, it tries to install into a global
         # system prefix rather than the current env. So we need to explicitly
@@ -161,7 +162,7 @@ def launch_lambda_console(args, lib_dir=None):
 
     c = Config()
     # sadly, this app doesn't seem to use a kernel. Perhaps some day...
-    #c.TerminalIPythonApp.kernel_name="lambda-notebook"
+    #c.TerminalIPythonApp.kernel_name=KERNEL_NAME
     c.InteractiveShellApp.exec_lines = kernelspec_exec_lines(lib_dir)
 
     app = TerminalIPythonApp.instance(config=c)
