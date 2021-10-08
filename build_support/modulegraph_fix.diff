@@ -1,8 +1,0 @@
-1120a1121,1123
->     def load_module(self, fqname, fp, pathname, info):
->         return self._load_module(fqname, fp, pathname, info)
-> 
-1247a1251,1253
->     def scan_code(self, co, m):
->         self._scan_code(co, m)
-> 
