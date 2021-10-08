@@ -4,15 +4,33 @@ from setuptools import setup
 pjoin = os.path.join
 here = os.path.abspath(os.path.dirname(__file__))
 
-# everything but the kernelspec construction is in setup.cfg
+# everything but the package data kernelspec construction is in setup.cfg
 setup_args = dict()
+
+# Apparently we need both package_data and MANIFEST.in for both sdist and bdist
+# to work. There's like a million incoherent se answers about this, and this
+# is the best I got out of them.
+
+# I cannot for the life of me figure out a sensible way of getting this included
+# in a bdist without just literally embedding the directory under the package.
+# thus, a symlink. Kind of ugly.
+if not os.path.exists('lamb/notebooks/'):
+    os.symlink(os.path.join(here, 'notebooks/'),
+               os.path.join(here, 'lamb/notebooks'), target_is_directory=True)
+
+setup_args['package_data'] = {'lamb': [
+    'notebooks/*.ipynb',
+    'notebooks/documentation/*.ipynb',
+    'notebooks/tutorials/*.ipynb',
+    'notebooks/fragments/*.ipynb',
+    'notebooks/misc/*.ipynb']}
+# TODO: can't get excluding Untitled.ipynb to work
 
 # construct a kernelspect to install and include it in data_files.
 # based on how `ipykernel` does this
 if any(a.startswith(('bdist', 'install')) for a in sys.argv):
     sys.path.insert(0, here)
     import lamb.lnsetup
-    # from ipykernel.kernelspec import write_kernel_spec, make_ipkernel_cmd, KERNEL_NAME
 
     dest = os.path.join(here, 'data_kernelspec')
     if os.path.exists(dest):

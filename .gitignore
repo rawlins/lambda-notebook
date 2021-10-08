@@ -20,9 +20,10 @@ build_support/Lambda Notebook.app
 Lambda Notebook.app
 build_support/Lambda Notebook.dmg
 kernel/lambda-notebook/kernel.json
+lamb/notebooks
 
 # don't ever want to merge this, probably:
-Untitled.ipynb
+#Untitled.ipynb
 
 # convenience symlinks that I use
 svgling

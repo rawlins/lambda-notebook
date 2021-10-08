@@ -69,43 +69,61 @@ def ipython_setup():
     lamb.reload_all = reload_lamb
     inject_into_ipython()
 
-def install_notebooks(nb_path, package_nb_path, force=False):
-    copy_nbs = False
+def install_notebooks(target_path):
+    here = os.path.abspath(os.path.dirname(__file__))
+    paths = [os.path.join(here, "notebooks"), # installed package
+             os.path.join(here, "..", "notebooks")] # in the repo, hacky
+    paths = [p for p in paths if os.path.exists(p)]
+    if not any(paths):
+        print("Unable to find the lambda notebook documentation to install!",
+                file=sys.stderr)
+        return None
+
+    source_path = paths[0]
     #TODO: this is kind of hacky
-    if nb_path[0] == "~":
-        nb_path = os.path.expanduser(nb_path)
-    if not os.path.exists(nb_path):
-        os.makedirs(nb_path)
-        copy_nbs = True
-    if copy_nbs and not os.path.exists(package_nb_path):
-        print("Path not found for notebooks to install: '%s'" % package_nb_path,
-                    flush=True)
-        copy_nbs = False
-    if package_nb_path and (copy_nbs or force):
-        errors = []
-        print("Attempting to copy installation notebooks from '%s' to '%s'"
-                % (package_nb_path, nb_path), flush=True)
-        names = os.listdir(package_nb_path)
-        for name in names:
-            srcname = os.path.join(package_nb_path, name)
-            destname = os.path.join(nb_path, name)
-            if os.path.exists(destname):
-                pass # never overwrite anything
-            try:
-                if os.path.islink(srcname):
-                    pass # ignore symlinks
-                elif os.path.isdir(srcname):
-                    shutil.copytree(srcname, destname)
-                else:
-                    shutil.copy2(srcname, destname)
-            except OSError as why:
-                errors.append((srcname, destname, str(why)))
-            # catch the Error from the recursive copytree so that we can
-            # continue with other files
-            except shutil.Error as err:
-                errors.extend(err.args[0])
-        if errors:
-            raise shutil.Error(errors)
+    if target_path[0] == "~":
+        target_path = os.path.expanduser(target_path)
+
+    if not os.path.exists(target_path):
+        print("Can't install lambda notebook documentation: %s' does not exist!" % target_path,
+                file=sys.stderr)
+        return None
+
+    target_path = os.path.join(target_path, "lambda-notebook")
+
+    if os.path.exists(target_path):
+        print("'%s' already exists! This install method cannot overwrite it." % target_path,
+                file=sys.stderr)
+        return None
+
+    os.makedirs(target_path)
+
+    errors = []
+    print("Installing lambda notebook documentation from '%s' to '%s'"
+            % (source_path, target_path), flush=True)
+    # maybe use os.walk?
+    names = os.listdir(source_path)
+    for name in names:
+        srcname = os.path.join(source_path, name)
+        destname = os.path.join(target_path, name)
+        if os.path.exists(destname):
+            pass # should be preempted by directory check above. TODO: allow this?
+        try:
+            if os.path.islink(srcname):
+                pass # ignore symlinks
+            elif os.path.isdir(srcname):
+                shutil.copytree(srcname, destname)
+            else:
+                shutil.copy2(srcname, destname)
+        except OSError as why:
+            errors.append((srcname, destname, str(why)))
+        # catch the Error from the recursive copytree so that we can
+        # continue with other files
+        except shutil.Error as err:
+            errors.extend(err.args[0])
+    if errors:
+        raise shutil.Error(errors)
+    return target_path
 
 def kernelspec_template(name_modifier="", full_exec_path=False):
     # TODO: I've been occasionally seeing cases where not using the full
