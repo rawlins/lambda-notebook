@@ -18,8 +18,8 @@ While this repository comes with many demo and documentation notebooks, they are
 See [https://github.com/rawlins/lambda-notebook/wiki/Installation](https://github.com/rawlins/lambda-notebook/wiki/Installation)
 
 Basically,
-* current release: install from PyPI.
-* current development version: download the repository and ensure you have Jupyter installed (probably via anaconda). Run `install_lambda_kernel.py`.
+* current release: install from PyPI. (`pip install lambda-notebook`.)
+* current development version: download the repository and ensure you have Jupyter installed (probably via anaconda). Run `./install_lambda_kernel.py`.
 
 ## Getting started
 
