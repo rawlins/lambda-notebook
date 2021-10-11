@@ -31,4 +31,4 @@ test: unittest testnb
 
 clean:
 	rm -rf dist/ data_kernelspec/ build/ lambda_notebook.egg-info/
-	rm lamb/notebooks
+	rm -f lamb/notebooks
