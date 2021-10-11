@@ -17,7 +17,9 @@ While this repository comes with many demo and documentation notebooks, they are
 
 See [https://github.com/rawlins/lambda-notebook/wiki/Installation](https://github.com/rawlins/lambda-notebook/wiki/Installation)
 
-Basically, download the repository and ensure you have Jupyter installed (probably via anaconda).
+Basically,
+* current release: install from PyPI.
+* current development version: download the repository and ensure you have Jupyter installed (probably via anaconda). Run `install_lambda_kernel.py`.
 
 ## Getting started
 
@@ -40,8 +42,8 @@ In most instances, you can upgrade by simply downloading a new repository versio
 
 ### A note on the lambda notebook UI
 
-  * Lambda notebook is running within the Jupyter notebook, and inherits much of the AI.
-  * As of IPython 2.0, the Jupyter UI is now modal; this can take some getting used to if you aren't familiar with modal editors such as VI.  Basically, you are either in edit mode (for editing cells) or command mode (for running cells).  Use Enter/esc (or mouse click inside/outside of an edit area) to switch between those.  There will be a little pen marker in the upper right corner if you are in edit mode, and the selected cell border will be green.  If something isn't doing what you expect, check if you are in the correct mode.
+  * Lambda notebook is running within the Jupyter notebook framework, and inherits much of the AI. It works in either classic notebook mode or in jupyter lab.
+  * Jupyter UI is modal; this can take some getting used to if you aren't familiar with modal editors such as `vi`.  Basically, you are either in edit mode (for editing cells) or command mode (for running cells).  Use Enter/esc (or mouse click inside/outside of an edit area) to switch between those.  There will be a little pen marker in the upper right corner if you are in edit mode, and the selected cell border will be green.  If something isn't doing what you expect, check if you are in the correct mode.
   * Try running through the UI tour (from the help menu of any notebook) to get a sense of the Jupyter UI.
 
 ## Code overview
