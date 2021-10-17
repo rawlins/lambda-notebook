@@ -299,6 +299,8 @@ class Assignment(collections.MutableMapping):
         is a term, the value in `assignment` (at the principal type) will
         override the value in self."""
 
+        if assignment is None:
+            assignment = Assignment()
         new_a = Assignment(self)
         for k in assignment:
             if k in new_a:
@@ -517,7 +519,8 @@ class SingletonComposable(Composable):
 
     def latex_str(self, i=None):
         if self.content is None:
-            return ensuremath(self.short_str_latex())
+            # separate rendering for vacuous indexed elements?
+            return ensuremath(self.short_str_latex() + "\\text{ [vacuous]}")
         elif isinstance(self.content, PlaceholderTerm):
             return self.content.latex_str()
         return (ensuremath(self.short_str(latex=True, i=i) + " \\:=\\: ")
@@ -2754,17 +2757,42 @@ def tree_nn_fun(t, assignment=None):
     return UnaryComposite(t[0],
                 content=t[0].content.under_assignment(assignment), source=t)
 
+def tree_binder_check(t):
+    return t.content is None and t.get_index() is not None
+
 def tree_index_carrier(t):
-    return len(t) == 1 and t[0].content is None and t[0].get_index() is not None
+    return len(t) == 1 and tree_binder_check(t[0])
 
 # TODO: some more robust feature system? This shouldn't really be a semantic
 # operation.
 def tree_percolate_index(t, assignment=None):
     if not tree_index_carrier(t): # also set as precondition
-        raise TypeMismatch(t, "Cannot percolate an index")
+        raise TypeMismatch(t, "Cannot percolate an index") # abuse of TypeMismatch
     r = UnaryComposite(t[0], content=None, source=t)
     r.inherit_index = t[0].get_index()
     return r
+
+# TODO: refactor so that a TreeCompositionOp is defined here
+def binary_trivial(t):
+    return (len(t) == 2
+        and (t[0].content is None or t[1].content is None)
+        and not tree_binder_check(t[0])
+        and not tree_binder_check(t[1]))
+
+def tree_binary_vacuous(t, assignment=None):
+    """Handle 'vacuous' children with content None. If both are vacuous, the
+    parent content is still None. If exactly one is vacuous, the parent content
+    is the other's content. Ignores order."""
+    if not binary_trivial(t): # also precondition
+        raise TypeMismatch(t, "Need at least one vacuous element") # abuse of TypeMismatch
+    if t[0].content is None and t[1].content is None:
+        return BinaryComposite(t[0], t[1], content=None, source=t)
+    elif t[0].content is None:
+        return BinaryComposite(t[0], t[1],
+                            content=t[1].under_assignment(assignment), source=t)
+    else: #if t[1].content is None:
+        return BinaryComposite(t[0], t[1],
+                            content=t[0].under_assignment(assignment), source=t)
 
 # combinator for predicate modification
 pm_op = te("L f_<e,t> : L g_<e,t> : L x_e : f(x) & g(x)")
@@ -2794,11 +2822,10 @@ def tree_pa_metalanguage_fun(t, assignment=None):
     This shifts the assignment for the interpretation of the sister of the
     binder to match up traces with the bound variable. It assumes the binder is
     the left sister, and will generate a CompositionFailure otherwise."""
-    binder = t[0]
-    index = binder.get_index()
-    if binder.content is not None or index is None:
-        raise CompositionFailure(binder, t[1], reason="PA requires a valid binder")
-    vname = "var%i" % index
+
+    if not tree_binder_check(t[0]):
+        raise CompositionFailure(t[0], t[1], reason="PA requires a valid binder")
+    vname = "var%i" % t[0].get_index()
     outer_vname = t[1].content.find_safe_variable()
     new_a = Assignment(assignment)
     new_a.update({vname: te("%s_e" % outer_vname)})
@@ -2812,11 +2839,9 @@ def tree_pa_sbc_fun(t, assignment=None):
     This shifts the assignment for the interpretation of the sister of the
     binder to match up traces with the bound variable. It assumes the binder is
     the left sister, and will generate a CompositionFailure otherwise."""
-    binder = t[0]
-    index = binder.get_index()
-    if binder.content is not None or index is None:
-        raise CompositionFailure(binder, t[1], reason="PA requires a valid binder")
-    vname = "var%i" % index
+    if not tree_binder_check(t[0]):
+        raise CompositionFailure(t[0], t[1], reason="PA requires a valid binder")
+    vname = "var%i" % t[0].get_index()
     f = meta.LFun(types.type_e, t[1].content.under_assignment(assignment),
                                                                 varname=vname)
     return BinaryComposite(t[0], t[1], f, source=t)
@@ -2905,10 +2930,10 @@ def pa_fun(binder, content, assignment=None):
     This is a direct implementation.  Will find a (completely) unused variable
     name to abstract over, and replace any traces of the appropriate index with
     that variable.  This assumes a meta-language implementation of traces!"""
-    index = binder.get_index()
-    if binder.content is not None or index is None:
+    if not tree_binder_check(binder):
         raise CompositionFailure(binder, content, reason="PA requires a valid binder")
-    vname = "var%i" % index
+
+    vname = "var%i" % binder.get_index()
     # there could be more natural ways to do this...should H&K assignment
     # functions be implemented directly?
     outer_vname = "x"
@@ -2962,10 +2987,9 @@ def presup_pm(p1, p2):
     return pm_op(p1)(p2).reduce_all().calculate_partiality()
 
 def presup_pa(binder, content, assignment=None):
-    index = binder.get_index()
-    if binder.content is not None or index is None:
+    if not tree_binder_check(binder):
         raise CompositionFailure(binder, content, reason="PA requires a valid binder")
-    vname = "var%i" % index
+    vname = "var%i" % binder.get_index()
     outer_vname = content.content.find_safe_variable()
     new_a = Assignment(assignment)
     bound_var = meta.term(vname, types.type_e)
@@ -2979,10 +3003,9 @@ def presup_pa(binder, content, assignment=None):
 # this is a presuppositional PA based on Liz Coppock's Semantics Boot Camp
 # PA rule.
 def sbc_pa(binder, content, assignment=None):
-    index = binder.get_index()
-    if binder.content is not None or index is None:
+    if not tree_binder_check(binder):
         raise CompositionFailure(binder, content, reason="PA requires a valid binder")
-    vname = "var%i" % index
+    vname = "var%i" % binder.get_index()
     bound_var = meta.term(vname, types.type_e)
     f = meta.LFun(types.type_e,
                     content.content.calculate_partiality({bound_var}), vname)
@@ -3033,8 +3056,10 @@ def setup_hk_chap3():
     nn = TreeCompositionOp("NN", tree_nn_fun, preconditions=tree_unary)
     idx = TreeCompositionOp("IDX", tree_percolate_index,
         preconditions=tree_index_carrier, allow_none=True)
+    vac = TreeCompositionOp("VAC", tree_binary_vacuous,
+        preconditions=binary_trivial, allow_none=True)
 
-    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn, idx],
+    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn, idx, vac],
                                        basictypes={type_e, type_t},
                                        name="H&K Tree version")
 
