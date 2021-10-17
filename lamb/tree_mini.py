@@ -954,42 +954,14 @@ class Tree(list):
             return '%s%s%s %s%s' % (parens[0], unicode_repr(self._label), nodesep,
                                     " ".join(childstrs), parens[1])
 
-    # KGR added
-    def build_display_tree(self, derivations=False, recurse=True, style=None):
-        import lamb
-        from lamb import display
-        defaultstyle = {"style": "proof", "border": False}
-        style = display.merge_styles(style, defaultstyle)
-        leaf_style = display.HTMLNodeDisplay(**style)
-        if style.get("style", "boxes") == "proof":
-            node_style = display.TDProofDisplay(**style)
-        else: # "boxes"
-            node_style = display.TDBoxDisplay(**style)
-
-        parts = list()
-        for i in range(len(self)):
-            try:
-                part_i = self[i].build_display_tree(recurse=recurse,
-                                        derivations=derivations, style=style)
-            except AttributeError:
-                try:
-                    part_i = display.DisplayNode(content=self[i]._repr_html_(),
-                                                            style=leaf_style)
-                except AttributeError:
-                    part_i = display.DisplayNode(str(self[i]),
-                                                            style=leaf_style)
-            parts.append(part_i)
+    def _repr_svg_(self):
         try:
-            nodetext = self.label()._repr_html_()
+            # TODO: remove this try...except... block
+            import svgling.core
+            from svgling.core import TreeLayout, nltk_tree_options
+            return TreeLayout(self, options=nltk_tree_options)._repr_svg_()
         except:
-            nodetext = str(self.label())
-        return display.DisplayNode(content=nodetext, explanation=None,
-                                                parts=parts, style=node_style)
-
-    def _repr_html_(self):
-        return self.build_display_tree()._repr_html_()
-
-
+            return None
 
 class ImmutableTree(Tree):
     def __init__(self, node, children=None):
