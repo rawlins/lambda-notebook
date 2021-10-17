@@ -203,6 +203,13 @@ class Composable(object):
     def get_index(self):
         return None
 
+    def get_index_str(self):
+        # generalize to other features?
+        if self.get_index() is None:
+            return ""
+        else:
+            return "[idx: %d]" % self.get_index()
+
     def content_iter(self):
         try:
             return iter(self.content)
@@ -537,7 +544,8 @@ class CompositionTree(Tree, Composable):
     def __init__(self, node, children=None, denotation=None, system=None):
         if children is None:
             children = list()
-        Tree.__init__(self, node, children=children)
+        tree_label = node is not None and node or ""
+        Tree.__init__(self, tree_label, children=children)
         self.children = self # hack, but _why_ did they have to inherit directly
                              # from list??
         if system is None:
@@ -933,10 +941,12 @@ class TreeComposite(Composite, Tree):
             content = content.content
 
         Composite.__init__(self, children, content, mode=mode, source=source)
-        Tree.__init__(self, content, children)
+        tree_label = content is not None and content or ""
+        Tree.__init__(self, tree_label, children)
         self.children = self # hack
         self.collapsed_paths = list()
         self.collapsed_count = 1
+        self.inherit_index = None
         for c in children:
             if isinstance(c, TreeComposite):
                 self.collapsed_count *= c.collapsed_count
@@ -950,7 +960,7 @@ class TreeComposite(Composite, Tree):
         return self[1]
 
     def get_index(self):
-        return None
+        return self.inherit_index
 
     def extend_collapsed_paths(self, tc):
         self.collapsed_paths.append(tc)
@@ -1054,6 +1064,8 @@ class TreeComposite(Composite, Tree):
             parts.append(part_i)
         if self.content is not None:
             content_str = utils.ensuremath(self.content.latex_str())
+        elif self.get_index() is not None:
+            content_str = self.get_index_str()
         else:
             content_str = "N/A"
         if self.placeholder():
@@ -1629,8 +1641,9 @@ class Item(TreeComposite):
         style = display.merge_styles(style, defaultstyle)
         leaf_style = display.leaf_style(style)
         if not self.content:
+            desc = self.get_index() is None and "N/A" or self.get_index_str()
             return display.DisplayNode(parts=[self.short_str_latex(),
-                                              "N/A"],
+                                              desc],
                                               style=leaf_style)
         else:
             return super().build_display_tree(derivations=derivations,
@@ -2741,6 +2754,17 @@ def tree_nn_fun(t, assignment=None):
     return UnaryComposite(t[0],
                 content=t[0].content.under_assignment(assignment), source=t)
 
+def tree_index_carrier(t):
+    return len(t) == 1 and t[0].content is None and t[0].get_index() is not None
+
+# TODO: some more robust feature system? This shouldn't really be a semantic
+# operation.
+def tree_percolate_index(t, assignment=None):
+    if not tree_index_carrier(t): # also set as precondition
+        raise TypeMismatch(t, "Cannot percolate an index")
+    r = UnaryComposite(t[0], content=None, source=t)
+    r.inherit_index = t[0].get_index()
+    return r
 
 # combinator for predicate modification
 pm_op = te("L f_<e,t> : L g_<e,t> : L x_e : f(x) & g(x)")
@@ -2883,7 +2907,7 @@ def pa_fun(binder, content, assignment=None):
     that variable.  This assumes a meta-language implementation of traces!"""
     index = binder.get_index()
     if binder.content is not None or index is None:
-        raise CompositionFailure(binder, t[1], reason="PA requires a valid binder")
+        raise CompositionFailure(binder, content, reason="PA requires a valid binder")
     vname = "var%i" % index
     # there could be more natural ways to do this...should H&K assignment
     # functions be implemented directly?
@@ -3000,13 +3024,17 @@ def setup_hk_chap3():
     too, and are in fact added to the lexicon of this system by default."""
     global hk3_system
 
+    # TODO: this should at this point be split off into hk7 or something, the
+    # docstring is a lie
     tfa_l = TreeCompositionOp("FA/left", tree_left_fa_fun)
     tfa_r = TreeCompositionOp("FA/right", tree_right_fa_fun)
     tpm = TreeCompositionOp("PM", tree_pm_fun)
     tpa = TreeCompositionOp("PA", tree_pa_sbc_fun, allow_none=True)
     nn = TreeCompositionOp("NN", tree_nn_fun, preconditions=tree_unary)
+    idx = TreeCompositionOp("IDX", tree_percolate_index,
+        preconditions=tree_index_carrier, allow_none=True)
 
-    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn],
+    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn, idx],
                                        basictypes={type_e, type_t},
                                        name="H&K Tree version")
 
