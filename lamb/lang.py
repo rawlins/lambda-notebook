@@ -200,6 +200,9 @@ class Composable(object):
     def placeholder(self):
         return False
 
+    def get_index(self):
+        return None
+
     def content_iter(self):
         try:
             return iter(self.content)
@@ -928,6 +931,7 @@ class TreeComposite(Composite, Tree):
             if mode is None:
                 mode = content.mode
             content = content.content
+
         Composite.__init__(self, children, content, mode=mode, source=source)
         Tree.__init__(self, content, children)
         self.children = self # hack
@@ -944,6 +948,9 @@ class TreeComposite(Composite, Tree):
     @property
     def p2(self):
         return self[1]
+
+    def get_index(self):
+        return None
 
     def extend_collapsed_paths(self, tc):
         self.collapsed_paths.append(tc)
@@ -1568,6 +1575,13 @@ class Item(TreeComposite):
             else:
                 self.index = 0
 
+    def get_index(self):
+        # ugh, there's an annoying namespace pollution here because of
+        # nltk.Tree inheriting directly from `list`. Probably this variable
+        # should be renamed, but for now just wrap in a method that is also
+        # defined in Composable to just return None.
+        return self.index
+
     def __eq__(self, other):
         if isinstance(other, Item):
             return (self.name == other.name
@@ -1581,7 +1595,10 @@ class Item(TreeComposite):
         return not self.placeholder()
 
     def copy(self):
-        return Item(self.name, self.content.copy(), self.index)
+        new_content = self.content
+        if new_content is not None:
+            new_content = new_content.copy()
+        return Item(self.name, new_content, index=self.index)
 
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as
@@ -1975,7 +1992,6 @@ class TreeCompositionOp(object):
         result.mode = self
         return result
 
-
 class LexiconOp(TreeCompositionOp):
     """A composition operation that looks up a lexical entry in the composition
     system's lexicon."""
@@ -1993,8 +2009,12 @@ class LexiconOp(TreeCompositionOp):
         # may need to be generalized if other composition ops have baked-in
         # non-determinism.
         contents = list(c.content_iter())
-        fresh = [TreeComposite(content=r, source=tree, mode=self)
-                    for r in contents]
+        def freshen_composite(tc):
+            if isinstance(tc, Item):
+                return tc.copy()
+            # this other case isn't currently used
+            return tc
+        fresh = [freshen_composite(r) for r in contents]
         # len 0 case should be impossible at this point...
         if len(fresh) == 1:
             return fresh[0]
@@ -2751,9 +2771,9 @@ def tree_pa_metalanguage_fun(t, assignment=None):
     binder to match up traces with the bound variable. It assumes the binder is
     the left sister, and will generate a CompositionFailure otherwise."""
     binder = t[0]
-    if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise CompositionFailure(binder, t[1], reason="PA requires binder")
-    index = int(binder.name.strip())
+    index = binder.get_index()
+    if binder.content is not None or index is None:
+        raise CompositionFailure(binder, t[1], reason="PA requires a valid binder")
     vname = "var%i" % index
     outer_vname = t[1].content.find_safe_variable()
     new_a = Assignment(assignment)
@@ -2769,14 +2789,13 @@ def tree_pa_sbc_fun(t, assignment=None):
     binder to match up traces with the bound variable. It assumes the binder is
     the left sister, and will generate a CompositionFailure otherwise."""
     binder = t[0]
-    if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise CompositionFailure(binder, t[1], reason="PA requires binder")
-    index = int(binder.name.strip())
+    index = binder.get_index()
+    if binder.content is not None or index is None:
+        raise CompositionFailure(binder, t[1], reason="PA requires a valid binder")
     vname = "var%i" % index
     f = meta.LFun(types.type_e, t[1].content.under_assignment(assignment),
                                                                 varname=vname)
     return BinaryComposite(t[0], t[1], f, source=t)
-
 
 class IndexedPronoun(Item):
     def __init__(self, name, index, typ=None):
@@ -2835,8 +2854,14 @@ class Trace(IndexedPronoun):
 class Binder(Item):
     """An indexed binder.  Note that its content is always `None`.  Currently
     untyped; this may change."""
-    def __init__(self, index):
-        Item.__init__(self, "%i" % index, None, index=index)
+    def __init__(self, index, name=None):
+        if name is None:
+            # fully abstract binder
+            name = "%i" % index
+        else:
+            # TODO: latex rendering
+            name = name + str(index)
+        Item.__init__(self, name, None, index=index)
 
 class PresupPronoun(IndexedPronoun):
     def __init__(self, name, condition, index, typ=None):
@@ -2856,9 +2881,9 @@ def pa_fun(binder, content, assignment=None):
     This is a direct implementation.  Will find a (completely) unused variable
     name to abstract over, and replace any traces of the appropriate index with
     that variable.  This assumes a meta-language implementation of traces!"""
-    if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise CompositionFailure(binder, content, reason="PA requires binder")
-    index = int(binder.name.strip())
+    index = binder.get_index()
+    if binder.content is not None or index is None:
+        raise CompositionFailure(binder, t[1], reason="PA requires a valid binder")
     vname = "var%i" % index
     # there could be more natural ways to do this...should H&K assignment
     # functions be implemented directly?
@@ -2913,9 +2938,9 @@ def presup_pm(p1, p2):
     return pm_op(p1)(p2).reduce_all().calculate_partiality()
 
 def presup_pa(binder, content, assignment=None):
-    if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise CompositionFailure(binder, content, reason="PA requires binder")
-    index = int(binder.name.strip())
+    index = binder.get_index()
+    if binder.content is not None or index is None:
+        raise CompositionFailure(binder, content, reason="PA requires a valid binder")
     vname = "var%i" % index
     outer_vname = content.content.find_safe_variable()
     new_a = Assignment(assignment)
@@ -2930,9 +2955,9 @@ def presup_pa(binder, content, assignment=None):
 # this is a presuppositional PA based on Liz Coppock's Semantics Boot Camp
 # PA rule.
 def sbc_pa(binder, content, assignment=None):
-    if (binder.content is not None) or not binder.name.strip().isnumeric():
-        raise CompositionFailure(binder, content, reason="PA requires binder")
-    index = int(binder.name.strip())
+    index = binder.get_index()
+    if binder.content is not None or index is None:
+        raise CompositionFailure(binder, content, reason="PA requires a valid binder")
     vname = "var%i" % index
     bound_var = meta.term(vname, types.type_e)
     f = meta.LFun(types.type_e,
