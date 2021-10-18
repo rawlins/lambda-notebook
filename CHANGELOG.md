@@ -22,3 +22,8 @@ Fixes, improvements, changes (highlights):
  - improve and generalize lang.Binder behavior
  - enable svgling for internal tree drawing
  - improvements to the relative clause notebook
+
+ ## [0.6.8] - Vacuity improvements - 2021-10-18
+
+Fixes, improvements, changes (highlights):
+ - correctly pin the right traitlets version
