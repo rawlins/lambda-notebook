@@ -1150,6 +1150,7 @@ class TreeComposite(Composite, Tree):
                 else:
                     return repr(self.source.label())
             else:
+                # can generate crashes if this isn't a str...
                 return self.source
 
     def reduce_all(self):
@@ -2779,20 +2780,27 @@ def binary_trivial(t):
         and not tree_binder_check(t[0])
         and not tree_binder_check(t[1]))
 
-def tree_binary_vacuous(t, assignment=None):
+def tree_binary_vacuous(t, assignment=None, pass_source=True):
     """Handle 'vacuous' children with content None. If both are vacuous, the
     parent content is still None. If exactly one is vacuous, the parent content
     is the other's content. Ignores order."""
     if not binary_trivial(t): # also precondition
-        raise TypeMismatch(t, "Need at least one vacuous element") # abuse of TypeMismatch
+        raise TypeMismatch(t[0], t[1], "Need at least one fully vacuous element") # abuse of TypeMismatch
+    # hacky, needs to be generalized somehow. The issue is that only tree
+    # composition expects to pass a source right now, and it needs to be a real
+    # tree object, not a list-like.
+    source = pass_source and t or None
     if t[0].content is None and t[1].content is None:
-        return BinaryComposite(t[0], t[1], content=None, source=t)
+        return BinaryComposite(t[0], t[1], content=None, source=source)
     elif t[0].content is None:
         return BinaryComposite(t[0], t[1],
-                            content=t[1].under_assignment(assignment), source=t)
+                    content=t[1].under_assignment(assignment), source=source)
     else: #if t[1].content is None:
         return BinaryComposite(t[0], t[1],
-                            content=t[0].under_assignment(assignment), source=t)
+                    content=t[0].under_assignment(assignment), source=source)
+
+def binary_vacuous(t1, t2, assignment=None):
+    return tree_binary_vacuous([t1, t2], assignment=assignment, pass_source=False)
 
 # combinator for predicate modification
 pm_op = te("L f_<e,t> : L g_<e,t> : L x_e : f(x) & g(x)")
@@ -3028,7 +3036,8 @@ def setup_type_driven():
     pm = BinaryCompositionOp("PM", pm_fun, commutative=True)
     fa = BinaryCompositionOp("FA", fa_fun)
     pa = BinaryCompositionOp("PA", pa_fun, allow_none=True)
-    td_system = CompositionSystem(rules=[fa, pm, pa],
+    vac = BinaryCompositionOp("VAC", binary_vacuous, allow_none=True, commutative=True)
+    td_system = CompositionSystem(rules=[fa, pm, pa, vac],
                                   basictypes={type_e, type_t},
                                   name="H&K simple")
     set_system(td_system)
