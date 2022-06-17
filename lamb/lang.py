@@ -6,6 +6,12 @@ from lamb.utils import *
 from lamb.types import type_e, type_t, type_property, TypeMismatch
 from lamb.meta import  TypedExpr, ensuremath, MiniLatex
 from lamb import tree_mini
+
+try:
+    from collections import MutableMapping
+except:
+    from collections.abc import MutableMapping
+
 Tree = utils.get_tree_class()
 
 
@@ -246,7 +252,7 @@ class Composable(object):
         r = self * other
         return r
 
-class Assignment(collections.MutableMapping):
+class Assignment(MutableMapping):
     """This class represents an assignment function that can be incrementally
     modified.  It uses a dict as its store."""
     def __init__(self, base=None, name=None):
@@ -407,7 +413,7 @@ class VacuousAssignmentController(object):
     def default(self):
         return Assignment()
 
-class Lexicon(collections.MutableMapping):
+class Lexicon(MutableMapping):
     def __init__(self):
         self.items = collections.OrderedDict()
 
