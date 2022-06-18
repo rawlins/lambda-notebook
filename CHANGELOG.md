@@ -27,3 +27,7 @@ Fixes, improvements, changes (highlights):
 
 Fixes, improvements, changes (highlights):
  - correctly pin the right traitlets version
+
+## [0.6.9] - Compatibility fix - 2022-06-18
+
+Fix a python 3.10 compatibility bug
