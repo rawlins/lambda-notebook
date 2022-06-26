@@ -1630,7 +1630,8 @@ class Item(TreeComposite):
         return self
 
     def reduce(self):
-        self.content = self.content.reduce()
+        if self.content is not None:
+            self.content = self.content.reduce()
         return self
 
     def placeholder(self):
