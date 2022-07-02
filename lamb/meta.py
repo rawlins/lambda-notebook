@@ -116,29 +116,6 @@ def term(s, typ=None, assignment=None):
 
 _type_system = types.poly_system
 
-unary_tf_ops = set(['~'])
-binary_tf_ops = set(['>>', '<<', '&', '|', '<=>', '%'])
-tf_ops = unary_tf_ops | binary_tf_ops
-
-unary_num_ops = set(['-'])
-binary_num_rels = set(['<', '<=', '>=', '>'])
-binary_num_ops = {'+', '-', '/', '*', '**'}
-num_ops = unary_num_ops | binary_num_ops | binary_num_rels
-
-basic_ops = tf_ops | num_ops
-
-basic_ops_to_latex = {
-    "&": "\\wedge{}",
-    "|": "\\vee{}",
-    "~": "\\neg{}",
-    ">>": "\\rightarrow{}"
-}
-
-def text_op_in_latex(op):
-    if op in basic_ops_to_latex:
-        return basic_ops_to_latex[op]
-    return op
-
 global partiality_analysis, partiality_strict, partiality_weak
 partiality_strict = "strict"
 partiality_weak = "weak"
@@ -913,7 +890,8 @@ class TypedExpr(object):
             # via ensure_typed_expr on all arguments.
 
             if isinstance(args[0], str):
-                if args[0] in op_symbols:
+                global registry
+                if args[0] in registry.ops:
                     # args[0] is a special-cased operator symbol
                     return op_expr_factory(*args)
 
@@ -976,7 +954,11 @@ class TypedExpr(object):
         else:
             r_adjusted = result.try_adjust_type(typ, assignment=assignment)
             if r_adjusted is None:
-                raise TypeMismatch(result, typ, mode="type adjustment")
+                # make the reason a bit more coherent for people who don't
+                # really know about type inference vs type checking
+                reason = ((typ.is_polymorphic() or result.type.is_polymorphic())
+                            and "type inference" or "type checking")
+                raise TypeMismatch(result, typ, mode=reason)
             else:
                 return r_adjusted
 
@@ -1345,11 +1327,10 @@ class TypedExpr(object):
         # past this point in the list of cases should only get hard-coded
         # operators
         elif len(self.args) == 1: # Prefix operator
-            return ensuremath(text_op_in_latex(self.op)
-                                        + self.args[0].latex_str(**kwargs))
+            return ensuremath(self.op + self.args[0].latex_str(**kwargs))
         else:                     # Infix operator
             return ensuremath('(%s)' %
-                (' '+text_op_in_latex(self.op)+' ').join(
+                (' ' + self.op + ' ').join(
                                     [a.latex_str(**kwargs) for a in self.args]))
 
     def _repr_latex_(self):
@@ -2502,6 +2483,10 @@ class BinaryGenericEqExpr(BinaryOpExpr):
     """Type-generic equality.  This places no constraints on the type of `arg1`
     and `arg2` save that they be equal.  See `eq_factory`."""
     def __init__(self, arg1, arg2):
+        # TODO: the interaction of this operator (and the type t variant)
+        # with polymorphic types is messy...
+        if arg1.type.is_polymorphic() or arg2.type.is_polymorphic():
+            raise TypeMismatch("Equality operator requires non-polymorphic types.")
         arg1 = self.ensure_typed_expr(arg1)
         # maybe raise the exception directly?
         arg2 = self.ensure_typed_expr(arg2, arg1.type)
@@ -2750,61 +2735,6 @@ class TupleIndex(BinaryOpExpr):
         index = random.choice(range(len(tup)))
         return TupleIndex(tup, index)
 
-
-unary_symbols_to_op_exprs = {"~" : UnaryNegExpr,
-                        "-" : UnaryNegativeExpr}
-
-# not implemented: << as left implication.  I am using << for set membership.
-# note that neq is for type t only.
-binary_symbols_to_op_exprs = {
-                        "&" : BinaryAndExpr,
-                        "|" : BinaryOrExpr,
-                        ">>" : BinaryArrowExpr,
-                        "<=>" : eq_factory,
-                        "==" : eq_factory,
-                        "%" : BinaryNeqExpr,
-                        "^" : BinaryNeqExpr,
-                        "<" : BinaryLExpr,
-                        ">" : BinaryGExpr,
-                        "<=" : BinaryLeqExpr,
-                        ">=" : BinaryGeqExpr,
-                        "+" : BinaryPlusExpr,
-                        "-" : BinaryMinusExpr,
-                        "/" : BinaryDivExpr,
-                        "*" : BinaryTimesExpr,
-                        "**" : BinaryExpExpr,
-                        "<<" : SetContains}
-
-op_symbols = (set(unary_symbols_to_op_exprs.keys())
-                | set(binary_symbols_to_op_exprs.keys()))
-
-
-
-# TODO raise exceptions
-def op_expr_factory(op, *args):
-    """Given some operator/relation symbol with arguments, construct an
-    appropriate TypedExpr subclass for that operator."""
-
-    # this conditional is necessary because the same symbol may involve both a
-    # unary and a binary operator
-    if len(args) == 0:
-        raise ValueError("0-length operator")
-    elif len(args) == 1:
-        if op not in unary_symbols_to_op_exprs:
-            raise ValueError("Unknown unary operator symbol '%s'" % op)
-        else:
-            return unary_symbols_to_op_exprs[op](args[0])
-    elif len(args) == 2:
-        if op not in binary_symbols_to_op_exprs:
-            raise ValueError("Unknown binary operator symbol '%s'" % op)
-        else:
-            return binary_symbols_to_op_exprs[op](args[0], args[1])
-    else:
-        raise ValueError("Too many arguments (%s) to operator '%s'"
-                                                        % (len(args), op))
-
-
-
 ###############
 #
 # Binding expressions
@@ -2824,9 +2754,6 @@ class BindingOp(TypedExpr):
     look at the definite description tutorial, which shows how to build an iota
     operator."""
 
-    binding_operators = dict()
-    canonicalize_names = dict()
-    unparsed_operators = set()
     op_regex = None
     init_op_regex = None
 
@@ -2985,37 +2912,11 @@ class BindingOp(TypedExpr):
         return self.args[1]        
 
     @classmethod
-    def add_op(cls, op):
-        """Register an operator to be parsed."""
-        if op.canonical_name is None:
-            BindingOp.unparsed_operators.add(op)
-        else:
-            if op.canonical_name in BindingOp.binding_operators:
-                logger.warning(
-                    "Overriding existing binding operator '%s' in registry"
-                    % op.canonical_name)
-                cls.remove_op(op)
-            BindingOp.binding_operators[op.canonical_name] = op
-            for alias in op.secondary_names:
-                BindingOp.canonicalize_names[alias] = op.canonical_name
-        BindingOp.compile_ops_re()
-
-    @classmethod
-    def remove_op(cls, op):
-        """Remove an operator from the parsing registry."""
-        for alias in BindingOp.binding_operators[op.canonical_name].secondary_names:
-            del BindingOp.canonicalize_names[alias]
-        if op.canonical_name is None:
-            BindigOp.unparsed_operators.remove(op)
-        else:
-            del BindingOp.binding_operators[op.canonical_name]
-        BindingOp.compile_ops_re()
-
-    @classmethod
     def compile_ops_re(cls):
         """Recompile the regex for detecting operators."""
-        op_names = (BindingOp.binding_operators.keys()
-                                            | BindingOp.canonicalize_names)
+        global registry
+        op_names = (registry.binding_ops.keys()
+                                | registry.canonicalize_binding_ops.keys())
         # sort with longer strings first, to avoid matching subsets of long
         # names i.e. | is not greedy, need to work around that.
         op_names = list(op_names)
@@ -3177,6 +3078,8 @@ class BindingOp(TypedExpr):
         exception is typically a ParseError.
         """
 
+        global registry
+
         i = 0
         if BindingOp.init_op_regex is None:
             return None # no operators to parse
@@ -3188,13 +3091,13 @@ class BindingOp(TypedExpr):
         op_name = op_match.group(1) # operator name
         i = op_match.end(1)
 
-        if op_name in BindingOp.canonicalize_names:
-            op_name = BindingOp.canonicalize_names[op_name]
-        if op_name not in BindingOp.binding_operators:
+        if op_name in registry.canonicalize_binding_ops:
+            op_name = registry.canonicalize_binding_ops[op_name]
+        if op_name not in registry.binding_ops:
             raise Error(
                 "Can't find binding operator '%s'; should be impossible"
                 % op_name)
-        op_class = BindingOp.binding_operators[op_name]
+        op_class = registry.binding_ops[op_name]
 
         split = s.split(":", 1)
         if (len(split) != 2):
@@ -3336,8 +3239,6 @@ class ConditionSet(BindingOp):
         sub_var = TypedTerm(self.varname, inner_type)
         new_condition = char.apply(sub_var)
         return self.copy_local(sub_var, new_condition)
-
-BindingOp.add_op(ConditionSet)
 
 class ListedSet(TypedExpr):
     """A listed set is a set that simply lists members."""
@@ -3489,8 +3390,6 @@ class ForallUnary(BindingOp):
             return self.body
         return self
 
-BindingOp.add_op(ForallUnary)
-
 class ExistsUnary(BindingOp):
     """Existential unary quantifier"""
     canonical_name = "Exists"
@@ -3515,8 +3414,6 @@ class ExistsUnary(BindingOp):
             return self.body
         return self
 
-BindingOp.add_op(ExistsUnary)
-
 class ExistsExact(BindingOp):
     """Existential unary quantifier"""
     canonical_name = "ExistsExact"
@@ -3533,8 +3430,6 @@ class ExistsExact(BindingOp):
 
     def copy_local(self, var, arg, type_check=True):
         return ExistsExact(var, arg, type_check=type_check)        
-
-BindingOp.add_op(ExistsExact)
 
 class IotaUnary(BindingOp):
     """Iota operator.  This is best construed as Russellian."""
@@ -3602,9 +3497,6 @@ class IotaPartial(IotaUnary):
             new_condition = ExistsExact(self.var_instance, new_condition)
         return derived(Partial(new_body, new_condition), self,
                                                     "Partiality simplification")
-
-BindingOp.add_op(IotaUnary)
-BindingOp.add_op(IotaPartial)
 
 class LFun(BindingOp):
     """A typed function.  Can itself be used as an operator in a TypedExpr.
@@ -3731,11 +3623,6 @@ def fun_compose(g, f):
     combinator = geach_combinator(g.type, f.type)
     result = (combinator(g)(f)).reduce_all()
     return result
-
-
-
-BindingOp.add_op(LFun)
-
 
 
 ###############
@@ -3909,6 +3796,169 @@ def alpha_convert_r(t, overlap, conversions):
 #
 ###############
 
+
+class OperatorRegistry(object):
+    class OpDesc(object):
+        def __init__(self, name, _cls, *targs):
+            self.name = name
+            self.cls = _cls
+            self.arity = len(targs)
+            self.targs = targs
+
+        def has_blank_types(self):
+            for t in self.targs:
+                if t is None:
+                    return True
+            return False
+
+        def check_viable(self, *args):
+            if self.arity != len(args):
+                return False
+            # None means don't check this arg place.
+            # If the relevant types are not in the current type system, this
+            # will fail.
+            for i in range(len(args)):
+                if (self.targs[i] is not None
+                            and not ts_compatible(self.targs[i], args[i].type)):
+                    return False
+            return True
+
+    def __init__(self):
+        self.ops = dict()
+        self.arities = dict()
+        self.binding_ops = dict()
+        self.canonicalize_binding_ops = dict()
+        self.unparsed_binding_ops = set()
+
+    def add_operator(self, name, _cls, *targs):
+        desc = self.OpDesc(name, _cls, *targs)
+        # use dicts and not sets for the ordering
+        if not name in self.ops:
+            self.ops[name] = dict()
+        if not desc.arity in self.arities:
+            self.arities[desc.arity] = dict()
+        self.ops[name][desc] = True
+        self.arities[desc.arity][desc] = True
+
+    def get_descs(self, op):
+        return list(self.ops[op].keys())
+
+    def expr_factory(self, op, *args):
+        """Given some operator/relation symbol with arguments, construct an
+        appropriate TypedExpr subclass for that operator."""
+
+        if not op in self.ops:
+            raise parsing.ParseError("Unknown operator symbol '%s'" % op)
+
+        matches = [o for o in self.ops[op].keys() if o.arity == len(args)]
+        if not len(matches):
+            raise parsing.ParseError("No %d-ary operator symbol '%s'" % (len(args), op))
+
+        matches = [o for o in matches if o.check_viable(*args)]
+
+        # hacky: let any operators with specified types knock out any operators
+        # with None types. This could be made a lot more elegant, but the
+        # immediate goal here is to handle the equality case for type t cleanly
+        if len(matches) > 1:
+            matches = [o for o in matches if not o.has_blank_types()]
+
+        if not len(matches):
+            raise parsing.ParseError(
+                "No viable %d-ary operator symbol '%s' for args %s"
+                    % (len(args), op, repr(args)))
+
+        # this shouldn't come up for the built-in libraries, but should this
+        # be made more informative for user cases?
+        if len(matches) > 1:
+            raise parsing.ParseError(
+                "Ambiguous %d-ary operator symbol '%s' for args %s"
+                    % (len(args), op, repr(args)))
+
+        return matches[0].cls(*args)
+
+    def add_binding_op(self, op):
+        """Register an operator to be parsed."""
+        if op.canonical_name is None:
+            self.unparsed_binding_ops.add(op)
+        else:
+            if op.canonical_name in self.binding_ops:
+                logger.warning(
+                    "Overriding existing binding operator '%s' in registry"
+                    % op.canonical_name)
+                self.remove_op(op)
+            self.binding_ops[op.canonical_name] = op
+            for alias in op.secondary_names:
+                self.canonicalize_binding_ops[alias] = op.canonical_name
+        BindingOp.compile_ops_re()
+
+    def remove_binding_op(self, op):
+        """Remove an operator from the parsing registry."""
+        for alias in self.binding_ops[op.canonical_name].secondary_names:
+            del self.canonicalize_binding_ops[alias]
+        if op.canonical_name is None:
+            self.unparsed_binding_ops.remove(op)
+        else:
+            del self.binding_ops[op.canonical_name]
+        BindingOp.compile_ops_re()
+
+registry = OperatorRegistry()
+
+def setup_type_t():
+    global registry
+    def add_t_op(op, c, arity):
+        registry.add_operator(op, c, *[type_t for x in range(arity)])
+
+    add_t_op("~", UnaryNegExpr, 1)
+    add_t_op("&", BinaryAndExpr, 2)
+    add_t_op("|", BinaryOrExpr, 2)
+    add_t_op(">>", BinaryArrowExpr, 2)
+    add_t_op("%", BinaryNeqExpr, 2)
+    add_t_op("^", BinaryNeqExpr, 2)
+    add_t_op("<=>", BinaryBiarrowExpr, 2)
+    add_t_op("==", BinaryBiarrowExpr, 2)
+    # these do syntactically permit higher order quantification...
+    registry.add_binding_op(ForallUnary)
+    registry.add_binding_op(ExistsUnary)
+    registry.add_binding_op(ExistsExact)
+
+
+def setup_type_n():
+    global registry
+    def add_n_op(op, c, arity):
+        registry.add_operator(op, c, *[type_n for x in range(arity)])
+
+    # TODO: unary +, for better error msgs if nothing else
+    add_n_op("-", UnaryNegativeExpr, 1)
+    add_n_op("<", BinaryLExpr, 2)
+    add_n_op(">", BinaryGExpr, 2)
+    add_n_op("<=", BinaryLeqExpr, 2)
+    add_n_op(">=", BinaryGeqExpr, 2)
+    add_n_op("+", BinaryPlusExpr, 2)
+    add_n_op("-", BinaryMinusExpr, 2)
+    add_n_op("/", BinaryDivExpr, 2)
+    add_n_op("*", BinaryTimesExpr, 2)
+    add_n_op("**", BinaryExpExpr, 2)
+
+
+registry.add_binding_op(LFun)
+setup_type_t()
+setup_type_n()
+# these operators enforces their own type checking. Can be overridden at a
+# specific type. TODO: use variable types?
+registry.add_operator("<=>", BinaryGenericEqExpr, None, None)
+registry.add_operator("==", BinaryGenericEqExpr, None, None)
+
+# type e
+registry.add_binding_op(IotaUnary)
+registry.add_binding_op(IotaPartial)
+
+# type {X}
+registry.add_operator("<<", SetContains, None, None)
+registry.add_binding_op(ConditionSet)
+
+def op_expr_factory(op, *args):
+    global registry
+    return registry.expr_factory(op, *args)
 
 
 global true_term, false_term
@@ -4239,30 +4289,14 @@ random_types = [type_t]
 random_ops = ["&", "|", ">>", "%"]
 
 def random_tf_op_expr(ctrl_fun):
-    # TODO: not hardcode this
+    global registry
     op = random.choice(random_ops)
-    while (op in binary_num_ops):
+    while op not in registry.ops:
         op = random.choice(random_ops)
-    if op == "~":
-        return UnaryNegExpr(ctrl_fun(typ=type_t))
-    elif op in binary_symbols_to_op_exprs.keys():
-        op_class = binary_symbols_to_op_exprs[op]
-        if op_class == eq_factory:
-            raise NotImplementedError
-        elif op_class == SetContains:
-            raise NotImplementedError
-        elif issubclass(op_class, BinaryOpExpr):
-            if op in binary_num_rels:
-                return op_class(ctrl_fun(typ=type_n), ctrl_fun(typ=type_n))
-            elif op in binary_tf_ops:
-                return op_class(ctrl_fun(typ=type_t), ctrl_fun(typ=type_t))
-            else:
-                raise NotImplementedError
-        else:
-            #print(repr(op_class))
-            raise NotImplementedError
-    else:
+    op = random.choice(registry.get_descs(op)) # probably size 1
+    if op.has_blank_types():
         raise NotImplementedError
+    return op.cls(*[ctrl_fun(typ=t) for t in op.targs])
 
 random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
 

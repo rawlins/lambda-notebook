@@ -112,6 +112,9 @@ class TypeConstructor(object):
     def bound_type_vars(self):
         return self.type_vars
 
+    def is_polymorphic(self):
+        return len(self.type_vars) > 0
+
     def init_type_vars(self):
         accum = set()
         for part in iter(self):
