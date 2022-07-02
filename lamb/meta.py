@@ -2481,7 +2481,7 @@ class BinaryNeqExpr(BinaryOpExpr):
 
 class BinaryGenericEqExpr(BinaryOpExpr):
     """Type-generic equality.  This places no constraints on the type of `arg1`
-    and `arg2` save that they be equal.  See `eq_factory`."""
+    and `arg2` save that they be equal."""
     def __init__(self, arg1, arg2):
         # TODO: the interaction of this operator (and the type t variant)
         # with polymorphic types is messy...
@@ -2509,19 +2509,6 @@ class BinaryGenericEqExpr(BinaryOpExpr):
     def random(cls, ctrl, max_type_depth=1):
         body_type = get_type_system().random_type(max_type_depth, 0.5)
         return cls(ctrl(typ=body_type), ctrl(typ=body_type))
-
-
-def eq_factory(arg1, arg2):
-    """If type is type t, return a biconditional.  Otherwise, build an equality
-    statement."""
-    arg1 = TypedExpr.ensure_typed_expr(arg1)
-    arg2 = TypedExpr.ensure_typed_expr(arg2)
-    ts = get_type_system()
-    if arg1.type == types.type_t: # this must be exact so as not to trigger on
-                                  # combinators.  TODO: something more general?
-        return BinaryBiarrowExpr(arg1, arg2)
-    else:
-        return BinaryGenericEqExpr(arg1, arg2)
 
 
 def binary_num_op(op, op_uni=None, op_latex=None, simplify_fun=None):
