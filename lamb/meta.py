@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
-import sys, re, logging, random
+import sys, re, logging, random, functools, inspect
 from numbers import Number
 from lamb import types, utils, parsing, display
 from lamb.types import TypeMismatch, type_e, type_t, type_n
@@ -576,6 +576,7 @@ class TypedExpr(object):
             locals = dict()
         # Replace the alternative spellings of operators with canonical
         # spellings
+        # TODO: derive from operator registry
         to_eval = s.replace('==>', '>>').replace('<==', '<<')
         to_eval = to_eval.replace('<=>', '%').replace('=/=', '^').replace('==', '%')
         lcopy = locals.copy()
@@ -889,20 +890,20 @@ class TypedExpr(object):
             # args[0] must be a function / operator. Will potentially recurse
             # via ensure_typed_expr on all arguments.
 
-            if isinstance(args[0], str):
-                global registry
-                if args[0] in registry.ops:
-                    # args[0] is a special-cased operator symbol
-                    return op_expr_factory(*args)
-
-            # the only kind of operator-expression generated after this point is
-            # an ApplicationExpr.
-            operator = cls.ensure_typed_expr(args[0])
-
             # this is redundant with the constructor, but I can't currently find
             # a way to simplify. After this point, all elements of args will be
             # TypedExprs.
             remainder = tuple([cls.ensure_typed_expr(a) for a in args[1:]])
+
+            if isinstance(args[0], str):
+                global registry
+                if args[0] in registry.ops:
+                    # args[0] is a special-cased operator symbol
+                    return op_expr_factory(*((args[0],) + remainder))
+
+            # the only kind of operator-expression generated after this point is
+            # an ApplicationExpr.
+            operator = cls.ensure_typed_expr(args[0])
 
             # package longer arg lengths in Tuples.  After this point, there are
             # only two elements under consideration.
@@ -1404,6 +1405,7 @@ class TypedExpr(object):
     def __truediv__(self, other):return self.factory('/',  self, other)
     def __mul__(self, other):    return self.factory('*',  self, other)
     def __neg__(self):           return self.factory('-',  self)
+    def __pos__(self):           return self.factory('+',  self)
     def __pow__(self, other):    return self.factory('**', self, other)
 
     def __bool__(self):
@@ -2204,95 +2206,34 @@ TypedExpr.add_local("Disjunctive", Disjunctive.from_tuple)
 ###############
 
 
-
-class UnaryOpExpr(TypedExpr):
-    """This class abstracts over expressions headed by specific unary operators.
-    It is not necessarily designed to be instantiated directly, but rather
-    subclassed for particular hard-coded operators.
-
-    Because of the way the copy function works, it is currently not suited for
-    direct instantiation.
+class SyncatOpExpr(TypedExpr):
+    """This class abstracts over expressions headed by n-ary operators.
 
     In logical terms, this corresponds to syncategorematic definitions of
     operators as is standard in definitions of logics. For example, statements
-    like '~p is a sentence iff p is a sentence'.  While semantics is not
-    currently implemented, it could be done in subclasses."""
-    def __init__(self, typ, op, arg1, op_name_uni=None, op_name_latex=None,
-                                                            tcheck_args=True):
+    like '~p is a sentence iff p is a sentence'.
+
+    It should not be instantiated directly."""
+
+    arity = 2
+    canonical_name = None
+    secondary_names = set()
+    op_name_uni = None
+    op_name_latex = None
+    # should output type be a class variable?
+
+    def __init__(self, typ, *args, tcheck_args=True):
         if tcheck_args:
-            super().__init__(op, self.ensure_typed_expr(arg1, typ))
+            args = [self.ensure_typed_expr(a, typ) for a in args]
         else:
-            super().__init__(op, self.ensure_typed_expr(arg1))
-
+            args = [self.ensure_typed_expr(a) for a in args]
+        super().__init__(self.canonical_name, *args)
         self.type = typ
-        if op_name_uni is None:
-            self.op_name = op
-        else:
-            self.op_name = op_name_uni
-        if op_name_latex is None:
-            self.op_name_latex = self.op_name
-        else:
-            self.op_name_latex = op_name_latex
-        self.operator_style = True
-
-    def copy(self):
-        return self.copy_local(*self.args)
-
-    def copy_local(self, *args, type_check=True):
-        """This must be overriden in classes that are not produced by the
-        factory."""
-        return op_expr_factory(self.op, *args)
-
-    def __str__(self):
-        return "%s%s\nType: %s" % (self.op_name, repr(self.args[0]), self.type)
-
-    def __repr__(self):
-        if (self.operator_style):
-            return "%s%s" % (self.op_name, repr(self.args[0]))
-        else:
-            return "%s(%s)" % (self.op_name, repr(self.args[0]))
-
-    def latex_str_long(self):
-        return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
-
-    def latex_str(self, **kwargs):
-        if (self.operator_style):
-            return ensuremath("%s %s" % (self.op_name_latex,
-                                            self.args[0].latex_str(**kwargs)))
-        else:
-            return ensuremath("%s(%s)" % (self.op_name_latex,
-                                            self.args[0].latex_str(**kwargs)))
-
-
-    @classmethod
-    def random(cls, ctrl):
-        return cls(ctrl(typ=type_t))
-
-
-class BinaryOpExpr(TypedExpr):
-    """This class abstracts over expressions headed by specific binary
-    operators.  It is not necessarily designed to be instantiated directly, but
-    rather subclassed for particular hard-coded operators.
-
-    Because of the way the copy function works, it is currently not suited for
-    direct instantiation at all."""
-    def __init__(self, typ, op, arg1, arg2, op_name_uni=None,
-                                    op_name_latex=None, tcheck_args=True):
-        if tcheck_args:
-            args = [self.ensure_typed_expr(arg1, typ),
-                    self.ensure_typed_expr(arg2, typ)]
-        else:
-            args = [self.ensure_typed_expr(arg1), self.ensure_typed_expr(arg2)]
-        super().__init__(op, *args)
-        self.type = typ
-        if op_name_uni is None:
-            self.op_name = op
-        else:
-            self.op_name = op_name_uni
-        if op_name_latex is None:
-            self.op_name_latex = self.op_name
-        else:
-            self.op_name_latex = op_name_latex
+        if self.op_name_uni is None:
+            self.op_name_uni = self.op
+        # shadow the class var:
+        if self.op_name_latex is None:
+            self.op_name_latex = self.op_name_uni
 
     def copy(self):
         return self.copy_local(*self.args)
@@ -2300,22 +2241,55 @@ class BinaryOpExpr(TypedExpr):
     def copy_local(self, *args, type_check=True):
         """This must be overriden by classes that are not produced by the
         factory."""
+        # TODO: is this necessary?
         return op_expr_factory(self.op, *args)
+
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text("%s(...)" % self.op_name_uni)
+        elif self.arity == 1:
+            p.text(self.op_name_uni)
+            if not self.operator_style:
+                p.text("(")
+            p.pretty(self.args[0])
+            if not self.operator_style:
+                p.text(")")
+        else:
+            p.text("(")
+            for a in self.args[0:-1]:
+                p.pretty(self.args[0])
+                p.text(" %s " % self.op_name_uni)
+            p.pretty(self.args[-1])
+            p.text(")")
 
     def __str__(self):
         return "%s\nType: %s" % (repr(self), self.type)
 
     def __repr__(self):
-        return "(%s %s %s)" % (repr(self.args[0]), self.op_name,
-                                                        repr(self.args[1]))
+        if self.arity == 1:
+            if (self.operator_style):
+                return "%s%s" % (self.op, repr(self.args[0]))
+            else:
+                return "%s(%s)" % (self.op, repr(self.args[0]))
+        else:
+            op_text = " %s " % self.op
+            return "(%s)" % (op_text.join([repr(a) for a in self.args]))
 
     def latex_str_long(self):
         return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
 
     def latex_str(self, **kwargs):
-        return ensuremath("(%s %s %s)" % (self.args[0].latex_str(**kwargs), 
-                                          self.op_name_latex,  
-                                          self.args[1].latex_str(**kwargs)))
+        if self.arity == 1:
+            if (self.operator_style):
+                return ensuremath("%s %s" % (self.op_name_latex,
+                                            self.args[0].latex_str(**kwargs)))
+            else:
+                return ensuremath("%s(%s)" % (self.op_name_latex,
+                                            self.args[0].latex_str(**kwargs)))
+        else:
+            op_text = " %s " % self.op_name_latex
+            return ensuremath("(%s)" % (op_text.join(
+                            [a.latex_str(**kwargs) for a in self.args])))
 
     @classmethod
     def join(cls, *l):
@@ -2327,6 +2301,8 @@ class BinaryOpExpr(TypedExpr):
         Will also fail on operators that do not take the same type (i.e.
         SetContains).
         """
+        if cls.arity != 2:
+            raise ValueError("Can't join with a %d-ary operator", cls.arity)
         if len(l) == 0:
             return true_term
         if len(l) == 1:
@@ -2340,146 +2316,163 @@ class BinaryOpExpr(TypedExpr):
 
     @classmethod
     def random(cls, ctrl):
-        return cls(ctrl(typ=type_t), ctrl(typ=type_t))
+        # this will fail if type_t is wrong for the class, so override
+        return cls(*[ctrl(typ=type_t) for a in range(cls.arity)])
 
+def to_python(te):
+    if te.type == type_n and isinstance(te.op, Number):
+        return te.op
+    elif te == true_term:
+        return True
+    elif te == false_term:
+        return False
+    else:
+        return te
+
+# simplify principle: implement simplification that can be handled by reasoning
+# about constants, otherwise leave for the future. The goal of this code is
+# not to implement a prover.
 
 # could make a factory function for these
+class BinaryAndExpr(SyncatOpExpr):
+    canonical_name = "&"
+    op_name_uni = "∧"
+    op_name_latex = "\\wedge{}"
 
-class UnaryNegExpr(UnaryOpExpr): #unicode: ¬
-    def __init__(self, body):
-        super().__init__(type_t, "~", body, "~", "\\neg{}")
-
-    def simplify(self):
-        if self.args[0] == true_term:
-            return derived(false_term, self, desc="negation")
-        elif self.args[0] == false_term:
-            return derived(true_term, self, desc="negation")
-        else:
-            return self
-
-
-class BinaryAndExpr(BinaryOpExpr): #note: there is a unicode, ∧.
     def __init__(self, arg1, arg2):
-        super().__init__(type_t, "&", arg1, arg2, "&", "\\wedge{}")
+        super().__init__(type_t, arg1, arg2)
 
     def simplify(self):
+        def d(x):
+            return derived(x, self, desc="conjunction")
         if self.args[0] == false_term or self.args[1] == false_term:
-            return derived(false_term, self, desc="conjunction")
+            return d(false_term)
         elif self.args[0] == true_term:
-            return derived(self.args[1].copy(), self, desc="conjunction")
+            return d(self.args[1].copy())
         elif self.args[1] == true_term:
-            return derived(self.args[0].copy(), self, desc="conjunction")
-        elif self.args[0] == self.args[1]:
-            return derived(self.args[0].copy(), self, desc="conjunction")
+            return d(self.args[0].copy())
         else:
             return self
 
-class BinaryOrExpr(BinaryOpExpr): #unicode: ∨.
+class BinaryOrExpr(SyncatOpExpr):
+    canonical_name = "|"
+    op_name_uni = "∨"
+    op_name_latex = "\\vee{}"
     def __init__(self, arg1, arg2):
-        super().__init__(type_t, "|", arg1, arg2, "|", "\\vee{}")
+        super().__init__(type_t, arg1, arg2)
 
     def simplify(self):
+        def d(x):
+            return derived(x, self, desc="disjunction")
         if self.args[0] == true_term or self.args[1] == true_term:
-            return derived(true_term, self, desc="disjunction")
+            return d(true_term)
         elif self.args[0] == false_term:
             # covers case of False | False
-            return derived(self.args[1].copy(), self, desc="disjunction")
+            return d(self.args[1].copy())
         elif self.args[1] == false_term:
-            return derived(self.args[0].copy(), self, desc="disjunction")            
-        elif self.args[0] == self.args[1]:
-            return derived(true_term, self, desc="disjunction")
+            return d(self.args[0].copy())
         else:
             return self
 
 
 #unicode arrow: →
-class BinaryArrowExpr(BinaryOpExpr):
+class BinaryArrowExpr(SyncatOpExpr):
+    canonical_name = ">>"
+    op_name_uni = "→"
+    op_name_latex = "\\rightarrow{}"
+
     def __init__(self, arg1, arg2):
-        super().__init__(type_t, ">>", arg1, arg2, ">>", "\\rightarrow{}")
+        super().__init__(type_t, arg1, arg2)
 
     def simplify(self):
+        def d(x):
+            return derived(x, self, desc="material implication")
         if self.args[0] == false_term:
-            return derived(true_term, self, desc="material implication")
+            return d(true_term)
         elif self.args[0] == true_term:
-            return derived(self.args[1].copy(), self,
-                                                desc="material implication")
+            return d(self.args[1].copy())
         elif self.args[1] == false_term:
-            return derived(UnaryNegExpr(self.args[0]), self,
-                                                desc="material implication")
+            return d(UnaryNegExpr(self.args[0]))
         elif self.args[1] == true_term:
-            return derived(true_term, self, desc="material implication")
-        elif self.args[0] == self.args[1]:
-            return derived(true_term, self, desc="material implication")
+            return d(true_term)
         else:
             return self
 
 # unicode: ↔
-class BinaryBiarrowExpr(BinaryOpExpr):
+class BinaryBiarrowExpr(SyncatOpExpr):
+    canonical_name = "<=>"
+    secondary_names = {"=="}
+    op_name_uni = "↔"
+    op_name_latex = "\\leftrightarrow{}"
+
     def __init__(self, arg1, arg2):
-        super().__init__(type_t, "<=>", arg1, arg2, "<=>", "\\leftrightarrow{}")
+        super().__init__(type_t, arg1, arg2)
 
     def simplify(self):
+        def d(x):
+            return derived(x, self, desc="biconditional")
         if self.args[0] == false_term:
             if self.args[1] == true_term:
-                return derived(false_term, self, desc="biconditional")
+                return d(false_term)
             elif self.args[1] == false_term:
-                return derived(true_term, self, desc="biconditional")
+                return d(true_term)
             else:
-                return derived(UnaryNegExpr(self.args[1]), self,
-                                                            "biconditional")
+                return d(UnaryNegExpr(self.args[1]))
         elif self.args[0] == true_term:
             if self.args[1] == false_term:
-                return derived(false_term, self, desc="biconditional")
+                return d(false_term)
             elif self.args[1] == true_term:
-                return derived(true_term, self, desc="biconditional")
+                return d(true_term)
             else:
-                return derived(self.args[1].copy(), self, desc="biconditional")
+                return d(self.args[1].copy())
         elif self.args[1] == false_term: # term+term is already taken care of
-            return derived(UnaryNegExpr(self.args[0]), self,
-                                                        desc="biconditional")
+            return d(UnaryNegExpr(self.args[0]))
         elif self.args[1] == true_term:
-            return derived(self.args[0].copy(), self, desc="biconditional")
-        elif self.args[0] == self.args[1]:
-            return derived(true_term, self, desc="biconditional")
+            return d(self.args[0].copy())
         else:
             return self
 
 
 # TODO: generalize this?
-class BinaryNeqExpr(BinaryOpExpr):
+class BinaryNeqExpr(SyncatOpExpr):
+    canonical_name = "^"
+    secondary_names = {"=/="}
+    op_name_uni = "≠"
+    op_name_latex = "\\not="
     def __init__(self, arg1, arg2):
-        super().__init__(type_t, "^", arg1, arg2, "=/=", "\\not=")
+        super().__init__(type_t, arg1, arg2)
 
     def simplify(self):
+        def d(x):
+            return derived(x, self, desc="neq")
         if self.args[0] == false_term:
             if self.args[1] == true_term:
-                return derived(true_term, self, desc="neq")
+                return d(true_term)
             elif self.args[1] == false_term:
-                return derived(false_term, self, desc="neq")
+                return d(false_term)
             else:
-                return derived(self.args[1].copy(), self, desc="neq")
+                return d(self.args[1].copy())
                 
         elif self.args[0] == true_term:
             if self.args[1] == false_term:
-                return derived(true_term, self, desc="neq")
+                return d(true_term)
             elif self.args[1] == true_term:
-                return derived(false_term, self, desc="neq")
+                return d(false_term)
             else:
-                return derived(UnaryNegExpr(self.args[1]), self, desc="neq")
+                return d(UnaryNegExpr(self.args[1]))
         elif self.args[1] == true_term: # term+term is already taken care of
-            return derived(UnaryNegExpr(self.args[0]), self, desc="neq")
+            return d(UnaryNegExpr(self.args[0]))
         elif self.args[1] == false_term:
-            return derived(self.args[0].copy(), self, desc="neq")
-        elif self.args[0] == self.args[1]:
-            return derived(false_term, self, desc="neq")
+            return d(self.args[0].copy())
         else:
             # note: don't simplify p =/= q; this would be a job for a prover
             return self
 
 
+class BinaryGenericEqExpr(SyncatOpExpr):
+    canonical_name = "<=>"
+    op_name_latex = "="
 
-
-class BinaryGenericEqExpr(BinaryOpExpr):
     """Type-generic equality.  This places no constraints on the type of `arg1`
     and `arg2` save that they be equal."""
     def __init__(self, arg1, arg2):
@@ -2492,118 +2485,132 @@ class BinaryGenericEqExpr(BinaryOpExpr):
         arg2 = self.ensure_typed_expr(arg2, arg1.type)
         # some problems with equality using '==', TODO recheck, but for now
         # just use "<=>" in the normalized form
-        super().__init__(type_t, "<=>", arg1, arg2, op_name_uni = "<=>",
-                                op_name_latex = "=", tcheck_args = False)
+        super().__init__(type_t, arg1, arg2, tcheck_args = False)
 
     def simplify(self):
-        if self.args[0] == self.args[1]:
-            return derived(true_term, self, desc="Equality")
+        if (isinstance(self.args[0].op, Number)
+                            and isinstance(self.args[1].op, Number)):
+            return derived(te(self.args[0].op == self.args[1].op),
+                                                    self, desc="Equality")
         else:
-            if (isinstance(self.args[0].op, Number)
-                                and isinstance(self.args[1].op, Number)):
-                return derived(false_term, self, desc="Equality")
-            else:
-                return self # this would require a solver for the general case
+            return self # this would require a solver for the general case
 
     @classmethod
     def random(cls, ctrl, max_type_depth=1):
         body_type = get_type_system().random_type(max_type_depth, 0.5)
         return cls(ctrl(typ=body_type), ctrl(typ=body_type))
 
+# decorator for wrapping simplify functions, see examples below.
+# TODO: this could be generalized a further...
+def op(op, arg_type, ret_type,
+            op_uni=None, op_latex=None, deriv_desc=None,
+            python_only=True):
+    if deriv_desc is None:
+        deriv_desc = op_uni and op_uni or op
 
-def binary_num_op(op, op_uni=None, op_latex=None, simplify_fun=None):
-    """Factory for binary numeric operators."""
-    if op_uni is None:
-        op_uni = op
-    if op_latex is None:
-        op_latex = op
-    class BinOp(BinaryOpExpr):
-        def __init__(self, arg1, arg2):
-            super().__init__(type_n, op, arg1, arg2, op_uni, op_latex)
+    def op_decorator(func):
+        # we will pass `self` to func, so allow an extra param for it
+        arity = len(inspect.signature(func).parameters) - 1
 
-        def simplify(self):
-            if simplify_fun is None:
-                return self
-            if (isinstance(self.args[0].op, Number)
-                                    and isinstance(self.args[1].op, Number)):
-                return derived(te(simplify_fun(self.args[0].op,
-                                               self.args[1].op)),
-                                    self, desc=op_uni)
-            else:
-                return self
+        # constructs a subclass of either Syncat
+        if not (arity == 1 or arity == 2):
+            raise ValueError("@op needs function of arity 1 or 2 (got %d)" % arity)
+        class WrappedOp(SyncatOpExpr):
+            def __init__(self, *args):
+                # XX this updates __name__ but not __class__
+                functools.update_wrapper(self, func)
+                if len(args) != arity:
+                    # what exception type to use here?
+                    raise parsing.ParseError(
+                        "%s (%s) needs %d operands but %d were given"
+                        % (op_uni, func.__name__, arity, len(args)))
+                args = [self.ensure_typed_expr(a, arg_type) for a in args]
+                self.operator_style = True
+                super().__init__(ret_type, *args, tcheck_args=False)
 
-        @classmethod
-        def random(cls, ctrl):
-            return cls(ctrl(typ=type_n), ctrl(typ=type_n))
+            def simplify(self):
+                parts = [to_python(a.copy()) for a in self.args]
+                if python_only and any([isinstance(a, TypedExpr) for a in parts]):
+                    return self
+                return derived(te(func(self, *parts)), self, desc=deriv_desc)
 
-    return BinOp
+            @classmethod
+            def random(cls, ctrl):
+                args = [ctrl(typ=arg_type) for i in range(arity)]
+                return cls(*args)
 
-def binary_num_rel(op, op_uni=None, op_latex=None, simplify_fun=None):
-    """Factory for binary numeric relations."""
-    if op_uni is None:
-        op_uni = op
-    if op_latex is None:
-        op_latex = op
-    class BinOp(BinaryOpExpr):
-        def __init__(self, arg1, arg2):
-            # this is a bit redundant but it works
-            super().__init__(type_t, op,
-                    self.ensure_typed_expr(arg1, types.type_n),
-                    self.ensure_typed_expr(arg2, types.type_n),
-                    op_uni, op_latex, tcheck_args=False)
+        WrappedOp.arity = arity
+        WrappedOp.canonical_name = op
+        WrappedOp.op_name_uni = op_uni
+        WrappedOp.op_name_latex = op_latex
 
-        def simplify(self):
-            if simplify_fun is None:
-                return self
-            if (isinstance(self.args[0].op, Number)
-                                    and isinstance(self.args[1].op, Number)):
-                return derived(te(simplify_fun(self.args[0].op,
-                                               self.args[1].op)),
-                                self, desc=op_uni)
-            else:
-                return self
+        WrappedOp.__name__ = func.__name__
+        return WrappedOp
+    return op_decorator
 
-        @classmethod
-        def random(cls, ctrl):
-            return cls(ctrl(typ=type_n), ctrl(typ=type_n))
+# proof of concept for now: the rest of the logical operators do not quite
+# work as pure python
+@op("~", type_t, type_t, op_uni="¬", op_latex="\\neg{}", deriv_desc="negation")
+def UnaryNegExpr(self, x):
+    return not x
 
-    return BinOp
+@op("-", type_n, type_n)
+def UnaryNegativeExpr(self, x):
+    return -x
 
-BinaryLExpr = binary_num_rel("<", "<", "<", simplify_fun=lambda x,y: x<y)
-BinaryLeqExpr = binary_num_rel("<=", "<=", "\\leq{}",
-                                            simplify_fun=lambda x,y: x<=y)
-BinaryGeqExpr = binary_num_rel(">=", ">=", "\\geq{}",
-                                            simplify_fun=lambda x,y: x>=y)
-BinaryGExpr = binary_num_rel(">", ">", ">", simplify_fun=lambda x,y: x>y)
-BinaryPlusExpr = binary_num_op("+", "+", "+", simplify_fun=lambda x,y: x+y)
-BinaryMinusExpr = binary_num_op("-", "-", "-", simplify_fun=lambda x,y: x-y)
-BinaryDivExpr = binary_num_op("/", "/", "/", simplify_fun=lambda x,y: x/y)
-BinaryTimesExpr = binary_num_op("*", "*", "*", simplify_fun=lambda x,y: x*y)
-BinaryExpExpr = binary_num_op("**", "**", "**", simplify_fun=lambda x,y: x**y)
+@op("+", type_n, type_n)
+def UnaryPositiveExpr(self, x):
+    return +x
+
+@op("<", type_n, type_t)
+def BinaryLExpr(self, x, y):
+    return x < y
+
+@op("<=", type_n, type_t, op_latex="\\leq{}")
+def BinaryLeqExpr(self, x, y):
+    return x <= y
+
+@op(">", type_n, type_t)
+def BinaryGExpr(self, x, y):
+    return x > y
+
+@op(">=", type_n, type_t, op_latex="\\geq{}")
+def BinaryGeqExpr(self, x, y):
+    return x >= y
+
+@op("+", type_n, type_n)
+def BinaryPlusExpr(self, x, y):
+    return x + y
+
+@op("-", type_n, type_n)
+def BinaryMinusExpr(self, x, y):
+    return x - y
+
+@op("*", type_n, type_n)
+def BinaryTimesExpr(self, x, y):
+    return x * y
+
+@op("/", type_n, type_n)
+def BinaryDivExpr(self, x, y):
+    return x / y
+
+@op("**", type_n, type_n)
+def BinaryExpExpr(self, x, y):
+    return x ** y
 
 
-# There's only one of these, so a factory would be silly
-class UnaryNegativeExpr(UnaryOpExpr):
-    def __init__(self, body):
-        super().__init__(type_n, "-", body, "-", "-")
-
-    def simplify(self):
-        if isinstance(self.args[0].op, Number):
-            return derived(te(- self.args[0].op), self, desc="unary -")
-        else:
-            return self
-
-    @classmethod
-    def random(cls, ctrl):
-        return cls(ctrl(typ=type_n))
-
-
-class SetContains(BinaryOpExpr):
+class SetContains(SyncatOpExpr):
     """Binary relation of set membership.  This uses `<<` as the symbol.
 
     Note that this _does_ support reduction if the set describes its members by
     condition, as set membership is equivalent to saturation of the
     characteristic function of the set."""
+
+    arity = 2
+    canonical_name = "<<"
+    # ∈ should work but I was having trouble with it (long ago, recheck)
+    op_name_latex = "\\in{}"
+
     def __init__(self, arg1, arg2, type_check=True):
         # seems like the best way to do the mutual type checking here?
         # Something more elegant?
@@ -2612,8 +2619,7 @@ class SetContains(BinaryOpExpr):
         arg1 = self.ensure_typed_expr(arg1, arg2.type.content_type)
         #super().__init__(type_t, "<<", arg1, arg2, "∈", "\\in{}", tcheck_args=False)
         # was having some trouble with the ∈ symbol, not sure what the problem is but disabled for now.
-        super().__init__(type_t, "<<", arg1, arg2, "<<", "\\in{}",
-                                                    tcheck_args=False)
+        super().__init__(type_t, arg1, arg2, tcheck_args=False)
 
     def copy(self):
         return SetContains(self.args[0], self.args[1])
@@ -2645,7 +2651,10 @@ class SetContains(BinaryOpExpr):
                                             typ=types.SetType(content_type)))
 
 
-class TupleIndex(BinaryOpExpr):
+class TupleIndex(SyncatOpExpr):
+    arity = 2
+    canonical_name = "[]" # not a normal SyncatOpExpr!
+
     def __init__(self, arg1, arg2, type_check=True):
         arg1 = self.ensure_typed_expr(arg1)
         if not isinstance(arg1.type, types.TupleType):
@@ -2662,8 +2671,7 @@ class TupleIndex(BinaryOpExpr):
             output_type = types.VariableType("X") # TODO this is problematic
             logger.warning(
                 "Using non-constant tuple index; not well-supported.")
-        super().__init__(output_type, "[]", arg1, arg2, "[]", "[]",
-                                                            tcheck_args=False)
+        super().__init__(output_type, arg1, arg2, tcheck_args=False)
 
     def copy(self):
         return TupleIndex(self.args[0], self.args[1])
@@ -3786,11 +3794,15 @@ def alpha_convert_r(t, overlap, conversions):
 
 class OperatorRegistry(object):
     class OpDesc(object):
-        def __init__(self, name, _cls, *targs):
-            self.name = name
+        def __init__(self, _cls, *targs):
+            self.name = _cls.canonical_name
             self.cls = _cls
             self.arity = len(targs)
             self.targs = targs
+
+        def get_names(self):
+            # maybe include unicode?
+            return [self.name] + list(self.cls.secondary_names)
 
         def has_blank_types(self):
             for t in self.targs:
@@ -3817,14 +3829,15 @@ class OperatorRegistry(object):
         self.canonicalize_binding_ops = dict()
         self.unparsed_binding_ops = set()
 
-    def add_operator(self, name, _cls, *targs):
-        desc = self.OpDesc(name, _cls, *targs)
-        # use dicts and not sets for the ordering
-        if not name in self.ops:
-            self.ops[name] = dict()
+    def add_operator(self, _cls, *targs):
+        desc = self.OpDesc(_cls, *targs)
+        for name in desc.get_names():
+            # use dicts and not sets for the ordering
+            if not name in self.ops:
+                self.ops[name] = dict()
+            self.ops[name][desc] = True
         if not desc.arity in self.arities:
             self.arities[desc.arity] = dict()
-        self.ops[name][desc] = True
         self.arities[desc.arity][desc] = True
 
     def get_descs(self, op):
@@ -3868,11 +3881,12 @@ class OperatorRegistry(object):
         if op.canonical_name is None:
             self.unparsed_binding_ops.add(op)
         else:
+            # no binding operator overloading
             if op.canonical_name in self.binding_ops:
                 logger.warning(
                     "Overriding existing binding operator '%s' in registry"
                     % op.canonical_name)
-                self.remove_op(op)
+                self.remove_binding_op(op)
             self.binding_ops[op.canonical_name] = op
             for alias in op.secondary_names:
                 self.canonicalize_binding_ops[alias] = op.canonical_name
@@ -3892,18 +3906,16 @@ registry = OperatorRegistry()
 
 def setup_type_t():
     global registry
-    def add_t_op(op, c, arity):
-        registry.add_operator(op, c, *[type_t for x in range(arity)])
+    def add_t_op(c):
+        registry.add_operator(c, *[type_t for x in range(c.arity)])
 
-    add_t_op("~", UnaryNegExpr, 1)
-    add_t_op("&", BinaryAndExpr, 2)
-    add_t_op("|", BinaryOrExpr, 2)
-    add_t_op(">>", BinaryArrowExpr, 2)
-    add_t_op("%", BinaryNeqExpr, 2)
-    add_t_op("^", BinaryNeqExpr, 2)
-    add_t_op("<=>", BinaryBiarrowExpr, 2)
-    add_t_op("==", BinaryBiarrowExpr, 2)
-    # these do syntactically permit higher order quantification...
+    add_t_op(UnaryNegExpr)
+    add_t_op(BinaryAndExpr)
+    add_t_op(BinaryOrExpr)
+    add_t_op(BinaryArrowExpr)
+    add_t_op(BinaryNeqExpr)
+    add_t_op(BinaryBiarrowExpr)
+    # these are not actually picky about the variable type as-implemented
     registry.add_binding_op(ForallUnary)
     registry.add_binding_op(ExistsUnary)
     registry.add_binding_op(ExistsExact)
@@ -3911,20 +3923,21 @@ def setup_type_t():
 
 def setup_type_n():
     global registry
-    def add_n_op(op, c, arity):
-        registry.add_operator(op, c, *[type_n for x in range(arity)])
+    def add_n_op(c):
+        registry.add_operator(c, *[type_n for x in range(c.arity)])
 
     # TODO: unary +, for better error msgs if nothing else
-    add_n_op("-", UnaryNegativeExpr, 1)
-    add_n_op("<", BinaryLExpr, 2)
-    add_n_op(">", BinaryGExpr, 2)
-    add_n_op("<=", BinaryLeqExpr, 2)
-    add_n_op(">=", BinaryGeqExpr, 2)
-    add_n_op("+", BinaryPlusExpr, 2)
-    add_n_op("-", BinaryMinusExpr, 2)
-    add_n_op("/", BinaryDivExpr, 2)
-    add_n_op("*", BinaryTimesExpr, 2)
-    add_n_op("**", BinaryExpExpr, 2)
+    add_n_op(UnaryNegativeExpr)
+    add_n_op(UnaryPositiveExpr)
+    add_n_op(BinaryLExpr)
+    add_n_op(BinaryGExpr)
+    add_n_op(BinaryLeqExpr)
+    add_n_op(BinaryGeqExpr)
+    add_n_op(BinaryPlusExpr)
+    add_n_op(BinaryMinusExpr)
+    add_n_op(BinaryDivExpr)
+    add_n_op(BinaryTimesExpr)
+    add_n_op(BinaryExpExpr)
 
 
 registry.add_binding_op(LFun)
@@ -3932,15 +3945,14 @@ setup_type_t()
 setup_type_n()
 # these operators enforces their own type checking. Can be overridden at a
 # specific type. TODO: use variable types?
-registry.add_operator("<=>", BinaryGenericEqExpr, None, None)
-registry.add_operator("==", BinaryGenericEqExpr, None, None)
+registry.add_operator(BinaryGenericEqExpr, None, None)
 
 # type e
 registry.add_binding_op(IotaUnary)
 registry.add_binding_op(IotaPartial)
 
 # type {X}
-registry.add_operator("<<", SetContains, None, None)
+registry.add_operator(SetContains, None, None)
 registry.add_binding_op(ConditionSet)
 
 def op_expr_factory(op, *args):
@@ -3954,6 +3966,7 @@ global true_term, false_term
 # TODO: is this a good idea?
 class FalseTypedTerm(TypedTerm):
     def __bool__(self):
+        # override TypedExpr.__bool__: returns True for everything else.
         return False
 
 true_term = TypedTerm("True", types.type_t)
@@ -4558,7 +4571,7 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t & False"), False)
         testsimp(self, te("True & p_t"), te("p_t"))
         testsimp(self, te("p_t & True"), te("p_t"))
-        testsimp(self, te("p_t & p_t"), te("p_t"))
+        testsimp(self, te("p_t & p_t"), te("p_t & p_t"))
         testsimp(self, te("p_t & q_t"), te("p_t & q_t"))
 
         # disjunction
@@ -4570,7 +4583,7 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t | False"), te("p_t"))
         testsimp(self, te("True | p_t"), True)
         testsimp(self, te("p_t | True"), True)
-        testsimp(self, te("p_t | p_t"), True)
+        testsimp(self, te("p_t | p_t"), te("p_t | p_t"))
         testsimp(self, te("p_t | q_t"), te("p_t | q_t"))
 
         # arrow
@@ -4582,7 +4595,7 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t >> False"), te("~p_t"))
         testsimp(self, te("True >> p_t"), te("p_t"))
         testsimp(self, te("p_t >> True"), True)
-        testsimp(self, te("p_t >> p_t"), True)
+        testsimp(self, te("p_t >> p_t"), te("p_t >> p_t"))
         testsimp(self, te("p_t >> q_t"), te("p_t >> q_t"))
 
         # biconditional
@@ -4595,7 +4608,7 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("True <=> p_t"), te("p_t"))
         testsimp(self, te("p_t <=> True"), te("p_t"))
         testsimp(self, te("p_t <=> q_t"), te("p_t <=> q_t"))
-        testsimp(self, te("p_t <=> p_t"), True)
+        testsimp(self, te("p_t <=> p_t"), te("p_t <=> p_t"))
 
         # neq
         testsimp(self, te("True =/= True"), False)
@@ -4607,7 +4620,7 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("True =/= p_t"), te("~p_t"))
         testsimp(self, te("p_t =/= True"), te("~p_t"))
         testsimp(self, te("p_t =/= q_t"), te("p_t =/= q_t"))
-        testsimp(self, te("p_t =/= p_t"), False)
+        testsimp(self, te("p_t =/= p_t"), te("p_t =/= p_t"))
 
     # each of these generates 1000 random expressions with the specified depth,
     # and checks whether their repr parses as equal to the original expression
