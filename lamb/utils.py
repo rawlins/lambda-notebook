@@ -1,4 +1,4 @@
-import sys, re, cgi
+import sys, re, html
 from numbers import Number
 
 global tree_error_printed
@@ -63,9 +63,9 @@ def ltx_print(*args):
                 s += x._repr_latex_()
             except:
                 if isinstance(x, str):
-                    s += cgi.escape(x)
+                    s += html.escape(x)
                 else:
-                    s += cgi.escape(repr(x))
+                    s += html.escape(repr(x))
         s += "<br />"
     return MiniLatex(s)
 
