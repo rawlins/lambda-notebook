@@ -2,9 +2,9 @@
 import collections, itertools, logging, html
 
 from lamb import utils, types, meta, display
-from lamb.utils import *
+from lamb.utils import ensuremath, MiniLatex
 from lamb.types import type_e, type_t, type_property, TypeMismatch
-from lamb.meta import  TypedExpr, ensuremath, MiniLatex
+from lamb.meta import  TypedExpr
 from lamb import tree_mini
 
 try:
@@ -311,7 +311,7 @@ class Assignment(MutableMapping):
         for k in assignment:
             if k in new_a:
                 # this will raise a TypeMismatch if the merge fails.
-                new_a[k] = meta.merge_tes(new_a[k], assignment[k],
+                new_a[k] = meta.core.merge_tes(new_a[k], assignment[k],
                                                             symmetric=False)
             else:
                 new_a[k] = assignment[k]
@@ -1391,7 +1391,7 @@ class CompositionResult(Composable):
                     step_i += 1
                 sub_i += 1
             i += 1
-        return meta.MiniLatex(s)
+        return MiniLatex(s)
 
     def tree(self, recurse=True, derivations=False, style=None):
         """Show the step-by-step derivation(s) as a proof tree."""
@@ -2956,7 +2956,7 @@ def pa_fun(binder, content, assignment=None):
                         content.content.under_assignment(assignment), vname)
     # totally brute force...
     used_variables = inner_fun.free_variables() | inner_fun.bound_variables()
-    outer_vname = meta.alpha_variant(outer_vname, used_variables)
+    outer_vname = meta.core.alpha_variant(outer_vname, used_variables)
     f = meta.LFun(types.type_e, (inner_fun)(outer_vname + "_e").reduce(),
                                                                     outer_vname)
     return BinaryComposite(binder, content, f)

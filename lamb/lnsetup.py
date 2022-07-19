@@ -49,18 +49,22 @@ def inject_into_ipython():
 
 def reload_lamb(use_nltk_tree=None):
     # should this reload the magics?
-    import imp
-    imp.reload(lamb.utils)
+    import importlib
+    importlib.reload(lamb.utils)
     if use_nltk_tree is not None:
         # inherit default from currently running version. TODO: too confusing?
         lamb.utils.use_nltk = use_nltk_tree
     lamb.magics.reset_envs()
-    imp.reload(lamb.types)
-    imp.reload(lamb.meta)
-    imp.reload(lamb.lang)
-    imp.reload(lamb.parsing)
-    imp.reload(lamb.display)
-    imp.reload(lamb.combinators)
+    importlib.reload(lamb.types)
+    importlib.reload(lamb.meta.core)
+    importlib.reload(lamb.meta.boolean)
+    importlib.reload(lamb.meta.number)
+    importlib.reload(lamb.meta.sets)
+    importlib.reload(lamb.meta)
+    importlib.reload(lamb.lang)
+    importlib.reload(lamb.parsing)
+    importlib.reload(lamb.display)
+    importlib.reload(lamb.combinators)
     lamb.reload_all = reload_lamb
     inject_into_ipython()
 

@@ -1,11 +1,13 @@
-#!/usr/local/bin/python3
-# -*- coding: utf-8 -*-
 import sys, re, logging, random, functools, inspect
 from numbers import Number
-from lamb import types, utils, parsing, display
+
+import lamb
+from lamb import types, parsing, display, utils
+from lamb.utils import ensuremath
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from lamb.types import type_property, type_transitive, BasicType, FunType
-from lamb.utils import *
+
+############### Basic stuff
 
 global logger
 def setup_logger():
@@ -40,16 +42,16 @@ def setup_logger():
 
 setup_logger()
 
+
 global _constants_use_custom, _type_system
 _constants_use_custom = False
-
-global _parser_assignment
-_parser_assignment = None
 
 def constants_use_custom(v):
     """Set whether constants use custom display routines."""
     global _constants_use_custom
     _constants_use_custom = v
+
+_type_system = types.poly_system
 
 # TODO: could consider associating TypedExpr with a type system rather than
 # using the global variable. advantages: generality.  Disadvantages: may be a
@@ -71,24 +73,13 @@ def ts_unify(a, b):
     return ts.unify(a, b)
 
 global unify
-unify = ts_unify
+unify = ts_unify # remove this?
 
 def ts_compatible(a, b):
     """Returns `True` or `False` depending on whether `a` and `b` are
     compatible types."""
     ts = get_type_system()
     return ts.unify(a,b) is not None
-
-def check_type(item, typ, raise_tm=True, msg=None):
-    ts = get_type_system()
-    if not ts.eq_check(item.content.type, typ):
-        if raise_tm:
-            raise types.TypeMismatch(item, typ, msg)
-        else:
-            return None
-    else:
-        return item
-
 
 def tp(s):
     """Convenience wrapper for the current type system's type parser."""
@@ -114,13 +105,212 @@ def term(s, typ=None, assignment=None):
     `typ`: the term's type, if specified."""
     return TypedTerm.term_factory(s, typ=typ, assignment=assignment)
 
-_type_system = types.poly_system
+def typed_expr(s):
+    # class method replaces this.  Call this instead of factory, which has a 
+    # slightly different semantics -- factory will make a copy if handed a
+    # TypedExpr.
+    return TypedExpr.ensure_typed_expr(s)
 
-global partiality_analysis, partiality_strict, partiality_weak
-partiality_strict = "strict"
-partiality_weak = "weak"
-partiality_analysis = partiality_weak
+def check_type(item, typ, raise_tm=True, msg=None):
+    ts = get_type_system()
+    if not ts.eq_check(item.content.type, typ):
+        if raise_tm:
+            raise types.TypeMismatch(item, typ, msg)
+        else:
+            return None
+    else:
+        return item
 
+
+def default_variable_type(s):
+    #TODO something better
+    return type_e
+
+def default_type(s):
+    if isinstance(s, TypedExpr):
+        return s.type
+    elif isinstance(s, Number):
+        return type_n
+    elif isinstance(s, str):
+        t = utils.num_or_str(s)
+        if isinstance(t, Number):
+            return type_n
+        elif is_var_symbol(t):
+            return default_variable_type(s)
+        else:
+            #TODO, better default
+            return type_t
+    else:
+        # TODO: more default special cases?  predicates?
+        raise NotImplementedError
+
+class MiniOp(object):
+    """This is a class to pass to a TypeMismatch so that the operator is
+    displayed nicely."""
+    def __init__(self, op_uni, op_latex, typ=None):
+        if typ != None:
+            self.type = typ
+        self.op_uni = op_uni
+        self.op_latex = op_latex
+
+    def __repr__(self):
+        return self.op_uni
+
+    def __str__(self):
+        return repr(self)
+
+    def latex_str(self):
+        return self.op_latex
+
+    def short_str_latex(self):
+        return self.latex_str()
+
+    def latex_str_long(self):
+        return latex_str(self)
+
+    def _repr_latex_(self):
+        return self.latex_str()
+
+    @classmethod
+    def from_op(cls, op):
+        return MiniOp(op.op_name, op.op_name_latex)
+
+
+
+class OperatorRegistry(object):
+    class OpDesc(object):
+        def __init__(self, _cls, *targs):
+            self.name = _cls.canonical_name
+            self.cls = _cls
+            self.arity = len(targs)
+            self.targs = targs
+
+        def __hash__(self):
+            # will prevent multiple overloads at the same arity using the
+            # same class...
+            return hash(self.name) ^ hash(self.cls.__name__) ^ hash(self.arity)
+
+        def __eq__(self, other):
+            return (self.name == other.name
+                and self.cls.__name__ == other.cls.__name__
+                and self.arity == other.arity
+                and self.targs == other.targs)
+
+        def get_names(self):
+            # maybe include unicode?
+            return [self.name] + list(self.cls.secondary_names)
+
+        def has_blank_types(self):
+            for t in self.targs:
+                if t is None:
+                    return True
+            return False
+
+        def check_viable(self, *args):
+            if self.arity != len(args):
+                return False
+            # None means don't check this arg place.
+            # If the relevant types are not in the current type system, this
+            # will fail.
+            for i in range(len(args)):
+                if (self.targs[i] is not None
+                            and not ts_compatible(self.targs[i], args[i].type)):
+                    return False
+            return True
+
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.ops = dict()
+        self.arities = dict()
+        self.binding_ops = dict()
+        self.canonicalize_binding_ops = dict()
+        self.unparsed_binding_ops = set()
+
+    def add_operator(self, _cls, *targs):
+        desc = self.OpDesc(_cls, *targs)
+        for name in desc.get_names():
+            # use dicts and not sets for the ordering
+            if not name in self.ops:
+                self.ops[name] = dict()
+            self.ops[name][desc] = True
+        if not desc.arity in self.arities:
+            self.arities[desc.arity] = dict()
+        self.arities[desc.arity][desc] = True
+
+    def get_descs(self, op):
+        return list(self.ops[op].keys())
+
+    def expr_factory(self, op, *args):
+        """Given some operator/relation symbol with arguments, construct an
+        appropriate TypedExpr subclass for that operator."""
+
+        if not op in self.ops:
+            raise parsing.ParseError("Unknown operator symbol '%s'" % op)
+
+        matches = [o for o in self.ops[op].keys() if o.arity == len(args)]
+        if not len(matches):
+            raise parsing.ParseError("No %d-ary operator symbol '%s'" % (len(args), op))
+
+        matches = [o for o in matches if o.check_viable(*args)]
+
+        # hacky: let any operators with specified types knock out any operators
+        # with None types. This could be made a lot more elegant, but the
+        # immediate goal here is to handle the equality case for type t cleanly
+        if len(matches) > 1:
+            matches = [o for o in matches if not o.has_blank_types()]
+
+        if not len(matches):
+            raise parsing.ParseError(
+                "No viable %d-ary operator symbol '%s' for args %s"
+                    % (len(args), op, repr(args)))
+
+        # this shouldn't come up for the built-in libraries, but should this
+        # be made more informative for user cases?
+        if len(matches) > 1:
+            raise parsing.ParseError(
+                "Ambiguous %d-ary operator symbol '%s' for args %s"
+                    % (len(args), op, repr(args)))
+
+        return matches[0].cls(*args)
+
+    def add_binding_op(self, op):
+        """Register an operator to be parsed."""
+        if op.canonical_name is None:
+            self.unparsed_binding_ops.add(op)
+        else:
+            # no binding operator overloading
+            if op.canonical_name in self.binding_ops:
+                logger.warning(
+                    "Overriding existing binding operator '%s' in registry"
+                    % op.canonical_name)
+                self.remove_binding_op(op)
+            self.binding_ops[op.canonical_name] = op
+            for alias in op.secondary_names:
+                self.canonicalize_binding_ops[alias] = op.canonical_name
+        BindingOp.compile_ops_re()
+
+    def remove_binding_op(self, op):
+        """Remove an operator from the parsing registry."""
+        for alias in self.binding_ops[op.canonical_name].secondary_names:
+            del self.canonicalize_binding_ops[alias]
+        if op.canonical_name is None:
+            self.unparsed_binding_ops.remove(op)
+        else:
+            del self.binding_ops[op.canonical_name]
+        BindingOp.compile_ops_re()
+
+
+global registry
+registry = OperatorRegistry()
+
+def op_expr_factory(op, *args):
+    global registry
+    return registry.expr_factory(op, *args)
+
+
+############### Type unification-related code
 
 class TypeEnv(object):
     def __init__(self, var_mapping=None, type_mapping=None):
@@ -334,6 +524,12 @@ def merge_tes(te1, te2, symmetric=True):
                 "Failed to merge typed expressions; result is not equal")
         return te1_new
 
+
+############### Core TypedExpr objects
+
+global _parser_assignment
+_parser_assignment = None
+
 class TypedExpr(object):
     """Basic class for a typed n-ary logical expression in a formal language.
     This class should generally be constructed using the factory method, not the
@@ -495,7 +691,6 @@ class TypedExpr(object):
                 env.merge(part.get_type_env(force_recalc=recalculate))
         return env
 
-
     def _unsafe_subst(self, i, s):
         self.args[i] = s
         return self
@@ -577,8 +772,8 @@ class TypedExpr(object):
         # Replace the alternative spellings of operators with canonical
         # spellings
         # TODO: derive from operator registry
-        to_eval = s.replace('==>', '>>').replace('<==', '<<')
-        to_eval = to_eval.replace('<=>', '%').replace('=/=', '^').replace('==', '%')
+        to_eval = s.replace('==>', '>>').replace('<==', '<<').replace('<=>', '%')
+        to_eval = to_eval.replace('=/=', '^').replace('==', '%').replace('=>', '>>')
         lcopy = locals.copy()
         lcopy.update(cls._parsing_locals)
         to_eval = TypedExpr.expand_terms(to_eval, assignment=assignment,
@@ -597,6 +792,7 @@ class TypedExpr(object):
             # other exceptions just get raised directly -- what comes up in
             # practice?
         _parser_assignment = None
+        from .sets import ListedSet
         if isinstance(result, tuple):
             return Tuple(result)
         elif isinstance(result, set):
@@ -830,9 +1026,10 @@ class TypedExpr(object):
                 v, typ = cls.try_parse_typed_term(s, assignment=assignment, strict=True)
             else:
                 v = s
-            v = num_or_str(v)
+            v = utils.num_or_str(v)
             if typ is not None:
                 type_vars = typ.bound_type_vars()
+            global _constants_use_custom
             if _constants_use_custom and not is_var_symbol(v):
                 return CustomTerm(v, typ=typ, assignment=assignment)
             else:
@@ -873,12 +1070,8 @@ class TypedExpr(object):
             # that needs parsed.
             # in the first two cases, return a unary TypedExpr
             s = args[0]
-            if s is True:
-                return true_term
-            elif s is False:
-                return false_term
-            elif isinstance(s, Number): 
-                return TypedTerm(s, type_n)
+            if s is True or s is False or isinstance(s, Number):
+                return from_python(s)
             elif isinstance(s, str):
                 #return cls.parse_expr_string(s, assignment)
                 return cls.parse(s, assignment)
@@ -1275,7 +1468,7 @@ class TypedExpr(object):
 
 
     def calculate_partiality(self, vars=None):
-        condition = true_term
+        condition = from_python(True)
         new_parts = list()
         for part in self:
             part_i = part.calculate_partiality(vars=vars)
@@ -1285,7 +1478,7 @@ class TypedExpr(object):
             new_parts.append(part_i)
         new_self = self.copy_local(*new_parts)
         condition = condition.simplify_all()
-        if condition is true_term:
+        if condition == from_python(True):
             intermediate = derived(Partial(new_self, condition), self,
                                                 "Partiality simplification")
             return derived(new_self, intermediate, "Partiality simplification")
@@ -1299,7 +1492,6 @@ class TypedExpr(object):
         composite TypedExpr, with the function (`self`) as the operator and the
         argument(s) as the arguments.  Type checking happens immediately."""
         
-        #print("globals: ", globals())
         return TypedExpr.factory(self, *args)
 
 
@@ -1417,6 +1609,7 @@ class TypedExpr(object):
 
 
 TypedExpr.add_local('TypedExpr', TypedExpr)
+
 
 class ApplicationExpr(TypedExpr):
     def __init__(self, fun, arg, defer=False, assignment=None, type_check=True):
@@ -1592,8 +1785,9 @@ class ApplicationExpr(TypedExpr):
 
     @classmethod
     def random(self, random_ctrl_fun):
+        from . import test
         ftyp = get_type_system().random_from_class(types.FunType)
-        fun = random_lfun_force_bound(ftyp, random_ctrl_fun)
+        fun = test.random_lfun_force_bound(ftyp, random_ctrl_fun)
         arg = random_ctrl_fun(typ=ftyp.left)
         return ApplicationExpr(fun, arg)
 
@@ -1852,8 +2046,8 @@ class TypedTerm(TypedExpr):
             if try_used and len(used_typed) > 0:
                 varname = (random.choice(list(used_typed))).op
         if varname is None:
-            if typ in random_term_base.keys():
-                base = random_term_base[typ]
+            if typ in cls.random_term_base.keys():
+                base = cls.random_term_base[typ]
             else:
                 base = "f"
             if not is_var:
@@ -1864,7 +2058,6 @@ class TypedTerm(TypedExpr):
 
 
 TypedExpr.add_local('TypedTerm', TypedTerm)
-
 
 class CustomTerm(TypedTerm):
     """A subclass of TypedTerm used for custom displays of term names.
@@ -1947,36 +2140,6 @@ class CustomTerm(TypedTerm):
             return "%s %s %s" % (arg_str, repr(self), self.get_custom())
 
 
-class MiniOp(object):
-    """This is a class to pass to a TypeMismatch so that the operator is
-    displayed nicely."""
-    def __init__(self, op_uni, op_latex, typ=None):
-        if typ != None:
-            self.type = typ
-        self.op_uni = op_uni
-        self.op_latex = op_latex
-
-    def __repr__(self):
-        return self.op_uni
-
-    def __str__(self):
-        return repr(self)
-
-    def latex_str(self):
-        return self.op_latex
-
-    def short_str_latex(self):
-        return self.latex_str()
-
-    def latex_str_long(self):
-        return latex_str(self)
-
-    def _repr_latex_(self):
-        return self.latex_str()
-
-    @classmethod
-    def from_op(cls, op):
-        return MiniOp(op.op_name, op.op_name_latex)
 
 ###############
 #
@@ -1984,10 +2147,12 @@ class MiniOp(object):
 #
 ###############
 
+# possibly these belong in boolean, or somewhere else?
+
 class Partial(TypedExpr):
     def __init__(self, body, condition, type_check=True):
         if condition is None:
-            condition = true_term
+            condition = from_python(True)
         if isinstance(body, Partial):
             condition = condition & body.condition
             body = body.body
@@ -2030,7 +2195,7 @@ class Partial(TypedExpr):
         return self.copy_local(result[1], result[2])
         
     def latex_str(self, **kwargs):
-        if self.condition and self.condition != true_term:
+        if self.condition and self.condition != from_python(True):
             return ensuremath("\\left|\\begin{array}{l}%s\\\\%s\\end{array}\\right|"
                 % (self.body.latex_str(**kwargs),
                    self.condition.latex_str(**kwargs)))
@@ -2051,7 +2216,7 @@ class Partial(TypedExpr):
         if isinstance(p, Partial) or isinstance(p, PLFun):
             return p.condition
         else:
-            return true_term
+            return from_python(True)
         
     @classmethod
     def get_atissue(cls, p):
@@ -2199,6 +2364,7 @@ TypedExpr.add_local("Disjunctive", Disjunctive.from_tuple)
 
 
 
+
 ###############
 #
 # Operators
@@ -2304,7 +2470,7 @@ class SyncatOpExpr(TypedExpr):
         if cls.arity != 2:
             raise ValueError("Can't join with a %d-ary operator", cls.arity)
         if len(l) == 0:
-            return true_term
+            return from_python(True)
         if len(l) == 1:
             return l[0]
         else:
@@ -2320,6 +2486,7 @@ class SyncatOpExpr(TypedExpr):
         return cls(*[ctrl(typ=type_t) for a in range(cls.arity)])
 
 def to_python(te):
+    from .boolean import true_term, false_term
     if te.type == type_n and isinstance(te.op, Number):
         return te.op
     elif te == true_term:
@@ -2329,176 +2496,17 @@ def to_python(te):
     else:
         return te
 
-# simplify principle: implement simplification that can be handled by reasoning
-# about constants, otherwise leave for the future. The goal of this code is
-# not to implement a prover.
-
-# could make a factory function for these
-class BinaryAndExpr(SyncatOpExpr):
-    canonical_name = "&"
-    op_name_uni = "∧"
-    op_name_latex = "\\wedge{}"
-
-    def __init__(self, arg1, arg2):
-        super().__init__(type_t, arg1, arg2)
-
-    def simplify(self):
-        def d(x):
-            return derived(x, self, desc="conjunction")
-        if self.args[0] == false_term or self.args[1] == false_term:
-            return d(false_term)
-        elif self.args[0] == true_term:
-            return d(self.args[1].copy())
-        elif self.args[1] == true_term:
-            return d(self.args[0].copy())
-        else:
-            return self
-
-class BinaryOrExpr(SyncatOpExpr):
-    canonical_name = "|"
-    op_name_uni = "∨"
-    op_name_latex = "\\vee{}"
-    def __init__(self, arg1, arg2):
-        super().__init__(type_t, arg1, arg2)
-
-    def simplify(self):
-        def d(x):
-            return derived(x, self, desc="disjunction")
-        if self.args[0] == true_term or self.args[1] == true_term:
-            return d(true_term)
-        elif self.args[0] == false_term:
-            # covers case of False | False
-            return d(self.args[1].copy())
-        elif self.args[1] == false_term:
-            return d(self.args[0].copy())
-        else:
-            return self
-
-
-#unicode arrow: →
-class BinaryArrowExpr(SyncatOpExpr):
-    canonical_name = ">>"
-    op_name_uni = "→"
-    op_name_latex = "\\rightarrow{}"
-
-    def __init__(self, arg1, arg2):
-        super().__init__(type_t, arg1, arg2)
-
-    def simplify(self):
-        def d(x):
-            return derived(x, self, desc="material implication")
-        if self.args[0] == false_term:
-            return d(true_term)
-        elif self.args[0] == true_term:
-            return d(self.args[1].copy())
-        elif self.args[1] == false_term:
-            return d(UnaryNegExpr(self.args[0]))
-        elif self.args[1] == true_term:
-            return d(true_term)
-        else:
-            return self
-
-# unicode: ↔
-class BinaryBiarrowExpr(SyncatOpExpr):
-    canonical_name = "<=>"
-    secondary_names = {"=="}
-    op_name_uni = "↔"
-    op_name_latex = "\\leftrightarrow{}"
-
-    def __init__(self, arg1, arg2):
-        super().__init__(type_t, arg1, arg2)
-
-    def simplify(self):
-        def d(x):
-            return derived(x, self, desc="biconditional")
-        if self.args[0] == false_term:
-            if self.args[1] == true_term:
-                return d(false_term)
-            elif self.args[1] == false_term:
-                return d(true_term)
-            else:
-                return d(UnaryNegExpr(self.args[1]))
-        elif self.args[0] == true_term:
-            if self.args[1] == false_term:
-                return d(false_term)
-            elif self.args[1] == true_term:
-                return d(true_term)
-            else:
-                return d(self.args[1].copy())
-        elif self.args[1] == false_term: # term+term is already taken care of
-            return d(UnaryNegExpr(self.args[0]))
-        elif self.args[1] == true_term:
-            return d(self.args[0].copy())
-        else:
-            return self
-
-
-# TODO: generalize this?
-class BinaryNeqExpr(SyncatOpExpr):
-    canonical_name = "^"
-    secondary_names = {"=/="}
-    op_name_uni = "≠"
-    op_name_latex = "\\not="
-    def __init__(self, arg1, arg2):
-        super().__init__(type_t, arg1, arg2)
-
-    def simplify(self):
-        def d(x):
-            return derived(x, self, desc="neq")
-        if self.args[0] == false_term:
-            if self.args[1] == true_term:
-                return d(true_term)
-            elif self.args[1] == false_term:
-                return d(false_term)
-            else:
-                return d(self.args[1].copy())
-                
-        elif self.args[0] == true_term:
-            if self.args[1] == false_term:
-                return d(true_term)
-            elif self.args[1] == true_term:
-                return d(false_term)
-            else:
-                return d(UnaryNegExpr(self.args[1]))
-        elif self.args[1] == true_term: # term+term is already taken care of
-            return d(UnaryNegExpr(self.args[0]))
-        elif self.args[1] == false_term:
-            return d(self.args[0].copy())
-        else:
-            # note: don't simplify p =/= q; this would be a job for a prover
-            return self
-
-
-class BinaryGenericEqExpr(SyncatOpExpr):
-    canonical_name = "<=>"
-    op_name_latex = "="
-
-    """Type-generic equality.  This places no constraints on the type of `arg1`
-    and `arg2` save that they be equal."""
-    def __init__(self, arg1, arg2):
-        # TODO: the interaction of this operator (and the type t variant)
-        # with polymorphic types is messy...
-        if arg1.type.is_polymorphic() or arg2.type.is_polymorphic():
-            raise TypeMismatch("Equality operator requires non-polymorphic types.")
-        arg1 = self.ensure_typed_expr(arg1)
-        # maybe raise the exception directly?
-        arg2 = self.ensure_typed_expr(arg2, arg1.type)
-        # some problems with equality using '==', TODO recheck, but for now
-        # just use "<=>" in the normalized form
-        super().__init__(type_t, arg1, arg2, tcheck_args = False)
-
-    def simplify(self):
-        if (isinstance(self.args[0].op, Number)
-                            and isinstance(self.args[1].op, Number)):
-            return derived(te(self.args[0].op == self.args[1].op),
-                                                    self, desc="Equality")
-        else:
-            return self # this would require a solver for the general case
-
-    @classmethod
-    def random(cls, ctrl, max_type_depth=1):
-        body_type = get_type_system().random_type(max_type_depth, 0.5)
-        return cls(ctrl(typ=body_type), ctrl(typ=body_type))
+def from_python(p):
+    # generalize me
+    from .boolean import true_term, false_term
+    if p is True:
+        return true_term
+    elif p is False:
+        return false_term
+    elif isinstance(p, Number):
+        return TypedTerm(p, type_n)
+    else:
+        raise NotImplementedError
 
 # decorator for wrapping simplify functions, see examples below.
 # TODO: this could be generalized a further...
@@ -2548,107 +2556,39 @@ def op(op, arg_type, ret_type,
         return WrappedOp
     return op_decorator
 
-# proof of concept for now: the rest of the logical operators do not quite
-# work as pure python
-@op("~", type_t, type_t, op_uni="¬", op_latex="\\neg{}", deriv_desc="negation")
-def UnaryNegExpr(self, x):
-    return not x
 
-@op("-", type_n, type_n)
-def UnaryNegativeExpr(self, x):
-    return -x
+# probably belongs elsewhere
+class BinaryGenericEqExpr(SyncatOpExpr):
+    canonical_name = "<=>"
+    op_name_latex = "="
 
-@op("+", type_n, type_n)
-def UnaryPositiveExpr(self, x):
-    return +x
-
-@op("<", type_n, type_t)
-def BinaryLExpr(self, x, y):
-    return x < y
-
-@op("<=", type_n, type_t, op_latex="\\leq{}")
-def BinaryLeqExpr(self, x, y):
-    return x <= y
-
-@op(">", type_n, type_t)
-def BinaryGExpr(self, x, y):
-    return x > y
-
-@op(">=", type_n, type_t, op_latex="\\geq{}")
-def BinaryGeqExpr(self, x, y):
-    return x >= y
-
-@op("+", type_n, type_n)
-def BinaryPlusExpr(self, x, y):
-    return x + y
-
-@op("-", type_n, type_n)
-def BinaryMinusExpr(self, x, y):
-    return x - y
-
-@op("*", type_n, type_n)
-def BinaryTimesExpr(self, x, y):
-    return x * y
-
-@op("/", type_n, type_n)
-def BinaryDivExpr(self, x, y):
-    return x / y
-
-@op("**", type_n, type_n)
-def BinaryExpExpr(self, x, y):
-    return x ** y
-
-
-class SetContains(SyncatOpExpr):
-    """Binary relation of set membership.  This uses `<<` as the symbol.
-
-    Note that this _does_ support reduction if the set describes its members by
-    condition, as set membership is equivalent to saturation of the
-    characteristic function of the set."""
-
-    arity = 2
-    canonical_name = "<<"
-    # ∈ should work but I was having trouble with it (long ago, recheck)
-    op_name_latex = "\\in{}"
-
-    def __init__(self, arg1, arg2, type_check=True):
-        # seems like the best way to do the mutual type checking here?
-        # Something more elegant?
+    """Type-generic equality.  This places no constraints on the type of `arg1`
+    and `arg2` save that they be equal."""
+    def __init__(self, arg1, arg2):
+        # TODO: the interaction of this operator (and the type t variant)
+        # with polymorphic types is messy...
+        if arg1.type.is_polymorphic() or arg2.type.is_polymorphic():
+            raise TypeMismatch("Equality operator requires non-polymorphic types.")
         arg1 = self.ensure_typed_expr(arg1)
-        arg2 = self.ensure_typed_expr(arg2, types.SetType(arg1.type))
-        arg1 = self.ensure_typed_expr(arg1, arg2.type.content_type)
-        #super().__init__(type_t, "<<", arg1, arg2, "∈", "\\in{}", tcheck_args=False)
-        # was having some trouble with the ∈ symbol, not sure what the problem is but disabled for now.
-        super().__init__(type_t, arg1, arg2, tcheck_args=False)
+        # maybe raise the exception directly?
+        arg2 = self.ensure_typed_expr(arg2, arg1.type)
+        # some problems with equality using '==', TODO recheck, but for now
+        # just use "<=>" in the normalized form
+        super().__init__(type_t, arg1, arg2, tcheck_args = False)
 
-    def copy(self):
-        return SetContains(self.args[0], self.args[1])
-
-    def copy_local(self, arg1, arg2, type_check=True):
-        return SetContains(arg1, arg2)
-
-    def reduce(self):
-        if isinstance(self.args[1], ConditionSet):
-            derivation = self.derivation
-            step = (self.args[1].to_characteristic()(self.args[0])).reduce()
-            step.derivation = derivation # suppress the intermediate parts of
-                                         # this derivation, if any
-            return derived(step, self, "∈ reduction")
+    def simplify(self):
+        if (isinstance(self.args[0].op, Number)
+                            and isinstance(self.args[1].op, Number)):
+            return derived(te(self.args[0].op == self.args[1].op),
+                                                    self, desc="Equality")
         else:
-            # leave ListedSets as-is for now.  TODO could expand this using
-            # disjunction.
-            return self
-
-    def reducible(self):
-        if isinstance(self.args[1], ConditionSet):
-            return True
-        return False
+            return self # this would require a solver for the general case
 
     @classmethod
     def random(cls, ctrl, max_type_depth=1):
-        content_type = get_type_system().random_type(max_type_depth, 0.5)
-        return SetContains(ctrl(typ=content_type), ctrl(
-                                            typ=types.SetType(content_type)))
+        body_type = get_type_system().random_type(max_type_depth, 0.5)
+        return cls(ctrl(typ=body_type), ctrl(typ=body_type))
+
 
 
 class TupleIndex(SyncatOpExpr):
@@ -2729,6 +2669,8 @@ class TupleIndex(SyncatOpExpr):
                                                         allow_empty=False)
         index = random.choice(range(len(tup)))
         return TupleIndex(tup, index)
+
+
 
 ###############
 #
@@ -3000,6 +2942,9 @@ class BindingOp(TypedExpr):
         return False
 
     def project_partiality_strict(b, body, condition):
+        # refactor somehow?
+        from .sets import ConditionSet
+        from .boolean import ForallUnary
         b_cls = type(b)
         if isinstance(b, ConditionSet) or isinstance(b, LFun):
             return b
@@ -3008,6 +2953,9 @@ class BindingOp(TypedExpr):
                                             ForallUnary(b.var_instance, body))
 
     def project_partiality_weak(b, body, condition):
+        # refactor somehow?
+        from .sets import ConditionSet
+        from .boolean import ForallUnary, ExistsUnary, IotaUnary, ExistsExact
         b_cls = type(b)
         if isinstance(b, ForallUnary):
             return Partial(b_cls(b.var_instance, body),
@@ -3038,7 +2986,7 @@ class BindingOp(TypedExpr):
 
         new_body = self.body.calculate_partiality(vars=vars)
         if isinstance(new_body, Partial):
-            if new_body.condition is true_term:
+            if new_body.condition == from_python(True):
                 return derived(self.copy_local(self.var_instance, new_body),
                                             self, "Partiality simplification")
             if self.varname in new_body.condition.free_variables():
@@ -3184,314 +3132,13 @@ class BindingOp(TypedExpr):
 
     @classmethod
     def random(cls, ctrl, body_type=type_t, max_type_depth=1):
-        global random_used_vars
+        from . import test
         var_type = get_type_system().random_type(max_type_depth, 0.5)
-        variable = random_term(var_type, usedset=random_used_vars,
+        variable = test.random_term(var_type, usedset=test.random_used_vars,
                                                 prob_used=0.2, prob_var=1.0)
-        random_used_vars |= {variable}
+        test.random_used_vars |= {variable}
         return cls(variable, ctrl(typ=type_t))
 
-
-class ConditionSet(BindingOp):
-    """A set represented as a condition on a variable.
-
-    The body must be of type t."""
-
-    canonical_name = "Set"
-    op_name_uni="Set"
-    op_name_latex="Set"
-
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        body = self.ensure_typed_expr(body, assignment=assignment)
-        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body,
-                varname=varname, body_type=types.type_t, assignment=assignment,
-                type_check=type_check)
-        self.type = types.SetType(self.vartype)
-
-    def structural_singleton(self):
-        pass
-
-    def term(self):
-        return False
-
-    def latex_str(self, parens=True, **kwargs):
-        return ensuremath("\\{%s_{%s}\\:|\\: "
-                            % (self.varname, self.vartype.latex_str())
-                    + self.body.latex_str(**kwargs) + "\\}")
-
-    def __lshift__(self, i):
-        return SetContains(i, self)
-
-    def to_characteristic(self):
-        """Return a LFun based on the condition used to describe the set."""
-        return LFun(self.vartype, self.body, self.varname)
-
-    def try_adjust_type_local(self, unified_type, derivation_reason,
-                                                            assignment, env):
-        inner_type = unified_type.content_type
-        char = self.to_characteristic()
-        sub_var = TypedTerm(self.varname, inner_type)
-        new_condition = char.apply(sub_var)
-        return self.copy_local(sub_var, new_condition)
-
-class ListedSet(TypedExpr):
-    """A listed set is a set that simply lists members."""
-    canonical_name = "ListedSet"
-    op_name_uni="ListedSet"
-    op_name_latex="ListedSet"
-
-    def __init__(self, iterable, typ=None, assignment=None, type_check=True):
-        s = set(iterable) # remove duplicates, flatten order
-        args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
-        args = sorted(args, key=repr) # for a canonical ordering
-        if len(args) == 0 and typ is None:
-            typ = types.VariableType("X") # could be a set of anything
-        elif typ is None:
-            typ = args[0].type
-        for i in range(len(args)):
-            # type checking TODO: this isn't right, would need to pick the
-            # strongest type
-            args[i] = self.ensure_typed_expr(args[i], typ)
-        super().__init__("Set", *args)
-        #self.op = "Set"
-        self.type = types.SetType(typ)
-
-    def subst(self, i, s):
-        if len(self.args) < 2:
-            return super().subst(i, s)
-        else:
-            raise NotImplementedError(
-                "Beta reduction into a set of size>1 not currently supported.")
-            # TODO deal with this
-            # the problem is the same as usual -- set order isn't stable so we
-            # need to do this all at once rather than  member-by-member.
-
-    def copy(self):
-        return ListedSet(self.args)
-
-    def copy_local(self, *args, type_check=True):
-        return ListedSet(args)
-
-    def term(self):
-        return False
-
-    def __lshift__(self, i):
-        """Use the `<<` operator for set membership."""
-        return SetContains(i, self)
-
-    def set(self):
-        """Return a python `set` version of the ListedSet.
-
-        Note that this isn't guaranteed to be defined for anything with a set
-        type."""
-        return set(self.args)
-
-    def cardinality(self):
-        return len(self.args)
-
-    def to_condition_set(self):
-        """Convert to a condition set by disjoining members."""
-        # ensure that we build a condition set from a variable that is not free
-        # in any of the members
-        varname = self.find_safe_variable(starting="x")
-        conditions = [BinaryGenericEqExpr(TypedTerm(varname, a.type), a)
-                                                            for a in self.args]
-        return ConditionSet(self.type.content_type,
-                            BinaryOrExpr.join(*conditions), varname=varname)
-
-    def reduce_all(self):
-        """Special-cased reduce_all for listed sets.  There are two problems.
-        First, the reduction may actually result in a change in the size of the
-        set, something generally not true of reduction elsewhere.  Second,
-        because the constructor calls `set`, `copy` is not guaranteed to return
-        an object with a stable order.  Therefore we must batch the reductions
-        (where the TypedExpr version doesn't).
-
-        Note that currently this produces non-ideal derivation sequences."""
-        dirty = False
-        accum = list()
-        result = self
-        for i in range(len(result.args)):
-            new_arg_i = result.args[i].reduce_all()
-            if new_arg_i is not result.args[i]:
-                dirty = True
-                reason = "Recursive reduction of set member %s" % (i+1)
-                # TODO: this isn't quite right but I can't see what else to do
-                # right now
-                result = derived(result, result, desc=reason,
-                                    subexpression=new_arg_i, allow_trivial=True)
-                accum.append(new_arg_i)
-            else:
-                accum.append(new_arg_i)
-        if dirty:
-            new_result = ListedSet(accum)
-            new_result = derived(new_result, result,
-                            desc="Construction of set from reduced set members")
-            result = new_result
-        return result
-
-
-    def __repr__(self):
-        return repr(set(self.args))
-
-    def latex_str(self, **kwargs):
-        inner = ", ".join([a.latex_str(**kwargs) for a in self.args])
-        return ensuremath("\\{" + inner + "\\}")
-
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
-                                                                        env):
-        inner_type = unified_type.content_type
-        content = [a.try_adjust_type(inner_type,
-                        derivation_reason=derivation_reason,
-                        assignment=assignment) for a in self.args]
-        result = self.copy_local(*content)
-        return result
-
-    @classmethod
-    def random(self, ctrl, max_type_depth=1, max_members=6, allow_empty=True):
-        typ = get_type_system().random_type(max_type_depth, 0.5)
-        if allow_empty:
-            r = range(max_members+1)
-        else:
-            r = range(max_members+1)[1:]
-        length = random.choice(r)
-        members = [ctrl(typ=typ) for i in range(length)]
-        return ListedSet(members)
-
-
-
-class ForallUnary(BindingOp):
-    """Universal unary quantifier"""
-    canonical_name = "Forall"
-    op_name_uni = "∀"
-    op_name_latex = "\\forall{}"
-
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        super().__init__(var_or_vtype, types.type_t, body, varname=varname,
-                                assignment=assignment, type_check=type_check)
-
-    def copy(self):
-        return ForallUnary(self.vartype, self.body, self.varname)
-
-    def copy_local(self, var, arg, type_check=True):
-        return ForallUnary(var, arg, type_check=type_check)
-
-    def simplify(self):
-        # note: not valid if the domain of individuals is completely empty
-        # (would return True)
-        if not self.varname in self.body.free_variables():
-            return self.body
-        return self
-
-class ExistsUnary(BindingOp):
-    """Existential unary quantifier"""
-    canonical_name = "Exists"
-    op_name_uni="∃"
-    op_name_latex="\\exists{}"
-
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        super().__init__(var_or_vtype, types.type_t, body, varname=varname,
-                    assignment=assignment, type_check=type_check)
-
-    def copy(self):
-        return ExistsUnary(self.vartype, self.body, self.varname)
-
-    def copy_local(self, var, arg, type_check=True):
-        return ExistsUnary(var, arg, type_check=type_check)        
-
-    def simplify(self):
-        # note: not valid if the domain of individuals is completely empty
-        # (would return False)
-        if not self.varname in self.body.free_variables():
-            return self.body
-        return self
-
-class ExistsExact(BindingOp):
-    """Existential unary quantifier"""
-    canonical_name = "ExistsExact"
-    op_name_uni="∃!"
-    op_name_latex="\\exists{}!"
-
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        super().__init__(var_or_vtype, types.type_t, body, varname=varname,
-                                assignment=assignment, type_check=type_check)
-
-    def copy(self):
-        return ExistsExact(self.vartype, self.body, self.varname)
-
-    def copy_local(self, var, arg, type_check=True):
-        return ExistsExact(var, arg, type_check=type_check)        
-
-class IotaUnary(BindingOp):
-    """Iota operator.  This is best construed as Russellian."""
-    canonical_name = "Iota"
-    op_name_uni = "ι"
-    op_name_latex="\\iota{}"
-    secondary_names = {"ι"}
-
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body,
-            varname=varname, body_type=types.type_t, assignment=assignment,
-            type_check=type_check)
-        self.type = self.vartype
-
-    def copy(self):
-        return IotaUnary(self.vartype, self.body, self.varname)
-
-    def copy_local(self, var, arg, type_check=True):
-        return IotaUnary(var, arg, type_check=type_check)
-
-    def to_test(self, x):
-        """Return a LFun based on the condition used to describe the set."""
-        return LFun(self.vartype, self.body, self.varname).apply(x)
-
-
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
-                                                                        env):
-        sub_var = TypedTerm(self.varname, unified_type)
-        # TODO: does this need to pass in assignment?
-        new_condition = self.to_test(sub_var)
-        result = self.copy_local(sub_var, new_condition)
-        return result
-
-
-class IotaPartial(IotaUnary):
-    canonical_name = "IotaPartial"
-    op_name_uni = "ι"
-    op_name_latex="\\iota{}"
-    secondary_names = {}
-
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        super().__init__(var_or_vtype, body, varname, assignment, type_check)
-
-    def copy(self):
-        return IotaPartial(self.vartype, self.body, self.varname)
-
-    def copy_local(self, var, arg, type_check=True):
-        return IotaPartial(var, arg, type_check=type_check)
-
-    def calculate_partiality(self, vars=None):
-        new_body = self.body.calculate_partiality(vars=vars)
-        # defer any further calculation if there are bound variables in the body
-        if vars is not None:
-            if vars | new_body.free_variables():
-                return derived(self.copy_local(self.var_instance, new_body),
-                                            self, "Partiality simplification")
-        if isinstance(new_body, Partial):
-            new_body = new_body.body & new_body.condition
-        new_condition = new_body.copy()
-
-        new_body = IotaUnary(self.var_instance, new_body)
-        if self.varname in new_condition.free_variables():
-            new_condition = ExistsExact(self.var_instance, new_condition)
-        return derived(Partial(new_body, new_condition), self,
-                                                    "Partiality simplification")
 
 class LFun(BindingOp):
     """A typed function.  Can itself be used as an operator in a TypedExpr.
@@ -3599,9 +3246,10 @@ class LFun(BindingOp):
 
     @classmethod
     def random(self, ctrl):
+        from . import test
         # not great at reusing bound variables
         ftyp = get_type_system().random_from_class(types.FunType)
-        return random_lfun(ftyp, ctrl)
+        return test.random_lfun(ftyp, ctrl)
 
 def geach_combinator(gtype, ftype):
     body = term("g", gtype)(term("f", ftype)(term("x", ftype.left)))
@@ -3785,246 +3433,6 @@ def alpha_convert_r(t, overlap, conversions):
     return t
 
 
-###############
-#
-# Setup
-#
-###############
-
-
-class OperatorRegistry(object):
-    class OpDesc(object):
-        def __init__(self, _cls, *targs):
-            self.name = _cls.canonical_name
-            self.cls = _cls
-            self.arity = len(targs)
-            self.targs = targs
-
-        def get_names(self):
-            # maybe include unicode?
-            return [self.name] + list(self.cls.secondary_names)
-
-        def has_blank_types(self):
-            for t in self.targs:
-                if t is None:
-                    return True
-            return False
-
-        def check_viable(self, *args):
-            if self.arity != len(args):
-                return False
-            # None means don't check this arg place.
-            # If the relevant types are not in the current type system, this
-            # will fail.
-            for i in range(len(args)):
-                if (self.targs[i] is not None
-                            and not ts_compatible(self.targs[i], args[i].type)):
-                    return False
-            return True
-
-    def __init__(self):
-        self.ops = dict()
-        self.arities = dict()
-        self.binding_ops = dict()
-        self.canonicalize_binding_ops = dict()
-        self.unparsed_binding_ops = set()
-
-    def add_operator(self, _cls, *targs):
-        desc = self.OpDesc(_cls, *targs)
-        for name in desc.get_names():
-            # use dicts and not sets for the ordering
-            if not name in self.ops:
-                self.ops[name] = dict()
-            self.ops[name][desc] = True
-        if not desc.arity in self.arities:
-            self.arities[desc.arity] = dict()
-        self.arities[desc.arity][desc] = True
-
-    def get_descs(self, op):
-        return list(self.ops[op].keys())
-
-    def expr_factory(self, op, *args):
-        """Given some operator/relation symbol with arguments, construct an
-        appropriate TypedExpr subclass for that operator."""
-
-        if not op in self.ops:
-            raise parsing.ParseError("Unknown operator symbol '%s'" % op)
-
-        matches = [o for o in self.ops[op].keys() if o.arity == len(args)]
-        if not len(matches):
-            raise parsing.ParseError("No %d-ary operator symbol '%s'" % (len(args), op))
-
-        matches = [o for o in matches if o.check_viable(*args)]
-
-        # hacky: let any operators with specified types knock out any operators
-        # with None types. This could be made a lot more elegant, but the
-        # immediate goal here is to handle the equality case for type t cleanly
-        if len(matches) > 1:
-            matches = [o for o in matches if not o.has_blank_types()]
-
-        if not len(matches):
-            raise parsing.ParseError(
-                "No viable %d-ary operator symbol '%s' for args %s"
-                    % (len(args), op, repr(args)))
-
-        # this shouldn't come up for the built-in libraries, but should this
-        # be made more informative for user cases?
-        if len(matches) > 1:
-            raise parsing.ParseError(
-                "Ambiguous %d-ary operator symbol '%s' for args %s"
-                    % (len(args), op, repr(args)))
-
-        return matches[0].cls(*args)
-
-    def add_binding_op(self, op):
-        """Register an operator to be parsed."""
-        if op.canonical_name is None:
-            self.unparsed_binding_ops.add(op)
-        else:
-            # no binding operator overloading
-            if op.canonical_name in self.binding_ops:
-                logger.warning(
-                    "Overriding existing binding operator '%s' in registry"
-                    % op.canonical_name)
-                self.remove_binding_op(op)
-            self.binding_ops[op.canonical_name] = op
-            for alias in op.secondary_names:
-                self.canonicalize_binding_ops[alias] = op.canonical_name
-        BindingOp.compile_ops_re()
-
-    def remove_binding_op(self, op):
-        """Remove an operator from the parsing registry."""
-        for alias in self.binding_ops[op.canonical_name].secondary_names:
-            del self.canonicalize_binding_ops[alias]
-        if op.canonical_name is None:
-            self.unparsed_binding_ops.remove(op)
-        else:
-            del self.binding_ops[op.canonical_name]
-        BindingOp.compile_ops_re()
-
-registry = OperatorRegistry()
-
-def setup_type_t():
-    global registry
-    def add_t_op(c):
-        registry.add_operator(c, *[type_t for x in range(c.arity)])
-
-    add_t_op(UnaryNegExpr)
-    add_t_op(BinaryAndExpr)
-    add_t_op(BinaryOrExpr)
-    add_t_op(BinaryArrowExpr)
-    add_t_op(BinaryNeqExpr)
-    add_t_op(BinaryBiarrowExpr)
-    # these are not actually picky about the variable type as-implemented
-    registry.add_binding_op(ForallUnary)
-    registry.add_binding_op(ExistsUnary)
-    registry.add_binding_op(ExistsExact)
-
-
-def setup_type_n():
-    global registry
-    def add_n_op(c):
-        registry.add_operator(c, *[type_n for x in range(c.arity)])
-
-    # TODO: unary +, for better error msgs if nothing else
-    add_n_op(UnaryNegativeExpr)
-    add_n_op(UnaryPositiveExpr)
-    add_n_op(BinaryLExpr)
-    add_n_op(BinaryGExpr)
-    add_n_op(BinaryLeqExpr)
-    add_n_op(BinaryGeqExpr)
-    add_n_op(BinaryPlusExpr)
-    add_n_op(BinaryMinusExpr)
-    add_n_op(BinaryDivExpr)
-    add_n_op(BinaryTimesExpr)
-    add_n_op(BinaryExpExpr)
-
-
-registry.add_binding_op(LFun)
-setup_type_t()
-setup_type_n()
-# these operators enforces their own type checking. Can be overridden at a
-# specific type. TODO: use variable types?
-registry.add_operator(BinaryGenericEqExpr, None, None)
-
-# type e
-registry.add_binding_op(IotaUnary)
-registry.add_binding_op(IotaPartial)
-
-# type {X}
-registry.add_operator(SetContains, None, None)
-registry.add_binding_op(ConditionSet)
-
-def op_expr_factory(op, *args):
-    global registry
-    return registry.expr_factory(op, *args)
-
-
-global true_term, false_term
-
-# for whatever reason, monkey patching __bool__ doesn't work.
-# TODO: is this a good idea?
-class FalseTypedTerm(TypedTerm):
-    def __bool__(self):
-        # override TypedExpr.__bool__: returns True for everything else.
-        return False
-
-true_term = TypedTerm("True", types.type_t)
-false_term = FalseTypedTerm("False", types.type_t)
-
-def test_setup():
-    global ident, ia, ib, P, Q, p, y, t, testf, body, pmw_test1, pmw_test1b, t2
-    ident = te("L x_e : x")
-    ia = TypedExpr.factory(ident, "y")
-    ib = LFun(type_e, ia, "y")
-    P = TypedTerm("P", FunType(type_e, type_t))
-    Q = TypedTerm("Q", FunType(type_e, type_t))
-    x = TypedTerm("x", type_e)
-    y = TypedTerm("y", type_e)
-    t = TypedExpr.factory(P, x)
-    t2 = TypedExpr.factory(Q, x)
-    body = TypedExpr.factory("&", t, t) | t
-    p = TypedTerm("p", type_t)
-    testf = LFun(type_e, body)
-
-    pmw_test1 = LFun(type_t, LFun(type_e, t & p, "x"), "p")
-    pmw_test1b = LFun(type_e, t & t2, "x")
-    # test: when a free variable in a function scopes under an operator, do not
-    # bind the variable on application
-    assert pmw_test1.apply(t2) != pmw_test1b
-
-    # Different version of the same test: direct variable substitution
-    test2 = TypedExpr.factory("L y_e : L x_e : y_e")
-    test2b = TypedExpr.factory("L x_e : x_e")
-    assert test2.apply(x) != test2b
-
-def default_variable_type(s):
-    #TODO something better
-    return type_e
-
-def default_type(s):
-    if isinstance(s, TypedExpr):
-        return s.type
-    elif isinstance(s, Number):
-        return type_n
-    elif isinstance(s, str):
-        t = num_or_str(s)
-        if isinstance(t, Number):
-            return type_n
-        elif is_var_symbol(t):
-            return default_variable_type(s)
-        else:
-            #TODO, better default
-            return type_t
-    else:
-        # TODO: more default special cases?  predicates?
-        raise NotImplementedError
-
-def typed_expr(s):
-    # class method replaces this.  Call this instead of factory, which has a 
-    # slightly different semantics -- factory will make a copy if handed a
-    # TypedExpr.
-    return TypedExpr.ensure_typed_expr(s)
 
 def is_symbol(s):
     "A string s is a symbol if it starts with an alphabetic char."
@@ -4267,370 +3675,3 @@ def add_subexpression_step(te, subexpr, desc=None, latex_desc=None):
     add_derivation_step(te, end, start, desc=desc, latex_desc=latex_desc,
                                                         subexpression=subexpr)
     return te
-
-test_setup()
-
-######################
-#
-# testing code
-#
-# * some code for generating random expressions within certain parameters
-# * unit tests
-#
-######################
-
-
-
-def repr_parse(e):
-    result = te(repr(e), let=False)
-    return result == e
-
-random_types = [type_t]
-random_ops = ["&", "|", ">>", "%"]
-
-def random_tf_op_expr(ctrl_fun):
-    global registry
-    op = random.choice(random_ops)
-    while op not in registry.ops:
-        op = random.choice(random_ops)
-    op = random.choice(registry.get_descs(op)) # probably size 1
-    if op.has_blank_types():
-        raise NotImplementedError
-    return op.cls(*[ctrl_fun(typ=t) for t in op.targs])
-
-random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
-
-def random_term(typ=None, blockset=None, usedset=set(), prob_used=0.8,
-                                            prob_var=0.5, max_type_depth=1):
-    return TypedTerm.random(random_ctrl_fun=None,
-                            typ=typ,
-                            blockset=blockset,
-                            usedset=usedset,
-                            prob_used=prob_used,
-                            prob_var=prob_var,
-                            max_type_depth=max_type_depth)
-
-# use this to try to get more reused bound variables (which tend to have odd
-# types when generated randomly)
-def random_pred_combo_from_term(output_type, ctrl, usedset):
-    ts = get_type_system()
-    term = (random.choice(list(usedset))).copy()
-    pred_type = ts.unify_ar(term.type, output_type)
-    pred = ctrl(typ=pred_type)
-    return pred(term)
-
-def random_fa_combo(output_type, ctrl, max_type_depth=1):
-    ts = get_type_system()
-    input_type = ts.random_type(max_type_depth, 0.5, allow_variables=False)
-    fun_type = types.FunType(input_type, output_type)
-    result = (ctrl(typ=fun_type))(ctrl(typ=input_type))
-    return result
-
-def random_lfun(typ, ctrl):
-    global random_used_vars
-    typ = get_type_system().unify(typ, tp("<?,?>"))
-    input_type = typ.left
-    body_type = typ.right
-    variable = random_term(input_type, usedset=random_used_vars, prob_used=0.2,
-                                                        prob_var=1.0)
-    random_used_vars |= {variable}
-    return LFun(variable, ctrl(typ=body_type))
-
-def random_lfun_force_bound(typ, ctrl):
-    global random_used_vars
-    typ = get_type_system().unify(typ, tp("<?,?>"))
-    input_type = typ.left
-    body_type = typ.right
-    variable = random_term(input_type, usedset=random_used_vars, prob_used=0.2,
-                                                        prob_var=1.0)
-    random_used_vars |= {variable}
-    return LFun(variable, random_pred_combo_from_term(body_type, ctrl,
-                                                    usedset=random_used_vars))
-
-
-def random_binding_expr(ctrl, max_type_depth=1):
-    global random_used_vars
-    ts = get_type_system()
-    options = [ForallUnary, ExistsUnary, ExistsExact]
-    op_class = random.choice(options)
-    var_type = ts.random_type(max_type_depth, 0.5)
-    variable = random_term(var_type, usedset=random_used_vars, prob_used=0.2,
-                                                                prob_var=1.0)
-    random_used_vars |= {variable}
-    return op_class(variable, ctrl(typ=type_t))
-
-def random_from_class(cls, max_depth=1, used_vars=None):
-    global random_used_vars
-    if used_vars is None:
-        used_vars = set()
-    random_used_vars = used_vars
-
-    def ctrl(**args):
-        global random_used_vars
-        return random_expr(depth=max_depth-1, used_vars=random_used_vars,
-                                                                    **args)
-
-    return cls.random(ctrl)
-
-
-# ugh, need to find a way to do this not by side effect
-global random_used_vars
-random_used_vars = set()
-
-def random_expr(typ=None, depth=1, used_vars=None):
-    """Generate a random expression of the specified type `typ`, with an AST of
-    specified `depth`. Leave used_vars as None for expected behavior.
-
-    This won't generate absolutely everything, and I haven't tried to make this
-    use some sensible distribution over expressions (whatever that would be).
-    If typ is None, it will draw from the random_types module level variable,
-    which is currently just [type_t].
-
-    An alternative approach would be to generate a random AST first, and fill
-    it in.
-    """
-    global random_used_vars
-    if used_vars is None:
-        used_vars = set()
-    random_used_vars = used_vars
-    if typ is None:
-        typ = random.choice(random_types)
-    if depth == 0:
-        term = random_term(typ, usedset=random_used_vars)
-        random_used_vars |= {term}
-        return term
-    else:
-        # possibilities:
-        #  1. any typ: function-argument combination resulting in typ
-        #  2. if typ is type_t: operator expression of typ (exclude non type_t
-        #     options for now)
-        #  3. if typ is type_t: binding expression of type_t
-        #  4. if typ is functional: LFun of typ
-        # ignore sets for now (variables with set types can be generated as
-        # part of option 1)
-        # ignore iota for now
-        options = [1]
-        if typ == type_t:
-            options.append(2)
-            options.append(3)
-        if typ.functional():
-            options.append(4)
-            options.append(5)
-        if depth == 1 and len(random_used_vars) > 0:
-            options.extend([6,7,8,9]) # try to reuse vars a bit more
-        choice = random.choice(options)
-        def ctrl(**args):
-            global random_used_vars
-            return random_expr(depth=depth-1, used_vars=random_used_vars,
-                                                                        **args)
-        if choice == 1:
-            return random_fa_combo(typ, ctrl)
-        elif choice == 2:
-            return random_tf_op_expr(ctrl)
-        elif choice == 3:
-            return random_binding_expr(ctrl)
-        elif choice == 4:
-            return random_lfun(typ, ctrl)
-        elif choice == 5:            
-            return random_lfun_force_bound(typ, ctrl)
-        elif choice >= 6:
-            return random_pred_combo_from_term(typ, ctrl, random_used_vars)
-        else:
-            raise NotImplementedError
-
-import unittest
-
-def test_repr_parse_abstract(self, depth):
-    for i in range(1000):
-        x = random_expr(depth=depth)
-        result = repr_parse(x)
-        latex_str = x.latex_str() # also test that this doesn't crash -- can't
-                                  # easily test actual contents.
-        if not result:
-            print("Failure on depth %i expression '%s'" % (depth, repr(x)))
-        self.assertTrue(result)
-
-def testsimp(self, a, b):
-    intermediate = a.simplify()
-    teb = te(b)
-    if intermediate != teb:
-        print("Failed simplification test: '%s == %s'" % (repr(a), repr(b)))
-    self.assertEqual(intermediate, teb)
-    return intermediate
-
-te_classes = [ApplicationExpr, Tuple, TypedTerm, Partial, Disjunctive, 
-              UnaryNegExpr, UnaryNegativeExpr, BinaryAndExpr, BinaryOrExpr,
-              BinaryArrowExpr, BinaryBiarrowExpr, BinaryNeqExpr, BinaryLExpr,
-              BinaryLeqExpr, BinaryGExpr, BinaryGeqExpr, BinaryPlusExpr,
-              BinaryMinusExpr, BinaryDivExpr, BinaryExpExpr, SetContains,
-              TupleIndex, ConditionSet, ListedSet, ForallUnary, ExistsUnary,
-              ExistsExact, IotaUnary, IotaPartial, LFun]
-
-class MetaTest(unittest.TestCase):
-    def setUp(self):
-        self.ident = te("L x_e : x") 
-        self.ia = TypedExpr.factory(self.ident, "y")
-        self.ib = LFun(type_e, self.ia, "y")
-        self.P = TypedTerm("P", FunType(type_e, type_t))
-        self.Q = TypedTerm("Q", FunType(type_e, type_t))
-        self.x = TypedTerm("x", type_e)
-        self.y = TypedTerm("y", type_e)
-        self.t = TypedExpr.factory(self.P, self.x)
-        self.t2 = TypedExpr.factory(self.Q, self.x)
-        self.body = TypedExpr.factory("&", self.t, self.t) | self.t
-        self.p = TypedTerm("p", type_t)
-        self.testf = LFun(type_e, self.body)
-
-    def test_basic(self):
-        # equality basics
-        self.assertEqual(self.P, self.P)
-        self.assertEqual(self.x, self.x)
-        self.assertEqual(self.testf, self.testf)
-        self.assertNotEqual(self.P, self.Q)
-        self.assertNotEqual(self.x, self.y)
-
-
-    def test_class_random(self):
-        for c in te_classes:
-            for i in range(50):
-                random_from_class(c)
-
-    def test_copy(self):
-        for c in te_classes:
-            for i in range(50):
-                x = random_from_class(c)
-                self.assertEqual(x, x.copy())
-                self.assertEqual(x, x.copy_local(*x))
-
-
-    def test_parse(self):
-        # overall: compare parsed TypedExprs with constructed TypedExprs
-        # basic operator syntax
-        self.assertEqual(TypedExpr.factory(
-            "(P_<e,t>(x_e) & P_<e,t>(x_e)) | P_<e,t>(x_e)"), self.body)
-        # parenthesis reduction
-        self.assertEqual(TypedExpr.factory(
-            "((P_<e,t>(x_e) & P_<e,t>(x_e)) | (P_<e,t>(x_e)))"), self.body)
-        # parenthesis grouping
-        self.assertNotEqual(TypedExpr.factory(
-            "P_<e,t>(x_e) & (P_<e,t>(x_e) | P_<e,t>(x_e))"), self.body)
-        # variable binding syntax
-        self.assertEqual(TypedExpr.factory("L x_e : x_e"), self.ident)
-        self.assertRaises(parsing.ParseError, TypedExpr.factory, "L x_e : x_t")
-        logger.setLevel(logging.WARNING)
-        te("L x: L y: In(y)(x)")
-        logger.setLevel(logging.INFO)
-
-    def test_reduce(self):
-        self.assertEqual(self.ident(self.y).reduce(), self.y)
-
-        # test: when a free variable in a function scopes under an operator, do
-        # not bind the variable on application        
-        pmw_test1 = LFun(type_t, LFun(type_e, self.t & self.p, "x"), "p")
-        pmw_test1b = LFun(type_e, self.t & self.t2, "x")
-        self.assertNotEqual(pmw_test1.apply(self.t2), pmw_test1b)
-
-        # Different version of the same test: direct variable substitution
-        test2 = TypedExpr.factory("L y_e : L x_e : y_e")
-        test2b = TypedExpr.factory("L x_e : x_e")
-        self.assertNotEqual(test2.apply(self.x), test2b)
-
-        # test for accidental collisions from alpha conversions, added Apr 2015
-        test3 = TypedExpr.factory(
-            "(L xbar_<e,t> : L x_e : xbar(x))(L z_e : P_<(e,e,e),t>(x_e,z_e, x1_e))")
-        test3 = test3.reduce_all()
-        self.assertNotEqual(test3[1][1][0], test3[1][1][1])
-        self.assertNotEqual(test3[1][1][0], test3[1][1][2])
-        self.assertNotEqual(test3[1][1][1], test3[1][1][2])
-
-    def test_polymorphism(self):
-        # geach combinator test
-        g = te("L g_<Y,Z> : L f_<X,Y> : L x_X : g(f(x))")
-        self.assertEqual(g.try_adjust_type(tp("<<e,t>,<<e,e>,?>>")),
-            te("(λ g_<e,t>: (λ f_<e,e>: (λ x_e: g_<e,t>(f_<e,e>(x_e)))))"))
-        self.assertEqual(g.let_type(tp("<?,<<<e,t>,?>,?>>")),
-            te("(λ g_<Y,Z>: (λ f_<<e,t>,Y>: (λ x_<e,t>: g_<Y,Z>(f_<<e,t>,Y>(x_<e,t>)))))"))
-        # z combinator test
-        z = te("(λ f_<X,<e,Z>>: (λ g_<e,X>: (λ x_e: f(g(x))(x))))")
-        self.assertEqual(z.try_adjust_type(tp("<<e,<e,t>>,?>")),
-            te("(λ f_<e,<e,t>>: (λ g_<e,e>: (λ x_e: f_<e,<e,t>>(g_<e,e>(x_e))(x_e))))"))
-
-
-    def test_binary_simplify(self):
-        # negation
-        testsimp(self, te("~False"), True)
-        testsimp(self, te("~True"), False)
-        testsimp(self, te("~p_t"), te("~p_t"))
-
-        # conjunction
-        testsimp(self, te("True & True"), True)
-        testsimp(self, te("True & False"), False)
-        testsimp(self, te("False & True"), False)
-        testsimp(self, te("False & False"), False)
-        testsimp(self, te("False & p_t"), False)
-        testsimp(self, te("p_t & False"), False)
-        testsimp(self, te("True & p_t"), te("p_t"))
-        testsimp(self, te("p_t & True"), te("p_t"))
-        testsimp(self, te("p_t & p_t"), te("p_t & p_t"))
-        testsimp(self, te("p_t & q_t"), te("p_t & q_t"))
-
-        # disjunction
-        testsimp(self, te("True | True"), True)
-        testsimp(self, te("True | False"), True)
-        testsimp(self, te("False | True"), True)
-        testsimp(self, te("False | False"), False)
-        testsimp(self, te("False | p_t"), te("p_t"))
-        testsimp(self, te("p_t | False"), te("p_t"))
-        testsimp(self, te("True | p_t"), True)
-        testsimp(self, te("p_t | True"), True)
-        testsimp(self, te("p_t | p_t"), te("p_t | p_t"))
-        testsimp(self, te("p_t | q_t"), te("p_t | q_t"))
-
-        # arrow
-        testsimp(self, te("True >> True"), True)
-        testsimp(self, te("True >> False"), False)
-        testsimp(self, te("False >> True"), True)
-        testsimp(self, te("False >> False"), True)
-        testsimp(self, te("False >> p_t"), True)
-        testsimp(self, te("p_t >> False"), te("~p_t"))
-        testsimp(self, te("True >> p_t"), te("p_t"))
-        testsimp(self, te("p_t >> True"), True)
-        testsimp(self, te("p_t >> p_t"), te("p_t >> p_t"))
-        testsimp(self, te("p_t >> q_t"), te("p_t >> q_t"))
-
-        # biconditional
-        testsimp(self, te("True <=> True"), True)
-        testsimp(self, te("True <=> False"), False)
-        testsimp(self, te("False <=> True"), False)
-        testsimp(self, te("False <=> False"), True)
-        testsimp(self, te("False <=> p_t"), te("~p_t"))
-        testsimp(self, te("p_t <=> False"), te("~p_t"))
-        testsimp(self, te("True <=> p_t"), te("p_t"))
-        testsimp(self, te("p_t <=> True"), te("p_t"))
-        testsimp(self, te("p_t <=> q_t"), te("p_t <=> q_t"))
-        testsimp(self, te("p_t <=> p_t"), te("p_t <=> p_t"))
-
-        # neq
-        testsimp(self, te("True =/= True"), False)
-        testsimp(self, te("True =/= False"), True)
-        testsimp(self, te("False =/= True"), True)
-        testsimp(self, te("False =/= False"), False)
-        testsimp(self, te("False =/= p_t"), te("p_t"))
-        testsimp(self, te("p_t =/= False"), te("p_t"))
-        testsimp(self, te("True =/= p_t"), te("~p_t"))
-        testsimp(self, te("p_t =/= True"), te("~p_t"))
-        testsimp(self, te("p_t =/= q_t"), te("p_t =/= q_t"))
-        testsimp(self, te("p_t =/= p_t"), te("p_t =/= p_t"))
-
-    # each of these generates 1000 random expressions with the specified depth,
-    # and checks whether their repr parses as equal to the original expression
-    def test_repr_parse_0(self): test_repr_parse_abstract(self, 0)
-    def test_repr_parse_1(self): test_repr_parse_abstract(self, 1)
-    def test_repr_parse_2(self): test_repr_parse_abstract(self, 2)
-    # def test_repr_parse_3(self): test_repr_parse_abstract(self, 3)
-    # def test_repr_parse_4(self): test_repr_parse_abstract(self, 4)
-    # def test_repr_parse_5(self): test_repr_parse_abstract(self, 5)
-    # def test_repr_parse_6(self): test_repr_parse_abstract(self, 6)
-
-
-
