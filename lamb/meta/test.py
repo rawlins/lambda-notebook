@@ -162,6 +162,22 @@ def random_expr(typ=None, depth=1, used_vars=None):
             raise NotImplementedError
 
 
+def random_pure_boolean(depth=1, used_vars=None, **args):
+    global random_used_vars
+    if used_vars is None:
+        used_vars = set()
+    random_used_vars = used_vars
+    if depth == 0:
+        term = random_term(type_t, usedset=random_used_vars)
+        random_used_vars |= {term}
+        return term
+    else:
+        def ctrl(**args):
+            global random_used_vars
+            return random_pure_boolean(depth=depth-1, used_vars=random_used_vars,
+                                                                        **args)
+        return random_tf_op_expr(ctrl)
+
 def test_repr_parse_abstract(self, depth):
     for i in range(1000):
         x = random_expr(depth=depth)

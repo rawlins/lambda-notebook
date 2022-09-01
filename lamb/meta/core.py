@@ -1335,29 +1335,23 @@ class TypedExpr(object):
         else:
             a2 = {key: self.ensure_typed_expr(assignment[key])
                                                         for key in assignment}
-        return variable_replace_unify(self, a2)
+        return term_replace_unify(self, a2)
 
-    # the next sequence of functions is clearly inefficient, and could be
-    # replaced by memoization (e.g. 'director strings' or whatever). But I
-    # don't think it matters for this application.
-    def free_variables(self):
+    # TODO: can the type env be used instead? It is effectively already
+    # memoizing a superset of this information
+    def free_terms(self, var_only=False):
         """Find the set of variables that are free in the typed expression.
         """
         result = set()
-        if len(self.args) == 0:
-            if is_var_symbol(self.op):
-                # should not be reachable
-                assert False
-                result = {self.op}
-
+        # term case handled in subclass
         if isinstance(self.op, TypedExpr):
-            result.update(self.op.free_variables())
+            result.update(self.op.free_terns(var_only=var_only))
         for a in self.args:
-            if isinstance(a, TypedExpr):
-                result.update(a.free_variables())
-            elif is_var_symbol(a):
-                result.add(a)
+            result.update(a.free_terms(var_only=var_only))
         return result
+
+    def free_variables(self):
+        return self.free_terms(var_only=True)
 
     def bound_variables(self):
         """Find the set of variables that are bound (somewhere) in a typed
@@ -1942,8 +1936,8 @@ class TypedTerm(TypedExpr):
             return {self.op: self}
         return set()
 
-    def free_variables(self):
-        if is_var_symbol(self.op):
+    def free_terms(self, var_only=False):
+        if not var_only or is_var_symbol(self.op):
             return {self.op}
         else:
             return set()
@@ -2910,8 +2904,8 @@ class BindingOp(TypedExpr):
             return self.canonical_name
 
 
-    def free_variables(self):
-        return super().free_variables() - {self.varname}
+    def free_terms(self, var_only=False):
+        return super().free_terms(var_only=var_only) - {self.varname}
 
     def bound_variables(self):
         return super().bound_variables() | {self.varname}
@@ -3305,7 +3299,7 @@ def variable_replace_strict(expr, m):
         return result
     return variable_transform(expr, m.keys(), transform)
 
-def variable_replace_unify(expr, m):
+def term_replace_unify(expr, m):
     def transform(e):
         ts = get_type_system()
         result = TypedExpr.factory(m[e.op])
@@ -3329,7 +3323,7 @@ def variable_replace_unify(expr, m):
             else:
                 return result
 
-    r = variable_transform_rebuild(expr, m.keys(), transform)
+    r = term_transform_rebuild(expr, m.keys(), transform)
     return r
 
 def variable_convert(expr, m):
@@ -3358,7 +3352,7 @@ def variable_transform(expr, dom, fun):
             expr.args[i] = variable_transform(expr.args[i], dom, fun)
     return expr
 
-def variable_transform_rebuild(expr, dom, fun):
+def term_transform_rebuild(expr, dom, fun):
     """Transform free instances of variables in expr, as determined by the
     function fun.
 
@@ -3367,7 +3361,7 @@ def variable_transform_rebuild(expr, dom, fun):
     dom: a set of variable names
     fun: a function from terms to TypedExprs."""
 
-    targets = dom & expr.free_variables()
+    targets = dom & expr.free_terms()
     if targets:
         if expr.term() and expr.op in targets:
             # expr itself is a term to be transformed.
@@ -3375,7 +3369,7 @@ def variable_transform_rebuild(expr, dom, fun):
         seq = list()
         dirty = False
         for i in range(len(expr.args)):
-            seq.append(variable_transform_rebuild(expr.args[i], targets, fun))
+            seq.append(term_transform_rebuild(expr.args[i], targets, fun))
             if seq[-1] != expr.args[i]:
                 dirty = True
         if dirty:
