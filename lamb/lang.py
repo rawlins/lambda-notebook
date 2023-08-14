@@ -529,8 +529,9 @@ class SingletonComposable(Composable):
             return ensuremath(self.short_str_latex() + "\\text{ [vacuous]}")
         elif isinstance(self.content, PlaceholderTerm):
             return self.content.latex_str()
-        return (ensuremath(self.short_str(latex=True, i=i) + " \\:=\\: ")
-                + self.content.latex_str())
+        return (ensuremath(self.short_str(latex=True, i=i)
+                + " \\:=\\: "
+                + self.content.latex_str()))
 
     def show(self):
         return MiniLatex(self.latex_str())
