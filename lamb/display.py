@@ -100,9 +100,12 @@ def to_html(x, style=None):
             return ElementTree.fromstring(x._repr_html_())
         except:
             try:
-                return html_text_wrap(x._repr_latex_())
+                return ElementTree.fromstring(x._repr_markdown_())
             except:
-                return html_text_wrap(repr(x))
+                try:
+                    return html_text_wrap(x._repr_latex_())
+                except:
+                    return html_text_wrap(repr(x))
 
 def equality_table(lines):
     e = Element("table", style="margin:0px;")
@@ -146,7 +149,7 @@ class DisplayNode(object):
         return self.style.build_tree(self.content, self.explanation, self.parts,
                                                                     **kwargs)
 
-    def _repr_html_(self):
+    def _repr_markdown_(self):
         return ElementTree.tostring(self.render(), encoding="unicode",
                                                    method="html")
 
@@ -318,7 +321,9 @@ class TDBoxDisplay(HTMLNodeDisplay):
         e = Element("div", style="display: table;")
         join = Element("div",
             style="align: center; vertical-align: middle; display: table-cell;")
-        join.append(element_with_text("span", text="*",
+        # we use `\ast` because if this renders in a markdown context, the `*`
+        # will have unpredictable results
+        join.append(element_with_text("span", text="$\\ast$",
                         style=("padding:1em;")))
         elem_join(e, join, part_cells)
         return e

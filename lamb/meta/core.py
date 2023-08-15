@@ -325,7 +325,7 @@ class TypeEnv(object):
             self.var_mapping = var_mapping
         self.update_var_set()
 
-    def _repr_html_(self):
+    def _repr_markdown_(self):
         s = "<table>"
         s += ("<tr><td>Term mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" %
                                     utils.dict_latex_repr(self.var_mapping))
@@ -3575,8 +3575,8 @@ class Derivation(object):
     def show(self, recurse=False, style=None):
         return self.trace(recurse=recurse, style=style)
 
-    def _repr_html_(self):
-        return self.build_display_tree(recurse=False)._repr_html_()
+    def _repr_markdown_(self):
+        return self.build_display_tree(recurse=False)._repr_markdown_()
 
     def steps_str(self):
         l = self.steps_sequence(latex=False)
