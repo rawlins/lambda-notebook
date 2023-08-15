@@ -50,14 +50,14 @@ class MiniLatex(object):
     def __repr__(self):
         return self.latex
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         return self.latex
 
 def ltx_print(*args):
     s = ""
     for x in args:
         try:
-            s += x._repr_markdown_()
+            s += x._repr_html_()
         except:
             try:
                 s += x._repr_latex_()

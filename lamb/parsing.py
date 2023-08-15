@@ -319,11 +319,10 @@ def latex_output(accum, env):
                                     + accum[k]._repr_latex_()))
         elif isinstance(accum[k], lang.Composable):
             # item will automatically print an equality statement
-            lines.append(accum[k]._repr_markdown_())
+            lines.append(accum[k]._repr_html_())
         else:
             print("(Unknown class '%s') %s \\:=\\: %s" % (accum[k].__class__,
                                                           k, accum[k]))
-    # TODO: handle command line prompt correctly
     return MiniLatex("<br />\n".join(lines))
 
 def parse_qtree(s, i=0):

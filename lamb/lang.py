@@ -150,8 +150,7 @@ class CompositionFailure(Exception):
             return repr(i)
 
     def items_str(self, latex=False):
-        join_str = latex and " $\\ast$ " or " * "
-        return join_str.join(
+        return " * ".join(
             [self.item_str(i, latex=latex) for i in self.items])
 
     def class_desc(self, latex=False):
@@ -172,7 +171,7 @@ class CompositionFailure(Exception):
     def latex_str(self):
         return self.description(latex=True)
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         return self.description(latex=True)
 
     def __str__(self):
@@ -230,8 +229,8 @@ class Composable(object):
     def constant(self):
         return False
 
-    def _repr_markdown_(self):
-        return self.show()._repr_markdown_()
+    def _repr_html_(self):
+        return self.show()._repr_html_()
 
     def latex_str(self):
         return self.show()._repr_latex_()
@@ -446,13 +445,13 @@ class Lexicon(MutableMapping):
     def reset(self):
         self.items = collections.OrderedDict()
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         if len(self) == 0:
             return "<i>(Empty lexicon)</i>"
         lines = list()
         for k in self:
             if isinstance(self[k], Composable):
-                lines.append(self[k]._repr_markdown_())
+                lines.append(self[k]._repr_html_())
             else:
                 print("(Unknown class '%s') %s \\:=\\: %s" % (self[k].__class__,
                                                           k, self[k]))
@@ -759,7 +758,7 @@ class CompositionTree(Tree, Composable):
 
     def latex_str(self):
         if self.content is None:
-            return Tree._repr_markdown_(self)
+            return Tree._repr_html_(self)
         elif isinstance(self.content, CompositionResult):
             return self.content.latex_str() # TODO more?
         elif len(self.content) == 1:
@@ -785,8 +784,8 @@ class CompositionTree(Tree, Composable):
             self.denotations = CompositionResult(self, list(), child_failures,
                 source=self)
 
-    def _repr_markdown_(self):
-        return self.show()._repr_markdown_()
+    def _repr_html_(self):
+        return self.show()._repr_html_()
 
     def tree(self, derivations=False, recurse=True, style=None):
         return self.build_display_tree(derivations=derivations, recurse=recurse,
@@ -834,7 +833,7 @@ class CompositionTree(Tree, Composable):
             node = display.DisplayNode(parts=node_parts, style=leaf_style)
         else:
             try:
-                node = self.label()._repr_markdown_()
+                node = self.label()._repr_html_()
             except:
                 node = str(self.label())
 
@@ -1015,7 +1014,7 @@ class TreeComposite(Composite, Tree):
         else:
             s = ""
             if latex:
-                combination = " $\\ast$ ".join([n.short_str_latex() for n in self])
+                combination = " * ".join([n.short_str_latex() for n in self])
             else:
                 combination = " * ".join([n.short_str() for n in self])
             if len(combination) > 0:
@@ -1173,7 +1172,7 @@ class TreeComposite(Composite, Tree):
         # a monkey-patched _repr_latex_ from there.
         return self.latex_str()
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         return self.latex_str()
 
 class BinaryComposite(TreeComposite):
@@ -1413,7 +1412,7 @@ class CompositionResult(Composable):
                 s += "<br />\n" 
             # this will return a MiniLatex-packaged string.
             rst = r.tree(derivations=derivations, recurse=recurse, style=style)
-            s += rst._repr_markdown_() + "<br /><br />"
+            s += rst._repr_html_() + "<br /><br />"
             i += 1
         return MiniLatex(s)
 
@@ -1721,7 +1720,7 @@ class CompositionOp(object):
             self.latex_desc = repr(source)
 
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         if self.latex_desc is None:
             return ("%s <i>%s</i>, built on python function '%s.%s'" %
                         (self.description(),
@@ -1944,7 +1943,7 @@ class TreeCompositionOp(object):
             self.latex_desc = repr(source)
 
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         if self.latex_desc is None:
             return ("%s <i>%s</i>, built on python function '%s.%s'" %
                         (self.description(),
@@ -2069,7 +2068,7 @@ class LexiconOp(TreeCompositionOp):
     def description(self):
         return "Lexicon lookup"
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         return "Lexicon lookup"
 
     def __repr__(self):
@@ -2320,13 +2319,13 @@ class CompositionSystem(object):
         if latex:
             s += "<br />"
             for x in self.rules:
-                s += "&nbsp;&nbsp;&nbsp;&nbsp;" + x._repr_markdown_() + "<br />"
+                s += "&nbsp;&nbsp;&nbsp;&nbsp;" + x._repr_html_() + "<br />"
             s += "}"
         else:
             s += ", ".join([x.name for x in self.rules]) + "}"
         return s
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         return self.description(latex=True)
 
     def lookup(self, *items):

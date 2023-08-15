@@ -1404,7 +1404,7 @@ class UnificationResult(object):
         self.mapping = mapping
         self.trivial = injective(mapping) and not strengthens(mapping)
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         s = "<table>"
         s += ("<tr><td>Principal type:&nbsp;&nbsp; </td><td>%s</td></tr>"
                                 % self.principal.latex_str())
@@ -1684,7 +1684,7 @@ class TypeMismatch(Exception):
                 return ("%s: %s and %s conflict (%s)"
                                             % (tm_str, is_1, is_2, self.mode))
 
-    def _repr_markdown_(self):
+    def _repr_html_(self):
         return self.latex_str()
 
     def __repr__(self):
