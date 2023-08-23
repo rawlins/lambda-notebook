@@ -309,7 +309,7 @@ def fullvar(d, s):
     else:
         return meta.TypedTerm(s, d[s].type)
 
-def latex_output(accum, env):
+def html_output(accum, env):
     from lamb import meta, lang
     lines = list()
     for k in accum.keys():
@@ -319,7 +319,7 @@ def latex_output(accum, env):
                                     + accum[k]._repr_latex_()))
         elif isinstance(accum[k], lang.Composable):
             # item will automatically print an equality statement
-            lines.append(accum[k]._repr_html_())
+            lines.append(accum[k]._repr_latex_())
         else:
             print("(Unknown class '%s') %s \\:=\\: %s" % (accum[k].__class__,
                                                           k, accum[k]))

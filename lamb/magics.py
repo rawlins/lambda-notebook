@@ -85,7 +85,7 @@ class LambMagics(Magics):
             self.env = env
             self.control_line(line, post=True, accum=accum)
         self.push_accum(accum)
-        IPython.display.display(parsing.latex_output(accum, self.env))
+        IPython.display.display(parsing.html_output(accum, self.env))
     
     def push_accum(self, accum):
         self.shadow_warnings(accum)
@@ -118,7 +118,7 @@ class LambMagics(Magics):
             self.reset()
             return None
         elif cmd == "all":
-            return parsing.latex_output(self.env, self.env)
+            return parsing.html_output(self.env, self.env)
         elif cmd == "ambiguity":
             self.cur_ambiguity = True
         else:

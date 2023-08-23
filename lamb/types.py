@@ -1685,7 +1685,7 @@ class TypeMismatch(Exception):
                                             % (tm_str, is_1, is_2, self.mode))
 
     def _repr_html_(self):
-        return self.latex_str()
+        return self.description(latex=True)
 
     def __repr__(self):
         return self.__str__()

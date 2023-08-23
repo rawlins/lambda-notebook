@@ -536,6 +536,12 @@ class SingletonComposable(Composable):
     def show(self):
         return MiniLatex(self.latex_str())
 
+    def _repr_latex_(self):
+        return self.latex_str()
+
+    def _repr_html_(self):
+        return None # override superclass (TODO, improve)
+
     def compose_str_latex(self):
         return self.latex_str()
 
@@ -1170,9 +1176,6 @@ class TreeComposite(Composite, Tree):
     def _repr_latex_(self):
         # since this inherits from Tree, need to ensure that we don't inherit
         # a monkey-patched _repr_latex_ from there.
-        return self.latex_str()
-
-    def _repr_html_(self):
         return self.latex_str()
 
 class BinaryComposite(TreeComposite):
