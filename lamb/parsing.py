@@ -311,19 +311,23 @@ def fullvar(d, s):
 
 def html_output(accum, env):
     from lamb import meta, lang
-    lines = list()
+    lines = []
+    plain_lines = []
     for k in accum.keys():
         if isinstance(accum[k], meta.TypedExpr):
-            lines.append(ensuremath(fullvar(accum, k)._repr_latex_()
+            var = fullvar(accum, k)
+            lines.append(ensuremath(var._repr_latex_()
                                     + "\\:=\\:"
                                     + accum[k]._repr_latex_()))
+            plain_lines.append(repr(var) + " = " + repr(accum[k]))
         elif isinstance(accum[k], lang.Composable):
             # item will automatically print an equality statement
             lines.append(accum[k]._repr_latex_())
+            plain_lines.append(repr(accum[k]))
         else:
             print("(Unknown class '%s') %s \\:=\\: %s" % (accum[k].__class__,
                                                           k, accum[k]))
-    return MiniLatex("<br />\n".join(lines))
+    return MiniLatex("<br />\n".join(lines), plain_s = "\n".join(plain_lines))
 
 def parse_qtree(s, i=0):
     s = s.strip()

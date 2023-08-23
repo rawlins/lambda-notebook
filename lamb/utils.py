@@ -48,7 +48,7 @@ class MiniLatex(object):
         return self.latex
 
     def __repr__(self):
-        return self.latex
+        return self.plain
 
     def _repr_html_(self):
         return self.latex
