@@ -33,25 +33,35 @@ def get_tree_class():
         from lamb.tree_mini import Tree
         return Tree
 
+# TODO: this class' origins are much earlier in the ipython life cycle, can it
+# be modernized to align better with display classes? Or refactored away entirely?
+# if multiple args are specified, in Jupyter the priority is
+# markdown > html > latex > repr. Note that using html tags in markdown is
+# generally safe, but some frontends (*cough* colab) strip a whole bunch of
+# formatting. So it won't work for more complex things like derivation trees.
 class MiniLatex(object):
-    def __init__(self, latex_s, plain_s = None):
-        self.latex = latex_s
-        if plain_s is None:
-            self.plain = latex_s
-        else:
-            self.plain = plain_s
+    def __init__(self, html = None, latex = None, markdown = None, plain = ""):
+        self.latex = latex
+        self.html = html
+        self.markdown = markdown
+        if not plain:
+            plain = html or latex or markdown
+        self.plain = plain
 
     def __str__(self):
+        return self.plain
+
+    def __repr__(self):
         return self.plain
 
     def _repr_latex_(self):
         return self.latex
 
-    def __repr__(self):
-        return self.plain
-
     def _repr_html_(self):
-        return self.latex
+        return self.html
+
+    def _repr_markdown_(self):
+        return self.markdown
 
 def ltx_print(*args):
     s = ""

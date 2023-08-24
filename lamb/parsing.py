@@ -327,7 +327,7 @@ def html_output(accum, env):
         else:
             print("(Unknown class '%s') %s \\:=\\: %s" % (accum[k].__class__,
                                                           k, accum[k]))
-    return MiniLatex("<br />\n".join(lines), plain_s = "\n".join(plain_lines))
+    return MiniLatex(markdown="<br />\n".join(lines), plain="\n".join(plain_lines))
 
 def parse_qtree(s, i=0):
     s = s.strip()

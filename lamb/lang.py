@@ -534,7 +534,8 @@ class SingletonComposable(Composable):
                 + self.content.latex_str()))
 
     def show(self):
-        return MiniLatex(self.latex_str())
+        # is using `latex` generally safe here?
+        return MiniLatex(latex=self.latex_str())
 
     def _repr_latex_(self):
         return self.latex_str()
@@ -1216,20 +1217,9 @@ class CompositionResult(Composable):
     def __repr__(self):
         return ("CompositionResult(results=%s, failures=%s)"
                                 % (repr(self.results), repr(self.failures)))
-        if len(self.results) == 0:
-            return repr(self.failures)
-        else:
-            return repr(self.result_items())
 
     def __str__(self):
-        s = str()
-        if (len(self.results) == 0):
-            s += "Composition failed:\n"
-            s += self.failures_str()
-        else:
-            for composite in self.results:
-                s += "    " + composite.compose_str()
-        return s
+        return self.summary(plain=True)
 
     @property
     def name(self):
@@ -1241,15 +1231,15 @@ class CompositionResult(Composable):
             else:
                 return str(self.source)
 
-    def show(self, recurse=True, style=None, failures=False):
-        s = str()
+    def summary(self, recurse=True, style=None, failures=False, plain=False):
+        s = ""
+        newline = plain and "\n" or "<br />\n"
         if (len(self.results) == 0):
             if self.source is None:
-                s += "Composition failed:<br />\n"
+                s += "Composition failed:"
             else:
-                s += ("Composition of %s failed:<br />\n"
-                                        % self.name)
-            s += self.failures_str_latex()
+                s += ("Composition of %s failed:" % (self.name))
+            s += newline + self.failures_str(latex = not plain)
         else:
             if (len(self.results) == 1):
                 s += "1 composition path.  Result:"
@@ -1257,22 +1247,35 @@ class CompositionResult(Composable):
                 s += "%i composition paths. Results:" % len(self.results)
             n = 0
             for composite in self.results:
-                #TODO: newlines in mathjax??
                 num = composite.collapsed_count
-                if num == 1:
-                    s += ("\n<br />" + latex_indent() +
-                                        "[%i]: " % n + composite.latex_str())
+                s += (newline + indent(latex = not plain) + "[%i]: " % n)
+                if plain:
+                    s += composite.compose_str()
                 else:
-                    s += ("\n<br />" +
-                            latex_indent() +
-                            ("[%i]: %s &nbsp;&nbsp;<span style=\"font-size:small\">(%i equivalent paths lead here)</span>"
-                                % (n, composite.latex_str(), num)))
+                    s += composite.latex_str()
+                if num > 1:
+                    if plain:
+                        s += " (%i equivalent paths lead here)" % num
+                    else:
+                        s += (" &nbsp;&nbsp;<span style=\"font-size:small\">(%i equivalent paths lead here)</span>"
+                                % num)
                 n += 1
             if failures:
-                s += ("\n<br /><br />" +
-                      "Composition attempts that failed:<br />\n" +
-                      self.failures_str_latex())
-        return MiniLatex(s)
+                s += (newline + newline
+                        + "Composition attempts that failed:" + newline
+                        + self.failures_str(latex = not plain))
+        return s
+
+    def show(self, recurse=True, style=None, failures=False):
+        return MiniLatex(markdown=self.summary(plain=False, recurse=recurse, style=style, failures=failures),
+            plain=self.summary(plain=True, recurse=recurse, style=style, failures=failures))
+
+    def _ipython_display_(self):
+        # note: currently this sidesteps implementing _repr_pretty_ by having
+        # the repr returned by show() be different than the object's repr...
+        # maybe not ideal?
+        import IPython
+        IPython.display.display(self.show())
 
     def build_summary_for_tree(self, style=None):
         defaultstyle = {"align": "left"}
@@ -1395,7 +1398,8 @@ class CompositionResult(Composable):
                     step_i += 1
                 sub_i += 1
             i += 1
-        return MiniLatex(s)
+        # TODO: set plain here
+        return MiniLatex(markdown=s)
 
     def tree(self, recurse=True, derivations=False, style=None):
         """Show the step-by-step derivation(s) as a proof tree."""
@@ -1417,7 +1421,8 @@ class CompositionResult(Composable):
             rst = r.tree(derivations=derivations, recurse=recurse, style=style)
             s += rst._repr_html_() + "<br /><br />"
             i += 1
-        return MiniLatex(s)
+        # TODO: set plain properly here...
+        return MiniLatex(html=s)
 
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as
@@ -1548,7 +1553,7 @@ class Items(CompositionResult):
                     s += ("%s &nbsp;&nbsp;<span style=\"font-size:small\">(%i equivalent items)</span>"
                                 % (composite.latex_str(i=n), num))
                 n += 1
-        return MiniLatex(s)
+        return MiniLatex(markdown=s)
 
     @property
     def name(self):
