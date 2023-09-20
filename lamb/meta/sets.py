@@ -2,7 +2,7 @@ import random
 import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr
-from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun
+from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm
 from .boolean import BinaryOrExpr
 from lamb.types import type_t, SetType
 
