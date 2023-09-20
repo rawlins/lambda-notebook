@@ -207,6 +207,9 @@ class OperatorRegistry(object):
             return False
 
         def check_viable(self, *args):
+            # if the class has a custom check_viable, defer entirely to that
+            if callable(getattr(self.cls, "check_viable", None)):
+                return self.cls.check_viable(*args)
             if self.arity != len(args):
                 return False
             # None means don't check this arg place.
@@ -255,11 +258,11 @@ class OperatorRegistry(object):
 
         matches = [o for o in matches if o.check_viable(*args)]
 
-        # hacky: let any operators with specified types knock out any operators
-        # with None types. This could be made a lot more elegant, but the
-        # immediate goal here is to handle the equality case for type t cleanly
+        # Prioritize generic operators over specific operators. Generic
+        # operators should explicitly make exceptions for specific operators
+        # as needed. TODO: this is extremely ad hoc
         if len(matches) > 1:
-            matches = [o for o in matches if not o.has_blank_types()]
+            matches = [o for o in matches if o.has_blank_types()]
 
         if not len(matches):
             raise parsing.ParseError(
@@ -2559,13 +2562,12 @@ class BinaryGenericEqExpr(SyncatOpExpr):
     """Type-generic equality.  This places no constraints on the type of `arg1`
     and `arg2` save that they be equal."""
     def __init__(self, arg1, arg2):
-        # TODO: the interaction of this operator (and the type t variant)
-        # with polymorphic types is messy...
-        if arg1.type.is_polymorphic() or arg2.type.is_polymorphic():
-            raise TypeMismatch("Equality operator requires non-polymorphic types.")
-        arg1 = self.ensure_typed_expr(arg1)
+        t = get_type_system().unify(arg1.type, arg2.type)
+        if t is None:
+            raise types.TypeMismatch(arg1, arg2, mode="Equality requires compatible types")
+        arg1 = self.ensure_typed_expr(arg1, t)
         # maybe raise the exception directly?
-        arg2 = self.ensure_typed_expr(arg2, arg1.type)
+        arg2 = self.ensure_typed_expr(arg2, t)
         # some problems with equality using '==', TODO recheck, but for now
         # just use "<=>" in the normalized form
         super().__init__(type_t, arg1, arg2, tcheck_args = False)
@@ -2583,6 +2585,14 @@ class BinaryGenericEqExpr(SyncatOpExpr):
         body_type = get_type_system().random_type(max_type_depth, 0.5)
         return cls(ctrl(typ=body_type), ctrl(typ=body_type))
 
+    @classmethod
+    def check_viable(cls, *args):
+        if len(args) != 2:
+            return False
+        principal_type = get_type_system().unify(args[0].type, args[1].type)
+        # leave type t to the simply-typed biconditional operator
+        # TODO: it should be possible to handle this in a more generalized way
+        return principal_type is not None and principal_type != type_t
 
 
 class TupleIndex(SyncatOpExpr):
