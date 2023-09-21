@@ -1476,6 +1476,9 @@ class PolyTypeSystem(TypeSystem):
         result = result.copy_local(*l)
         return UnificationResult(result, t1, t2, r_assign)
 
+    def unify_r_swap(self, t1, t2, assignment):
+        return self.unify_r(t2, t1, assignment)
+
     def unify_r(self, t1, t2, assignment):
         """Recursive unification of `t1` and `t2` given some assignment.
 
@@ -1489,8 +1492,17 @@ class PolyTypeSystem(TypeSystem):
                 "Failed occurs check: can't unify recursive types %s and %s"
                 % (t1,t2))
             return (None, assignment)
+        # Type rankings put type classes that have custom unification code
+        # for polymorphism higher than those that don't. If t2 has a higher
+        # or equal type ranking, let it drive unification. However, we provide
+        # a control function that reverses back the order when recursing, so
+        # that there's a stable order for comparison at all points in the AST.
+        # Note: for the sake of simpler code, this does swap the order for
+        # non-polymorphic equally-ranked types, but for such types, symmetry
+        # is guaranteed. (Polymorphic unification is only symmetric up to
+        # alphabetic variants.)
         if self.type_ranking[t1.__class__] <= self.type_ranking[t2.__class__]:
-            return t2.unify(t1, self.unify_r, assignment)
+            return t2.unify(t1, self.unify_r_swap, assignment)
         else:
             return t1.unify(t2, self.unify_r, assignment)
 
@@ -1822,6 +1834,25 @@ class TypeTest(unittest.TestCase):
                                             "<<e,X>,X>", "<<Y,Y>,t>"))
         self.assertFalse(poly_system.parse_unify_check(
                                             "<<X,X>,<Y,Y>>", "<<e,Z>,<Z,t>>"))
+
+        # test order consistency in recursive polymorphic unification. When
+        # either value could be the principal type under alphabetic variation,
+        # unify should always choose the right-hand value (meaning that the
+        # lefthand one would need to change). This assumption is relied on by
+        # `TypedExpr.try_adjust_type`.
+        # (TODO: lots of other things could be tested here...)
+        self.assertEqual(poly_system.unify(
+                                poly_system.parse("Y"),
+                                poly_system.parse("X")),
+                            poly_system.parse("X"))
+        self.assertEqual(poly_system.unify(
+                                poly_system.parse("<Y,Y>"),
+                                poly_system.parse("<X,X>")),
+                            poly_system.parse("<X,X>"))
+        self.assertEqual(poly_system.unify(
+                                poly_system.parse("<Y,<Y,Y>>"),
+                                poly_system.parse("<X,<X,X>>")),
+                            poly_system.parse("<X,<X,X>>"))
 
         # some complicated occurs check cases discovered via random search
         from lamb.meta import logger
