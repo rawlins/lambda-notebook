@@ -1,6 +1,6 @@
 import sys, re, traceback, collections
 from lamb import utils
-from lamb.utils import *
+from lamb.utils import * # TODO: remove
 
 Tree = utils.get_tree_class()
 
@@ -327,7 +327,7 @@ def html_output(accum, env):
         else:
             print("(Unknown class '%s') %s \\:=\\: %s" % (accum[k].__class__,
                                                           k, accum[k]))
-    return MiniLatex(markdown="<br />\n".join(lines), plain="\n".join(plain_lines))
+    return utils.show(markdown="<br />\n".join(lines), plain="\n".join(plain_lines))
 
 def parse_qtree(s, i=0):
     s = s.strip()
