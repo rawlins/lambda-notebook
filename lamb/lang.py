@@ -2,7 +2,7 @@
 import collections, itertools, logging, html
 
 from lamb import utils, types, meta, display
-from lamb.utils import ensuremath, MiniLatex
+from lamb.utils import ensuremath
 from lamb.types import type_e, type_t, type_property, TypeMismatch
 from lamb.meta import  TypedExpr
 from lamb import tree_mini
@@ -535,7 +535,7 @@ class SingletonComposable(Composable):
 
     def show(self):
         # is using `latex` generally safe here?
-        return MiniLatex(latex=self.latex_str())
+        return utils.show(latex=self.latex_str())
 
     def _repr_latex_(self):
         return self.latex_str()
@@ -1267,7 +1267,7 @@ class CompositionResult(Composable):
         return s
 
     def show(self, recurse=True, style=None, failures=False):
-        return MiniLatex(markdown=self.summary(plain=False, recurse=recurse, style=style, failures=failures),
+        return utils.show(markdown=self.summary(plain=False, recurse=recurse, style=style, failures=failures),
             plain=self.summary(plain=True, recurse=recurse, style=style, failures=failures))
 
     def _ipython_display_(self):
@@ -1399,7 +1399,7 @@ class CompositionResult(Composable):
                 sub_i += 1
             i += 1
         # TODO: set plain here
-        return MiniLatex(markdown=s)
+        return utils.show(markdown=s)
 
     def tree(self, recurse=True, derivations=False, style=None):
         """Show the step-by-step derivation(s) as a proof tree."""
@@ -1417,12 +1417,12 @@ class CompositionResult(Composable):
                 if r.collapsed_count > 1:
                     s += "(%i other equivalent paths)" % (r.collapsed_count - 1)
                 s += "<br />\n" 
-            # this will return a MiniLatex-packaged string.
+            # this will return a LNDisplay-packaged string.
             rst = r.tree(derivations=derivations, recurse=recurse, style=style)
             s += rst._repr_html_() + "<br /><br />"
             i += 1
         # TODO: set plain properly here...
-        return MiniLatex(html=s)
+        return utils.show(html=s)
 
     def reduce_all(self):
         """Replace contents with versions that have been reduced as much as
@@ -1553,7 +1553,7 @@ class Items(CompositionResult):
                     s += ("%s &nbsp;&nbsp;<span style=\"font-size:small\">(%i equivalent items)</span>"
                                 % (composite.latex_str(i=n), num))
                 n += 1
-        return MiniLatex(markdown=s)
+        return utils.show(markdown=s)
 
     @property
     def name(self):

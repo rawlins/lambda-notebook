@@ -20,12 +20,21 @@ except:
 
 KERNEL_NAME = "lambda-notebook"
 
+def colab_setup():
+    # check if we are running in colab. This won't necessarily work outside
+    # of an ipython context.
+    if 'google.colab' not in sys.modules:
+        return
+    # activate colab-specific display code
+    lamb.utils.LNDisplay = lamb.utils.ColabLNDisplay
+
 def inject_into_ipython():
     try:
         ip = get_ipython()
         # inject the module names
         ip.user_ns["lamb"] = lamb
         ip.user_ns["utils"] = lamb.utils
+        colab_setup()
         ip.user_ns["types"] = lamb.types
         ip.user_ns["meta"] = lamb.meta
         ip.user_ns["lang"] = lamb.lang
@@ -34,7 +43,6 @@ def inject_into_ipython():
         # inject some convenience functions
         ip.user_ns["reload_lamb"] = reload_lamb
         ip.user_ns["Tree"] = lamb.utils.get_tree_class()
-        ip.user_ns["MiniLatex"] = lamb.utils.MiniLatex
         ip.user_ns["ltx_print"] = lamb.utils.ltx_print
         ip.user_ns["te"] = lamb.meta.te
         ip.user_ns["tp"] = lamb.meta.tp
@@ -51,6 +59,7 @@ def reload_lamb(use_nltk_tree=None):
     # should this reload the magics?
     import importlib
     importlib.reload(lamb.utils)
+    colab_setup()
     if use_nltk_tree is not None:
         # inherit default from currently running version. TODO: too confusing?
         lamb.utils.use_nltk = use_nltk_tree
