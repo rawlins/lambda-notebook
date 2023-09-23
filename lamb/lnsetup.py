@@ -10,7 +10,7 @@ except:
     print("Warning: Failed to load IPython/Jupyter.  Some features disabled.")
 
 import lamb
-# note: can't import this from any other module.
+# note: can't import this from any other module listed here
 from lamb import utils, types, meta, lang, tree_mini, parsing, combinators
 try:
     # this will fail if IPython is not fully installed
