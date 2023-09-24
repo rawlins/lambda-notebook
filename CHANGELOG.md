@@ -31,3 +31,14 @@ Fixes, improvements, changes (highlights):
 ## [0.6.9] - Compatibility fix - 2022-06-18
 
 Fix a python 3.10 compatibility bug
+
+## [0.7.0] -
+
+New features:
+ - support rendering in colab
+ - quicker loading without the kernel (`import lamb.auto`)
+ - refactor metalanguage code: better support for new operators
+
+ Fixes:
+ - fix a type inference regression in 0.6.9
+ - improved ipython/jupyter rendering
