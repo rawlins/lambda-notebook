@@ -43,7 +43,6 @@ def inject_into_ipython():
         # inject some convenience functions
         ip.user_ns["reload_lamb"] = reload_lamb
         ip.user_ns["Tree"] = lamb.utils.get_tree_class()
-        ip.user_ns["ltx_print"] = lamb.utils.ltx_print
         ip.user_ns["te"] = lamb.meta.te
         ip.user_ns["tp"] = lamb.meta.tp
         ip.user_ns["unify"] = lamb.meta.unify

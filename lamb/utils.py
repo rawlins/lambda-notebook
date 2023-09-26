@@ -79,6 +79,7 @@ class BaseLNDisplay(object):
 # this class is only suitable for colab; it requires on colab's idiosyncratic
 # combination of iframes and katex rendering for outputs.
 class ColabLNDisplay(BaseLNDisplay):
+    # TODO: arg order for non kw cases?
     def __init__(self, html = None, latex = None, markdown = None, plain = ""):
         super().__init__(html, latex, markdown, plain)
 
@@ -123,10 +124,11 @@ class ColabLNDisplay(BaseLNDisplay):
 # from utils import LNDisplay. Use `show` below instead.
 LNDisplay = BaseLNDisplay
 
-def show(**args):
-    return LNDisplay(**args)
+def show(*args, **kwargs):
+    return LNDisplay(*args, **kwargs)
 
-# TODO: remove, it's only used in a very old demo and a few misc places
+# This is here only for compatibility with the 2013 LSA demo notebook, you
+# should just use `IPython.display.display` instead
 def ltx_print(*args):
     s = ""
     for x in args:
