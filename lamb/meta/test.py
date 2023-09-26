@@ -311,8 +311,13 @@ class MetaTest(unittest.TestCase):
         g = te("L g_<Y,Z> : L f_<X,Y> : L x_X : g(f(x))")
         self.assertEqual(g.try_adjust_type(tp("<<e,t>,<<e,e>,?>>")),
             te("(λ g_<e,t>: (λ f_<e,e>: (λ x_e: g_<e,t>(f_<e,e>(x_e)))))"))
+
+        # note: the choice of variables here is implementation-dependent; because
+        # of the let, in the current implementation `Y` gets renamed to `X`
+        # (which is distinct from the `X` in `g`). TODO: this function should
+        # really be testing equivalence under alpha conversion of type vars...
         self.assertEqual(g.let_type(tp("<?,<<<e,t>,?>,?>>")),
-            te("(λ g_<Y,Z>: (λ f_<<e,t>,Y>: (λ x_<e,t>: g_<Y,Z>(f_<<e,t>,Y>(x_<e,t>)))))"))
+            te("(λ g_<X,Z>: (λ f_<<e,t>,X>: (λ x_<e,t>: g_<X,Z>(f_<<e,t>,X>(x_<e,t>)))))"))
         # z combinator test
         z = te("(λ f_<X,<e,Z>>: (λ g_<e,X>: (λ x_e: f(g(x))(x))))")
         self.assertEqual(z.try_adjust_type(tp("<<e,<e,t>>,?>")),
