@@ -1378,7 +1378,7 @@ class TypedExpr(object):
         return (isinstance(self.op, str) and len(self.args) == 0)
 
     def functional(self):
-        funtype = unify(self.type, tp("<X,Y>"))
+        funtype = unify(self.type, tp("<?,?>"))
         return (funtype is not None)
 
     def atomic(self):
@@ -1748,12 +1748,16 @@ class ApplicationExpr(TypedExpr):
             fun = fun.try_adjust_type_caching(f_type,
                                 derivation_reason="Type inference (external)",
                                 assignment=assignment)
+            if fun.let:
+                fun = fun.compact_type_vars(unsafe=arg.get_type_env().type_var_set)
             history = True
 
         if a_type != arg.type:
             arg = arg.try_adjust_type_caching(a_type,
                                 derivation_reason="Type inference (external)",
                                 assignment=assignment)
+            if arg.let:
+                fun = fun.compact_type_vars(unsafe=fun.get_type_env().type_var_set)
             history = True
 
         return (fun, arg, out_type, history)
