@@ -27,7 +27,7 @@ testnb:
 
 unittest:
 	python3 -m unittest lamb.types
-	python3 -m unittest lamb.meta
+	python3 -m unittest discover
 
 test: unittest testnb
 
