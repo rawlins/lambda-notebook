@@ -145,7 +145,7 @@ def setup_magics():
     except: # fail silently if there's no ipython kernel
         return
     ip.register_magics(LambMagics)
-    reset_envs() # for imp.reload calls
+    reset_envs() # for importlib.reload calls
     
 setup_magics()
 
