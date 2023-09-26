@@ -21,13 +21,15 @@ Lambda Notebook.app
 build_support/Lambda Notebook.dmg
 kernel/lambda-notebook/kernel.json
 lamb/notebooks
+test_env/
 
 # don't ever want to merge this, probably:
 #Untitled.ipynb
 
-# convenience symlinks that I use
+# convenience symlinks that I use. Note: symlinks can't end in /
 svgling
 notebooks/dropbox_notebooks
+notebooks/local_notebooks
 
 # Sphinx documentation
 docs/_build/

@@ -1,6 +1,8 @@
 .PHONY: clear demo testnb test unittest release
 testopts = "--ExecutePreprocessor.timeout=120"
 
+FORCE:
+
 clear:
 	for nb in notebooks/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
 	for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
@@ -30,5 +32,13 @@ unittest:
 test: unittest testnb
 
 clean:
-	rm -rf dist/ data_kernelspec/ build/ lambda_notebook.egg-info/
+	rm -rf dist/ data_kernelspec/ build/ lambda_notebook.egg-info/ test_env/
 	rm -f lamb/notebooks
+
+dist: FORCE
+	python -m build
+	@echo -e "\\nDid you remember to increment versions, set __release__=True, and tag?"
+
+test_env:
+	python -m venv test_env
+	source test_env/bin/activate && pip install --upgrade pip
