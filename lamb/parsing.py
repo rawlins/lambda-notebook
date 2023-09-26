@@ -320,6 +320,9 @@ def html_output(accum, env):
                                     + "\\:=\\:"
                                     + accum[k]._repr_latex_()))
             plain_lines.append(repr(var) + " = " + repr(accum[k]))
+        elif isinstance(accum[k], lang.Items):
+            # TODO: less ad hoc treatment of this case
+            lines.extend(accum[k].all_latex_strs())
         elif isinstance(accum[k], lang.Composable):
             # item will automatically print an equality statement
             lines.append(accum[k]._repr_latex_())

@@ -1550,10 +1550,20 @@ class Items(CompositionResult):
                 if num == 1:
                     s += composite.latex_str(i=n)
                 else:
+                    # should this really be here for Items?
                     s += ("%s &nbsp;&nbsp;<span style=\"font-size:small\">(%i equivalent items)</span>"
                                 % (composite.latex_str(i=n), num))
                 n += 1
         return utils.show(markdown=s)
+
+    def all_latex_strs(self):
+        # TODO: less ad hoc interface for this?
+        result = []
+        n = 0
+        for composite in self.results:
+            result.append(composite.latex_str(i=n))
+            n += 1
+        return result
 
     @property
     def name(self):
