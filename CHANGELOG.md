@@ -32,7 +32,7 @@ Fixes, improvements, changes (highlights):
 
 Fix a python 3.10 compatibility bug
 
-## [0.7.0] -
+## [0.7.0] - Rendering and metalanguage updates - 2023-09-27
 
 New features:
  - support rendering in colab
@@ -40,5 +40,5 @@ New features:
  - refactor metalanguage code: better support for new operators
 
  Fixes:
- - fix a type inference regression in 0.6.9
+ - fix several polymorphic type inference issues
  - improved ipython/jupyter rendering
