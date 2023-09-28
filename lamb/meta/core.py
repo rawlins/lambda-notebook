@@ -144,6 +144,36 @@ def default_type(s):
         # TODO: more default special cases?  predicates?
         raise NotImplementedError
 
+
+def let_compact_type_vars(*args, unsafe=None, store_mapping=False):
+    """Compact the type variables on expressions in `args` into X
+    variables with a low number. This is primarily intended for
+    returning freshened types to a human-readable form. Elements
+    in `args` are assumed to have mutually interpretable types, i.e.
+    not `let` bound."""
+    history_env = [a.get_type_env() for a in args]
+    if all(len(e.type_var_set) == 0 for e in history_env):
+        if len(args) == 1:
+            return args[0]
+        else:
+            return args
+    envs = [a.get_type_env() for a in args]
+    tenv = set().union(*[e.used_vars() for e in envs])
+
+    compacted_map = types.compact_type_set(tenv, unsafe=unsafe)
+    # `under_type_injection` copies
+    results = [a.under_type_injection(compacted_map) for a in args]
+    for i in range(len(results)):
+        results[i]._type_env_history = history_env[i]
+    if not store_mapping:
+        for r in results:
+            r.get_type_env(force_recalc=True)
+    if len(results) == 1:
+        return results[0]
+    else:
+        return results
+
+
 class MiniOp(object):
     """This is a class to pass to a TypeMismatch so that the operator is
     displayed nicely."""
@@ -345,6 +375,10 @@ class TypeEnv(object):
         for m in self.type_mapping:
             s  = s | self.type_mapping[m].bound_type_vars()
         self.type_var_set = s
+
+    def used_vars(self):
+        # requires up-to-date var set...
+        return self.type_var_set - set(self.type_mapping.keys())
 
     def term_by_name(self, vname):
         if vname in self.var_mapping:
@@ -1210,33 +1244,9 @@ class TypedExpr(object):
                                                         merge_intersect=False)
 
 
-    def compact_type_vars(self, target=None, unsafe=None, used_vars_only=True,
-                                                        store_mapping=False):
-        """Compact the type variables on `self` into X variables with a low
-        number.  By default this will not store the mapping that resulted in
-        the compaction, i.e. the type environment is a clean slate.  For this
-        reason, it is suitable only for let-bound contexts."""
-        history_env = self.get_type_env()
-        if len(history_env.type_var_set) == 0:
-            return self
-        c = self.copy()
-        # note: the following is already triggered by copy.  If this behavior
-        # changes, this needs updating.
-        env = c.get_type_env()
-        if len(env.type_var_set) == 0:
-            return c
-        if used_vars_only:
-            tenv = env.type_var_set - set(env.type_mapping.keys())
-        else:
-            tenv = env.type_var_set
-        if len(tenv) == 0:
-            return self
-        compacted_map = types.compact_type_set(tenv, unsafe=unsafe)
-        result = self.under_type_injection(compacted_map)
-        result._type_env_history = history_env
-        if not store_mapping:
-            result.get_type_env(force_recalc=True)
-        return result
+    def compact_type_vars(self, unsafe=None, store_mapping=False):
+        return let_compact_type_vars(self, unsafe=unsafe,
+                                            store_mapping=store_mapping)
 
 
     def freshen_type_vars(self, target=None, unsafe=None, used_vars_only=False,
@@ -1617,18 +1627,23 @@ class ApplicationExpr(TypedExpr):
                     raise TypeMismatch(fun, arg, "Function-argument expression: left subexpression is not a function")
                 else:
                     raise TypeMismatch(fun, arg, "Function-argument expression: mismatched types")
-            fun, arg, out_type, history = tc_result
+            f, a, out_type, history = tc_result
             op = "Apply"
-            args = [fun, arg]
+            args = [f, a]
             self.type = out_type
         else:
             history = False
             op = "Apply"
             args = [fun, arg]
-            # note: fun.type MUST be functional!
-            self.type = fun.type.right
+            try:
+                self.type = fun.type.right
+            except AttributeError:
+                # the input `fun` type is not itself functional, so we can't
+                # even determine the output type. Use UnknownType as a
+                # placeholder.
+                self.type = types.UnknownType()
         super().__init__(op, *args, defer=defer)
-        if fun.let and arg.let:
+        if fun.let or arg.let:
             self.let = True
 
         if history:
@@ -1636,12 +1651,12 @@ class ApplicationExpr(TypedExpr):
             # the origin
             old = ApplicationExpr(fun, arg, defer=True)
             derived(self, old, desc="Type inference")    
-        if isinstance(fun, LFun):
-            arg.type_not_guessed()
+        if isinstance(args[0], LFun):
+            args[1].type_not_guessed()
         else:
             # not 100% that the following is the right fix...
             try:
-                self.type_guessed = fun.type_guessed
+                self.type_guessed = args[0].type_guessed
             except AttributeError:
                 self.type_guessed = False
 
@@ -1733,8 +1748,6 @@ class ApplicationExpr(TypedExpr):
     @classmethod
     def fa_type_inference(cls, fun, arg, assignment):
         ts = get_type_system()
-        old_fun = None
-        old_arg = None
         if fun.let:
             fun = fun.freshen_type_vars()
         if arg.let:
@@ -1748,19 +1761,22 @@ class ApplicationExpr(TypedExpr):
             fun = fun.try_adjust_type_caching(f_type,
                                 derivation_reason="Type inference (external)",
                                 assignment=assignment)
-            if fun.let:
-                fun = fun.compact_type_vars(unsafe=arg.get_type_env().type_var_set)
             history = True
 
         if a_type != arg.type:
             arg = arg.try_adjust_type_caching(a_type,
                                 derivation_reason="Type inference (external)",
                                 assignment=assignment)
-            if arg.let:
-                fun = fun.compact_type_vars(unsafe=fun.get_type_env().type_var_set)
             history = True
 
-        return (fun, arg, out_type, history)
+        if fun.let or arg.let:
+            fun, arg = let_compact_type_vars(fun, arg)
+            fun.let = False
+            arg.let = False
+            # history?
+
+        # assumption: by now, fun.type supports indexing to get the output type
+        return (fun, arg, fun.type[1], history)
 
     def reducible(self):
         if isinstance(self.args[0], LFun) or isinstance(self.args[0],
@@ -1774,8 +1790,9 @@ class ApplicationExpr(TypedExpr):
         if not self.reducible():
             return self
         else:
-            return derived(self.args[0].apply(self.args[1]), self,
-                                                            desc="Reduction")
+            result = self.args[0].apply(self.args[1])
+            result.let = self.let
+            return derived(result, self, desc="Reduction")
 
     def calculate_partiality(self, vars=None):
         # defer calculation of the argument until beta reduction has occurred
