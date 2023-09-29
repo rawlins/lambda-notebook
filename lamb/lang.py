@@ -78,8 +78,21 @@ def inbr_doublebracket(s, negspace=False):
     else:
         return "[[" + s + "]]"
 
-def latexbf(s):
-    return "\\mathbf{\\text{" + s + "}}"
+def latex_text(s):
+    # MathJax 3 errors if an underscore appears inside \text, but accepts
+    # them escaped. Note that this is a brute force replacement and can't
+    # be used on its own output, doesn't check for existing escaping, etc.
+    s = s.replace("_", r"\_")
+    return f"\\text{{{s}}}"
+
+def latexbf(s, math=False):
+    # In MathJax 2, \mathbf works over text, but MathJax 3 has become a bit
+    # more selective about this
+    if math:
+        return f"\\mathbf{{{latex_text(s)}}}"
+    else:
+        return latex_text(f"\\textbf{{{s}}}")
+
 
 def inbr_raw(s):
     """Convenience function to wrap something in double brackets, for MathJax
