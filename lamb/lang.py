@@ -1246,7 +1246,7 @@ class CompositionResult(Composable):
             if self.source is None:
                 s += "Composition failed:"
             else:
-                s += ("Composition of %s failed:" % (self.name))
+                s += ("Composition of \"%s\" failed:" % (self.name))
             s += newline + self.failures_str(latex = not plain)
         else:
             if (len(self.results) == 1):
@@ -1318,15 +1318,16 @@ class CompositionResult(Composable):
     def failures_str(self, latex=False, preconditions=False):
         s = str()
         failed_precond = list()
+        newline = latex and "<br />\n" or "\n"
         for f in self.failures:
             if isinstance(f, CompositionResult):
                 if f.source is None:
-                    s += "Inheriting composition failure. "
+                    s += "Inheriting composition failure." + newline
                 else:
-                    s += ("Inheriting composition failure from %s. " %
-                          f.name)
+                    s += ("Inheriting composition failure from \"%s\"." %
+                          f.name) + newline
                 if latex:
-                    s += f.latex_str()
+                    s += f.failures_str(latex=latex, preconditions=preconditions)
                 else:
                     s += str(f)
             elif isinstance(f, Composite):
@@ -1335,9 +1336,10 @@ class CompositionResult(Composable):
                     failed_precond.append(f)
                     continue
                 if latex:
-                    s += latex_indent() + f.content.latex_str() + "<br />\n"
+                    s += latex_indent() + f.content.latex_str()
                 else:
-                    s += "    " + str(f.content) + "\n"
+                    s += "    " + str(f.content)
+                s += newline
             else:
                 raise NotImplementedError(f.__class__)
         if len(failed_precond):
@@ -1345,10 +1347,7 @@ class CompositionResult(Composable):
                   + ("%d operations failed preconditions: %s."
                      % (len(failed_precond),
                         ", ".join([n.mode.name for n in failed_precond]))))
-            if latex:
-                s += "<br />\n"
-            else:
-                s += "\n"
+            s += newline
         return s
 
     def failures_trace_latex(self):
