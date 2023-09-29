@@ -1488,6 +1488,7 @@ class PolyTypeSystem(TypeSystem):
         if self.occurs_check(t1, t2):
             from lamb import meta
             from lamb.meta import logger
+            # this should probably raise a TypeMismatch?
             logger.error(
                 "Failed occurs check: can't unify recursive types %s and %s"
                 % (t1,t2))
