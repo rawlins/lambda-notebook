@@ -458,17 +458,12 @@ class Lexicon(MutableMapping):
     def reset(self):
         self.items = collections.OrderedDict()
 
-    def _repr_html_(self):
-        if len(self) == 0:
-            return "<i>(Empty lexicon)</i>"
-        lines = list()
-        for k in self:
-            if isinstance(self[k], Composable):
-                lines.append(self[k]._repr_html_())
-            else:
-                print("(Unknown class '%s') %s \\:=\\: %s" % (self[k].__class__,
-                                                          k, self[k]))
-        return "<br />\n".join(lines)
+    def _repr_markdown_(self):
+        # assumption: parsing output generates markdown code. TODO: unify
+        # these two things in a more elegant way. Probably Lexicon should be
+        # responsible for rendering?
+        from lamb import parsing
+        return parsing.html_output(self, dict())._repr_markdown_()
 
 
 class SingletonComposable(Composable):

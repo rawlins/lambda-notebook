@@ -313,6 +313,9 @@ def html_output(accum, env):
     from lamb import meta, lang
     lines = []
     plain_lines = []
+    if len(accum) == 0:
+        # use markdown for consistency...
+        return utils.show(markdown="<i>(Empty lexicon)</i>")
     for k in accum.keys():
         if isinstance(accum[k], meta.TypedExpr):
             var = fullvar(accum, k)
