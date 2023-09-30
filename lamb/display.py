@@ -21,8 +21,37 @@ class LatexMode(enum.Enum):
     MATHJAX3 = 2
     KATEX = 3
 
-# in compat mode, everything works except bold in MathJax 3
-latex_mode = LatexMode.COMPAT
+def init_latex_mode():
+    # in compat mode, everything works except bold in MathJax 3
+    latex_mode = LatexMode.COMPAT
+    try:
+        import jupyterlab
+        if int(jupyterlab.__version__.split(".")[0]) >= 4:
+            latex_mode = LatexMode.MATHJAX3
+            try:
+                # TODO: package existence doesn't guarantee extension is
+                # enabled! In principle we should check if the extension is
+                # enabled by the jupyter app, but I can't figure out how to
+                # do that right now...
+                import jupyterlab_mathjax2
+                latex_mode = LatexMode.MATHJAX2
+            except ImportError:
+                pass
+
+            # note: we could try to do something similar to the above for
+            # `jupyterlab_katex`. However, this extension is extremely broken
+            # for programmatic outputs, so at the moment it's not supported
+            # at all.
+        else:
+            # prior to Jupyter lab version 4, MathJax 2 was guaranteed
+            # probably doesn't work for really ancient setups...
+            latex_mode = LatexMode.MATHJAX2
+    except ImportError:
+        pass
+    return latex_mode
+
+# note: colab setup may override this
+latex_mode = init_latex_mode()
 
 # note on the following: Katex does not have identical behavior to MathJax 3,
 # but everything that works for MathJax 3 has worked for Katex so far. However,
