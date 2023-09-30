@@ -1,5 +1,5 @@
 #!/usr/local/bin/python3
-import collections, itertools, logging, html
+import collections, itertools, logging, html, enum
 
 from lamb import utils, types, meta, display
 from lamb.utils import ensuremath
@@ -45,23 +45,25 @@ Tree = utils.get_tree_class()
 
 
 
-# configurable bracketing options.  BRACKET_BARS is always safe.
-# This is configurable because the nicer looking options are _much_ slower than
-# the uglier ones, depending on the MathJax render mode. For visually best
-# results, I recommend firefox, with MathJax in SVG mode, and BRACKET_FANCY.
-global bracket_setting, BRACKET_BARS, BRACKET_FANCY, BRACKET_UNI
-BRACKET_BARS = 1
-BRACKET_FANCY = 2
-BRACKET_UNI = 3
-bracket_setting = BRACKET_FANCY
+# configurable bracketing options. BARS is always safe.
+# This is configurable because historically the nicer looking options could be
+# slower than the uglier ones, depending on the MathJax render mode.
+global bracket_setting
+class DoubleBrackets(enum.Enum):
+    BARS = 1  # ascii
+    FANCY = 2 # unicode/latex
+    UNI = 3   # unicode only
+
+bracket_setting = DoubleBrackets.FANCY
 
 
 def text_inbr(s):
     """Convenience function to wrap something in double brackets, for
     strings."""
-    if bracket_setting == BRACKET_BARS:
+    if bracket_setting == DoubleBrackets.BARS:
         return "||" + s + "||"
-    elif bracket_setting == BRACKET_FANCY or bracket_setting == BRACKET_UNI:
+    elif (bracket_setting == DoubleBrackets.FANCY
+                or bracket_setting == DoubleBrackets.UNI):
         return "⟦" + s + "⟧"
     else:
         return "||" + s + "||"
@@ -97,11 +99,11 @@ def latexbf(s, math=False):
 def inbr_raw(s):
     """Convenience function to wrap something in double brackets, for MathJax
     output."""
-    if bracket_setting == BRACKET_BARS:
+    if bracket_setting == DoubleBrackets.BARS:
         return inbr_doublebar(s)
-    elif bracket_setting == BRACKET_FANCY:
+    elif bracket_setting == DoubleBrackets.FANCY:
         return inbr_doublebracket(s, True)
-    elif bracket_setting == BRACKET_UNI:
+    elif bracket_setting == DoubleBrackets.UNI:
         return inbr_doublebracket_uni(s)
     else:
         return inbr_doublebar(s)
