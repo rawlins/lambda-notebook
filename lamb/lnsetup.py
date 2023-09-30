@@ -27,6 +27,7 @@ def colab_setup():
         return
     # activate colab-specific display code
     lamb.utils.LNDisplay = lamb.utils.ColabLNDisplay
+    lamb.display.latex_mode = lamb.display.LatexMode.KATEX
 
 def inject_into_ipython():
     try:
@@ -58,7 +59,6 @@ def reload_lamb(use_nltk_tree=None):
     # should this reload the magics?
     import importlib
     importlib.reload(lamb.utils)
-    colab_setup()
     if use_nltk_tree is not None:
         # inherit default from currently running version. TODO: too confusing?
         lamb.utils.use_nltk = use_nltk_tree
@@ -72,6 +72,7 @@ def reload_lamb(use_nltk_tree=None):
     importlib.reload(lamb.lang)
     importlib.reload(lamb.parsing)
     importlib.reload(lamb.display)
+    colab_setup()
     importlib.reload(lamb.combinators)
     lamb.reload_all = reload_lamb
     inject_into_ipython()

@@ -15,6 +15,56 @@ def log_warning(m):
     from lamb import meta
     meta.logger.warning(m)
 
+class LatexMode(enum.Enum):
+    COMPAT = 0
+    MATHJAX2 = 1
+    MATHJAX3 = 2
+    KATEX = 3
+
+# in compat mode, everything works except bold in MathJax 3
+latex_mode = LatexMode.COMPAT
+
+# note on the following: Katex does not have identical behavior to MathJax 3,
+# but everything that works for MathJax 3 has worked for Katex so far. However,
+# I'm leaving it distinct in case this changes, or there are issues I haven't
+# found.
+
+def latex_text(s):
+    # MathJax 3 errors if an underscore appears inside \text, but accepts
+    # them escaped. Note that this is a brute force replacement and can't
+    # be used on its own output, doesn't check for existing escaping, etc.
+    if latex_mode == LatexMode.COMPAT:
+        # Annoyingly, MathJax 2 doesn't parse `\_`. However, in compat mode we
+        # can't risk breaking the formula for MathJax 3...so do something
+        # much more complicated (pull underscores out of \text).
+        segs = s.split("_")
+        if len(segs) > 1:
+            return "\\_".join([f"\\text{{{s}}}" for s in segs])
+    elif latex_mode == LatexMode.MATHJAX3 or latex_mode == LatexMode.KATEX:
+        # MathJax errors
+        # Katex fails to parse and renders the source
+        # TODO: this wouldn't handle existing escapes
+        s = s.replace("_", r"\_")
+    # MathJax 2: leave any _s intact.
+
+    return f"\\text{{{s}}}"
+
+
+def latexbf(s, math=False):
+    # In MathJax 2, \mathbf works over \text, and \textbf does not work. In
+    # MathJax 3, \mathbf does not work over \text (but doesn't produce an
+    # error or anything), and \textbf does work in a \text context. Katex
+    # doesn't seem to care, either solution works.
+    if math:
+        return f"\\mathbf{{{s}}}"
+    elif latex_mode == LatexMode.MATHJAX2 or latex_mode == LatexMode.COMPAT:
+        # compat mode logic: putting this sequence is safe, it just doesn't
+        # work to produce bold in MathJax 2
+        return f"\\mathbf{{{latex_text(s)}}}"
+    else: # MATHJAX3, KATEX
+        return latex_text(f"\\textbf{{{s}}}")
+
+
 class Direction(enum.Enum):
     TD = 0
     LR = 1

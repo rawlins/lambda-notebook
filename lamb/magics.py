@@ -70,7 +70,7 @@ class LambMagics(Magics):
 
     @line_cell_magic
     def lamb(self, line, cell=None):
-        """Magic that works both as %lcmagic and as %%lcmagic"""
+        """Magic that works both as %lamb and as %%lamb"""
         self.cur_ambiguity = self.ambiguity
         if cell is None:
             (accum, env) = parsing.parse(line, self.env)

@@ -45,9 +45,12 @@ Tree = utils.get_tree_class()
 
 
 
+# TODO: relocate double bracket config to `display`?
+
 # configurable bracketing options. BARS is always safe.
 # This is configurable because historically the nicer looking options could be
-# slower than the uglier ones, depending on the MathJax render mode.
+# slower than the uglier ones, depending on the MathJax render mode. In 2023
+# it's a bit over-elaborate..
 global bracket_setting
 class DoubleBrackets(enum.Enum):
     BARS = 1  # ascii
@@ -56,68 +59,59 @@ class DoubleBrackets(enum.Enum):
 
 bracket_setting = DoubleBrackets.FANCY
 
+from lamb.display import latex_text, latexbf
+
+def inbr_doublebracket_uni(s):
+    return f"⟦{s}⟧"
+
+def inbr_doublebar(s):
+    return f"||{s}||"
 
 def text_inbr(s):
     """Convenience function to wrap something in double brackets, for
-    strings."""
-    if bracket_setting == DoubleBrackets.BARS:
-        return "||" + s + "||"
-    elif (bracket_setting == DoubleBrackets.FANCY
+    regular strings."""
+    if (bracket_setting == DoubleBrackets.FANCY
                 or bracket_setting == DoubleBrackets.UNI):
-        return "⟦" + s + "⟧"
+        return inbr_doublebracket_uni(s)
+    else: # BARS
+        return inbr_doublebar(s)
+
+def inbr_doublebracket(s, negspace=True):
+    if display.latex_mode == display.LatexMode.KATEX:
+        # katex on colab appears to support this out of the box! (Though its
+        # implementation appears to be essentially the negative spacing trick)
+        return f"\\llbracket {{{s}}}\rrbracket "
+    elif negspace:
+        # otherwise, we use negative spacing to get the symbols
+        # TODO: maybe wrap in {}?
+        return f"[\\![{s}]\\!]"
     else:
-        return "||" + s + "||"
-
-def inbr_doublebracket_uni(s):
-    return "⟦" + s + "⟧"
-
-def inbr_doublebar(s):
-    return "||" + s + "||"
-
-def inbr_doublebracket(s, negspace=False):
-    if negspace:
-        return "[\![" + s + "]\!]"
-    else:
-        return "[[" + s + "]]"
-
-def latex_text(s):
-    # MathJax 3 errors if an underscore appears inside \text, but accepts
-    # them escaped. Note that this is a brute force replacement and can't
-    # be used on its own output, doesn't check for existing escaping, etc.
-    s = s.replace("_", r"\_")
-    return f"\\text{{{s}}}"
-
-def latexbf(s, math=False):
-    # In MathJax 2, \mathbf works over text, but MathJax 3 has become a bit
-    # more selective about this
-    if math:
-        return f"\\mathbf{{{latex_text(s)}}}"
-    else:
-        return latex_text(f"\\textbf{{{s}}}")
-
+        # legacy approach, historically the negative spacing trick slowed down
+        # rendering quite a bit. This is dead code, as far as display routines
+        # are concerned, but leave it in for now. Unicode bracket actually
+        # looks pretty good in MathJax output, it just potentially leads to
+        # paste issues for the latex source.
+        return inbr_doublebracket_uni(s)
 
 def inbr_raw(s):
     """Convenience function to wrap something in double brackets, for MathJax
     output."""
-    if bracket_setting == DoubleBrackets.BARS:
-        return inbr_doublebar(s)
-    elif bracket_setting == DoubleBrackets.FANCY:
-        return inbr_doublebracket(s, True)
-    elif bracket_setting == DoubleBrackets.UNI:
-        return inbr_doublebracket_uni(s)
+    if bracket_setting == DoubleBrackets.FANCY:
+        return inbr_doublebracket(s)
     else:
-        return inbr_doublebar(s)
+        return text_inbr(s)
 
 def inbr(s):
     return inbr_raw(latexbf(s))
 
 def latex_super(s, super):
-    return s + "^{" + super + "}"
+    return f"{s}^{{{super}}}"
 
 def inbrs(s, super):
     """Wrap a string in brackets with a superscript, for MathJax output."""
     return latex_super(inbr(s), super)
 
+# TODO: this is very mislabeled...
 def mathjax_indent():
     """Indentation suitable for MathJax output."""
     return "&nbsp;&nbsp;&nbsp;&nbsp;"
@@ -1277,6 +1271,7 @@ class CompositionResult(Composable):
         return s
 
     def show(self, recurse=True, style=None, failures=False):
+        # TODO: the plain version of this is extremely unreadable
         return utils.show(markdown=self.summary(plain=False, recurse=recurse, style=style, failures=failures),
             plain=self.summary(plain=True, recurse=recurse, style=style, failures=failures))
 
