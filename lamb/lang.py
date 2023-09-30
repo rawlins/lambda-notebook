@@ -80,7 +80,7 @@ def inbr_doublebracket(s, negspace=True):
     if display.latex_mode == display.LatexMode.KATEX:
         # katex on colab appears to support this out of the box! (Though its
         # implementation appears to be essentially the negative spacing trick)
-        return f"\\llbracket {{{s}}}\rrbracket "
+        return f"\\llbracket {{{s}}}\\rrbracket "
     elif negspace:
         # otherwise, we use negative spacing to get the symbols
         # TODO: maybe wrap in {}?
