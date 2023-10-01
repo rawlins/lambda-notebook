@@ -1,6 +1,0 @@
-{
- "argv": ["python3", "-m", "IPython.kernel",
-          "-f", "{connection_file}", "--IPKernelApp.exec_lines=[\"import sys; sys.path.append(\\\"/Users/advil/repos/lambda-notebook/\\\"); import lamb.lnsetup; lamb.lnsetup.ipython_setup()\"]"],
- "display_name": "Lambda Notebook (Python 3)",
- "language": "python"
-}
