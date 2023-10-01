@@ -7,6 +7,8 @@ from lamb.types import type_e, type_t, type_property, TypeMismatch
 from lamb.meta import  TypedExpr
 from lamb import tree_mini
 
+from lamb.meta.core import te, tp
+
 try:
     from collections import MutableMapping
 except:
@@ -2315,6 +2317,7 @@ class CompositionSystem(object):
     def add_basic_type(self, t):
         ts = meta.get_type_system()
         ts.add_atomic(t)
+        # TODO: why do we cache this???
         if not t in self.basictypes:
             self.basictypes.add(t)
 
@@ -2744,20 +2747,6 @@ class TreeCompositionSystem(CompositionSystem):
                 return cur
             cur = cur.compose_path(full_path)
             last = subtree
-
-
-
-
-def te(s, assignment=None):
-    """Convenience wrapper around the meta-language parser."""
-    return meta.TypedExpr.factory(s, assignment=assignment)
-
-def tp(s):
-    """Convenience wrapper around the type parser."""
-    ts = meta.get_type_system()
-    result = ts.type_parser(s)
-    return result
-
 
 def tree_fa_fun_abstract(f, a, assignment=None):
     """Do function application in a fixed function, argument order."""

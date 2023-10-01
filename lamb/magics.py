@@ -1,18 +1,16 @@
 import keyword, collections
 import lamb
-from lamb import parsing, utils, lang
+from lamb import parsing, utils, lang, meta, types
 from lamb.utils import *
 
 from IPython.core.magic import (Magics, magics_class, line_magic,
                                 cell_magic, line_cell_magic)
 import IPython.display
 
+
 def check_shadowing(words):
-    l = list()
-    for k in words:
-        if keyword.iskeyword(k):
-            l.append(k)
-    return l
+    return [k for k in words if keyword.iskeyword(k)]
+
 
 def process_items(fun, *i, env=None):
     """This function processes one or more lexical entries in various possible
@@ -44,11 +42,13 @@ def process_items(fun, *i, env=None):
         return None
     return result
 
+
 lamb_magics = set()
 def reset_envs():
     global lamb_magics
     for m in lamb_magics:
         m.reset()
+
 
 @magics_class
 class LambMagics(Magics):
@@ -139,6 +139,14 @@ class LambMagics(Magics):
         self.shell.push(accum)
         return result
 
+    @line_magic
+    def tp(self, line):
+        try:
+            return meta.tp(line)
+        except types.TypeParseError as e:
+            IPython.display.display(e)
+
+
 def setup_magics():
     try:
         ip = get_ipython()
@@ -146,6 +154,6 @@ def setup_magics():
         return
     ip.register_magics(LambMagics)
     reset_envs() # for importlib.reload calls
-    
-setup_magics()
 
+
+setup_magics()

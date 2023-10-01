@@ -83,9 +83,7 @@ def ts_compatible(a, b):
 
 def tp(s):
     """Convenience wrapper for the current type system's type parser."""
-    ts = get_type_system()
-    result = ts.type_parser(s)
-    return result
+    return get_type_system().type_parser(s, require_exact_type=True)
 
 def let_wrapper(s):
     result = derived(s.compact_type_vars(), s, "Let substitution")

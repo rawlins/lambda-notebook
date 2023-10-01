@@ -667,7 +667,7 @@ class VariableType(TypeConstructor):
         else:
             (symbol, number) = parse_vartype(symbol)
             if symbol is None:
-                raise parsing.ParseError("Can't parse variable type", s=symbol)
+                raise TypeParseError("Can't parse variable type", s=symbol)
             self.symbol = symbol
             self.number = number
         if self.number > VariableType.max_id:
@@ -1031,7 +1031,9 @@ class DisjunctiveType(TypeConstructor):
         return (self.left is not None)
 
     # returns a FunType characterizing the set of functional types contained in
-    # self.
+    # self. Note! This is not guaranteed to produce an equivalent type -- it
+    # is only guaranteed to produce a type that is equivalent in its left
+    # argument!
     def factor_functional_types(self):
         return FunType(self.left, self.right)
 
@@ -1070,13 +1072,21 @@ class DisjunctiveType(TypeConstructor):
         else:
             i = next
             signature = []
+            # sequences like `[e|t|]` are valid, should they be?
             while i < len(s) and s[i] != "]":
                 (m, i) = parse_control_fun(s, i)
                 signature.append(m)
-                if s[i] == "]":
+                # break on upcoming ].
+                if i < len(s) and s[i] == "]":
+                    break
+                # error handling: if we have >1 disjuncts error on missing ],
+                # otherwise error on missing |
+                if i >= len(s) and len(signature) > 1:
                     break
                 i = parsing.consume_char(s, i, "|",
                                             "Missing | in disjunctive type")
+            # note: if there's a missing type in an expression like `[e|`, we
+            # slightly misleadingly produce this error..
             i = parsing.consume_char(s, i, "]",
                                             "Unmatched [ in disjunctive type")
             return (DisjunctiveType(*signature, raise_s=s, raise_i=starting_i),
@@ -1168,12 +1178,18 @@ class TypeSystem(object):
         # may return None?
         return (result, i)
 
-    def type_parser(self, s):
-        (r, i) = self.type_parser_recursive(s)
-        return r
+    def type_parser(self, s, require_exact_type=False):
+        try:
+            (r, i) = self.type_parser_recursive(s)
+            if require_exact_type and i < len(s):
+                raise TypeParseError("Extraneous characters in type", s=s, i=i)
+            return r
+        except parsing.ParseError as e:
+            # TODO: raise this directly?
+            raise TypeParseError(e.msg, s=e.s, i=e.i)
 
-    def parse(self, s):
-        return self.type_parser(s)
+    def parse(self, s, require_exact_type=False):
+        return self.type_parser(s, require_exact_type=require_exact_type)
 
     def fun_arg_check_bool(self, fun, arg):
         return (fun.type.functional() and
@@ -1715,13 +1731,17 @@ class TypeParseError(Exception):
         if self.s == None or self.i == None:
             return self.msg
         if self.i >= len(self.s):
-            return "%s at point '%s!here!" % (self.msg, self.s)
+            return "%s at point `%s!here!`" % (self.msg, self.s)
         else:
-            return "%s at point '%s!here!%s'" % (self.msg, self.s[0:self.i],
+            return "%s at point `%s!here!%s`" % (self.msg, self.s[0:self.i],
                                                             self.s[self.i:])
 
+    def _repr_markdown_(self):
+        # it's convenient to use markdown here for backticks, but colab will
+        # strip out the color. So, use both red and bold.
+        return f"<span style=\"color:red\">**TypeParseError**</span>: {str(self)}"
 
-def setup_type_constants():
+def reset():
     global type_e, type_t, type_n, type_property, type_transitive
     global basic_system, poly_system
 
@@ -1736,13 +1756,13 @@ def setup_type_constants():
                                  nonatomics={FunType, TupleType, SetType})
     poly_system.add_nonatomic(DisjunctiveType, 1)
 
-setup_type_constants()
+reset()
 
 
 import unittest
 class TypeTest(unittest.TestCase):
     def setUp(self):
-        setup_type_constants()
+        reset()
 
     def test_parser_simple(self):
         for i in range(0, 1000):
@@ -1802,21 +1822,26 @@ class TypeTest(unittest.TestCase):
 
 
     def test_disjunctive_cases(self):
-        self.assertTrue(poly_system.parse_unify_check("[e|t]", "[t|e]"))
-        self.assertTrue(poly_system.parse_unify_check("[e|t]", "[t|e]"))
-        self.assertTrue(poly_system.parse("[e|t]") & poly_system.parse("[t|n]")
-                        == poly_system.parse("t"))
-        self.assertTrue(poly_system.parse("[e|t]") | poly_system.parse("[t|n]")
-                        == poly_system.parse("[e|t|n]"))
-        self.assertTrue((poly_system.parse("[e|t]")
-                                & poly_system.parse("[<e,t>|n]")) is None)
+        def tp(x):
+            return poly_system.parse(x, require_exact_type=True)
 
-        with self.assertRaises(TypeParseError): poly_system.parse("[e|e]")
-        with self.assertRaises(TypeParseError): poly_system.parse("[e]")
-        with self.assertRaises(TypeParseError): poly_system.parse("[X|e]")
-        with self.assertRaises(TypeParseError): poly_system.parse("[e|<e,X>]")
+        self.assertTrue(poly_system.parse_unify_check("[e|t]", "[t|e]"))
+        self.assertTrue(poly_system.parse_unify_check("[e|t]", "[t|e]"))
+        self.assertTrue(tp("[e|t]") & tp("[t|n]") == tp("t"))
+        self.assertTrue(tp("[e|t]") | tp("[t|n]") == tp("[e|t|n]"))
+        self.assertTrue((tp("[e|t]") & tp("[<e,t>|n]")) is None)
+
+        with self.assertRaises(TypeParseError): tp("[e|e]")
+        with self.assertRaises(TypeParseError): tp("[e]")
+        with self.assertRaises(TypeParseError): tp("[e|e")
+        with self.assertRaises(TypeParseError): tp("[e|e]]")
+        with self.assertRaises(TypeParseError): tp("[X|e]")
+        with self.assertRaises(TypeParseError): tp("[e|<e,X>]")
 
     def test_var_cases(self):
+        def tp(x):
+            return poly_system.parse(x, require_exact_type=True)
+
         self.assertTrue(poly_system.parse_unify_check("e", "e"))
         self.assertTrue(poly_system.parse_unify_check("<e,t>", "<e,t>"))
         self.assertTrue(poly_system.parse_unify_check("X", "X"))
@@ -1843,38 +1868,37 @@ class TypeTest(unittest.TestCase):
         # `TypedExpr.try_adjust_type`.
         # (TODO: lots of other things could be tested here...)
         self.assertEqual(poly_system.unify(
-                                poly_system.parse("Y"),
-                                poly_system.parse("X")),
-                            poly_system.parse("X"))
+                                tp("Y"),
+                                tp("X")),
+                            tp("X"))
         self.assertEqual(poly_system.unify(
-                                poly_system.parse("<Y,Y>"),
-                                poly_system.parse("<X,X>")),
-                            poly_system.parse("<X,X>"))
+                                tp("<Y,Y>"),
+                                tp("<X,X>")),
+                            tp("<X,X>"))
         self.assertEqual(poly_system.unify(
-                                poly_system.parse("<Y,<Y,Y>>"),
-                                poly_system.parse("<X,<X,X>>")),
-                            poly_system.parse("<X,<X,X>>"))
+                                tp("<Y,<Y,Y>>"),
+                                tp("<X,<X,X>>")),
+                            tp("<X,<X,X>>"))
 
         # some complicated occurs check cases discovered via random search
         from lamb.meta import logger
         oldlevel = logger.level
         logger.setLevel(logging.CRITICAL) # suppress occurs check errors
         self.assertTrue(poly_system.unify(
-                                poly_system.parse("<X,<X5,Y5>>"),
-                                poly_system.parse("<X5,X>"))
+                                tp("<X,<X5,Y5>>"),
+                                tp("<X5,X>"))
                         == None)
         self.assertTrue(poly_system.unify(
-                                poly_system.parse("<X5,X>"),
-                                poly_system.parse("<X,<X5,Y5>>"))
+                                tp("<X5,X>"),
+                                tp("<X,<X5,Y5>>"))
                         == None)
         self.assertTrue(poly_system.unify(
-                            poly_system.parse("<X',X''>"),
-                            poly_system.parse("<X'',{(<X',Y''>,{Z'''},Z10)}>"))
+                            tp("<X',X''>"),
+                            tp("<X'',{(<X',Y''>,{Z'''},Z10)}>"))
                         == None)
         self.assertTrue(poly_system.unify(
-                            poly_system.parse("<X'',{(<X',Y''>,{Z'''},Z10)}>"),
-                            poly_system.parse("<X',X''>"))
+                            tp("<X'',{(<X',Y''>,{Z'''},Z10)}>"),
+                            tp("<X',X''>"))
                         == None)
         logger.setLevel(oldlevel)
-
 
