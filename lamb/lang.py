@@ -2218,17 +2218,12 @@ class CompositionSystem(object):
     """A CompositionSystem describes an overarching way of dealing with
     semantic composition, made up of composition rules/operations, types, and a
     lexicon."""
-    def __init__(self, rules=None, basictypes = None, name=None,
-                                                        a_controller=None):
+    def __init__(self, rules=None, name=None, a_controller=None):
         self.rules = list()
         self.ruledict = dict()
         for r in rules:
             self.add_rule(r)
 
-        if basictypes is None:
-            self.basictypes = set()
-        else:
-            self.basictypes = basictypes
         self.name = name
 
         if a_controller is None:
@@ -2244,7 +2239,6 @@ class CompositionSystem(object):
     def copy(self):
         """Make a copy of the composition system."""
         new_sys = CompositionSystem(rules=self.rules,
-                                    basictypes=self.basictypes,
                                     name=(self.name + " (copy)"),
                                     a_controller=self.assign_controller)
         new_sys.lexicon = self.lexicon.copy()
@@ -2317,9 +2311,6 @@ class CompositionSystem(object):
     def add_basic_type(self, t):
         ts = meta.get_type_system()
         ts.add_atomic(t)
-        # TODO: why do we cache this???
-        if not t in self.basictypes:
-            self.basictypes.add(t)
 
     def __repr__(self):
         if self.name is None:
@@ -2578,15 +2569,13 @@ class CompositionSystem(object):
 
 class TreeCompositionSystem(CompositionSystem):
     """A composition system for doing composition in tree structures."""
-    def __init__(self, rules=None, basictypes = None, name=None,
-                                                        a_controller=None):
-        CompositionSystem.__init__(self, rules, basictypes, name, a_controller)
+    def __init__(self, rules=None, name=None, a_controller=None):
+        CompositionSystem.__init__(self, rules=rules, name=name, a_controller=a_controller)
         if not ("Lexicon" in self.ruledict):
             self.add_rule(LexiconOp(system=self))
 
     def copy(self):
         new_sys = TreeCompositionSystem(rules=self.rules,
-                                        basictypes=self.basictypes,
                                         name=self.name,
                                         a_controller=self.assign_controller)
         new_sys.lexicon = self.lexicon.copy()
@@ -3056,9 +3045,7 @@ def setup_type_driven():
     fa = BinaryCompositionOp("FA", fa_fun)
     pa = BinaryCompositionOp("PA", pa_fun, allow_none=True)
     vac = BinaryCompositionOp("VAC", binary_vacuous, allow_none=True, commutative=True)
-    td_system = CompositionSystem(rules=[fa, pm, pa, vac],
-                                  basictypes={type_e, type_t},
-                                  name="H&K simple")
+    td_system = CompositionSystem(rules=[fa, pm, pa, vac], name="H&K simple")
     set_system(td_system)
     meta.logger.setLevel(oldlevel)
 
@@ -3088,7 +3075,6 @@ def setup_hk_chap3():
         preconditions=binary_trivial, allow_none=True)
 
     hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn, idx, vac],
-                                       basictypes={type_e, type_t},
                                        name="H&K Tree version")
 
 setup_hk_chap3()
@@ -3096,7 +3082,6 @@ setup_hk_chap3()
 def setup_td_presup():
     global td_presup
     td_presup = CompositionSystem(rules=[],
-                                  basictypes={types.type_e, types.type_t},
                                   name="Type-driven with partiality")
     td_presup.add_binary_rule_uncurried(presup_fa, "FA")
     pm = td_presup.add_binary_rule_uncurried(presup_pm, "PM")
