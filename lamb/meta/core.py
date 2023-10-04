@@ -69,8 +69,33 @@ def get_type_system():
 def ts_unify(a, b):
     """Calls the current type system's `unify` function on types `a` and `b`.
     This returns a unified type, or `None` if the two can't be unified."""
-    ts = get_type_system()
-    return ts.unify(a, b)
+    return get_type_system().unify(a, b)
+
+
+def ts_unify_with(a, b, error=None):
+    """Try to unify the types of expressions `a` and `b`. This does not change
+    the expressions themselves at all, but they are used for error reporting.
+    On failure, this may either return None or raise a TypeMismatch. If
+    `error` is set, guarantees a TypeMismatch on failure; otherwise, the caller
+    should handle error conditions. The value of `error` may be overridden
+    by the type system.
+    """
+    try:
+        # for the most part, the type system won't actually raise. The case
+        # where it does is occurs check failures.
+        result = get_type_system().unify(a.type, b.type, allow_raise=True)
+        # an exception from the `unify` call will override `error`
+        if result is None and error is not None:
+            raise TypeMismatch(a.type, b.type, error=error)
+        return result
+    except TypeMismatch as e:
+        # sub in the provided expressions on `e`. e.type1 and e.type2 should
+        # already be set...though we aren't guaranteed that they correspond
+        # to the expressions.
+        e.i1 = a
+        e.i2 = b
+        raise e
+
 
 global unify
 unify = ts_unify # remove this?
@@ -113,7 +138,7 @@ def check_type(item, typ, raise_tm=True, msg=None):
     ts = get_type_system()
     if not ts.eq_check(item.content.type, typ):
         if raise_tm:
-            raise types.TypeMismatch(item, typ, msg)
+            raise types.TypeMismatch(item, typ, error=msg)
         else:
             return None
     else:
@@ -278,11 +303,11 @@ class OperatorRegistry(object):
         appropriate TypedExpr subclass for that operator."""
 
         if not op in self.ops:
-            raise parsing.ParseError("Unknown operator symbol '%s'" % op)
+            raise parsing.ParseError("Unknown operator symbol `%s`" % op)
 
         matches = [o for o in self.ops[op].keys() if o.arity == len(args)]
         if not len(matches):
-            raise parsing.ParseError("No %d-ary operator symbol '%s'" % (len(args), op))
+            raise parsing.ParseError("No %d-ary operator symbol `%s`" % (len(args), op))
 
         matches = [o for o in matches if o.check_viable(*args)]
 
@@ -294,14 +319,14 @@ class OperatorRegistry(object):
 
         if not len(matches):
             raise parsing.ParseError(
-                "No viable %d-ary operator symbol '%s' for args %s"
+                "No viable %d-ary operator symbol `%s` for args `%s`"
                     % (len(args), op, repr(args)))
 
         # this shouldn't come up for the built-in libraries, but should this
         # be made more informative for user cases?
         if len(matches) > 1:
             raise parsing.ParseError(
-                "Ambiguous %d-ary operator symbol '%s' for args %s"
+                "Ambiguous %d-ary operator symbol `%s` for args `%s`"
                     % (len(args), op, repr(args)))
 
         return matches[0].cls(*args)
@@ -314,7 +339,7 @@ class OperatorRegistry(object):
             # no binding operator overloading
             if op.canonical_name in self.binding_ops:
                 logger.warning(
-                    "Overriding existing binding operator '%s' in registry"
+                    "Overriding existing binding operator `%s` in registry"
                     % op.canonical_name)
                 self.remove_binding_op(op)
             self.binding_ops[op.canonical_name] = op
@@ -389,11 +414,10 @@ class TypeEnv(object):
         result = self.try_add_var_mapping(vname, typ)
         if result is None:
             raise TypeMismatch(self.term_by_name(vname), typ,
-                    "Failed to unify types across distinct instances of term")
+                error=f"instances of term `{vname}` have distinct types")
         return result
 
     def try_add_var_mapping(self, vname, typ):
-        ts = get_type_system()
         if vname in self.var_mapping:
             principal = self.try_unify(self.var_mapping[vname], typ,
                                                         update_mapping=True)
@@ -412,7 +436,12 @@ class TypeEnv(object):
 
     def try_unify(self, t1, t2, update_mapping=False):
         ts = get_type_system()
-        result = ts.unify_details(t1, t2, assignment=self.type_mapping)
+        try:
+            result = ts.unify_details(t1, t2, assignment=self.type_mapping)
+        except types.OccursCheckError as e:
+            # are there contexts where this should be raised?
+            return None
+
         if result is None:
             return None
         else:
@@ -441,7 +470,7 @@ class TypeEnv(object):
                 self.type_var_set = self.type_var_set | {type_var, typ}                
         else:
             principal = self.try_unify(type_var, typ, update_mapping=True)
-        if not defer:
+        if principal is not None and not defer:
             self.update_type_vars()
         return principal
 
@@ -449,7 +478,7 @@ class TypeEnv(object):
         principal = self.try_add_type_mapping(type_var, typ, defer=defer)
         if principal is None:
             raise TypeMismatch(self.type_mapping[type_var], typ,
-                "Failed to unify type variable %s across contexts" % type_var)
+                error="Failed to unify type variable %s across contexts" % type_var)
         return principal
           
 
@@ -504,10 +533,10 @@ def merge_type_envs(env1, env2, target=None):
         if (not env1[k1].term()):
             continue
         if k1 in env2:
-            unify = ts.unify(env1[k1].type, env2[k1].type)
-            if unify is None:
-                raise TypeMismatch(env1[k1], env2[k1],
-                    "Failed to unify types across distinct instances of term")
+            unify = ts_unify_with(env1[k1], env2[k1],
+                error="Failed to unify types across distinct instances of term")
+            # if the previous call succeeds, it should be impossible to get
+            # an adjustment failure here...
             result[k1] = env1[k1].try_adjust_type(unify)
         else:
             result[k1] = env1[k1]
@@ -535,28 +564,25 @@ def merge_tes(te1, te2, symmetric=True):
         `te2` are equal.
     The failure cases for both modes will raise a TypeMismatch.
     """
-    ts = get_type_system()
-    principal = ts.unify(te1.type, te2.type)
     # TODO: these error messages are somewhat cryptic
-    if principal is None:
-        raise TypeMismatch(te1, te2,
-                "Failed to merge typed expressions (incompatible types)")
+    principal = ts_unify_with(te1, te2,
+                error="Failed to merge typed expressions (incompatible types)")
     te1_new = te1.try_adjust_type(principal)
     te2_new = te2.try_adjust_type(principal)
     if te1_new is None or te2_new is None:
         raise TypeMismatch(te1, te2,
-                "Failed to merge typed expressions (type adjustment failed)")
+                error="Failed to merge typed expressions (type adjustment failed)")
     if te1_new.term():
         if symmetric and te2_new.term() and not (te1_new == te2_new):
             raise TypeMismatch(te1, te2,
-                "Failed to merge typed expressions; result is not equal")
+                error="Failed to merge typed expressions; result is not equal")
         return te2_new
     elif symmetric and te2_new.term():
         return te1_new
     else:
         if not (te1_new == te2_new):
             raise TypeMismatch(te1, te2,
-                "Failed to merge typed expressions; result is not equal")
+                error="Failed to merge typed expressions; result is not equal")
         return te1_new
 
 
@@ -694,6 +720,8 @@ class TypedExpr(object):
                     if result is not None:
                         result._type_env = env
                 if result is None:
+                    # TODO: can this arise in current versions? Maybe convert
+                    # to an exception? (This error is pretty old...)
                     logger.warning(
                         "In type adjustment, unify suggested a strengthened arg"
                         " type, but could not accommodate: %s -> %s"
@@ -740,17 +768,16 @@ class TypedExpr(object):
         ts = get_type_system()
         # check: is the type of the substitution compatible with the type of
         # what it is replacing?
-        unified = ts.unify(s.type, old.type) # order matters: prioritize type
-                                             # variables from the substitution
-        if unified is None:
-            raise TypeMismatch(s, old, "Substitution for element %s of '%s'"
-                                                            % (i, repr(self)))
+        # order matters: prioritize type variables from the substitution
+        unified = ts_unify_with(s, old,
+                    error=f"Substitution for element {i} of '{repr(self)}'")
         if unified != s.type:
             # compatible but unify suggested a new type for the substitution.  
             # Try adjusting the type of the expression.
             s_a = s.try_adjust_type(unified)
+            # (can this fail if unify succeeded?)
             if s_a is None:
-                raise TypeMismatch(s, old, "Substitution for element %s of '%s'"
+                raise TypeMismatch(s, old, error="Substitution for element %s of '%s'"
                                                             % (i, repr(self)))
             s = s_a
         parts[i] = s
@@ -767,7 +794,13 @@ class TypedExpr(object):
             assignment = dict()
         ts = get_type_system()
         (struc, i) = parsing.parse_paren_str(s, 0, ts)
-        return cls.try_parse_paren_struc_r(struc, assignment=assignment,
+        # Intercept any ParseError and update `s` to ensure we don't show strings
+        # with replacements
+        # TODO: this is generally a bit too wide. It'd be better to do something
+        # like, show the biggest subexpression that has no replacements in which
+        # the error occurred.
+        with parsing.parse_error_wrap("Failed to parse expression", s=s, wrap_all=False):
+            return cls.try_parse_paren_struc_r(struc, assignment=assignment,
                                                                 locals=locals)
 
     _parsing_locals = dict()
@@ -804,6 +837,13 @@ class TypedExpr(object):
         """
         if locals is None:
             locals = dict()
+
+        # handle an error case: if we try to parse this, it generates a
+        # SyntaxError. But if None is returned, the caller can provide a
+        # context-specific error.
+        if not s.strip():
+            return None
+
         # Replace the alternative spellings of operators with canonical
         # spellings
         # TODO: derive from operator registry
@@ -811,18 +851,27 @@ class TypedExpr(object):
         to_eval = to_eval.replace('=/=', '^').replace('==', '%').replace('=>', '>>')
         lcopy = locals.copy()
         lcopy.update(cls._parsing_locals)
+        pre_expansion = to_eval
         to_eval = TypedExpr.expand_terms(to_eval, assignment=assignment,
                                                             ignore=lcopy.keys())
-        # Now eval the string.  (A security hole; do not use with an adversary.)
         lcopy.update({'assignment': assignment, 'type_e': type_e})
 
         # cannot figure out a better way of doing this short of actually parsing
         # TODO: reimplement as a real parser, don't rely on `eval`
         global _parser_assignment
         _parser_assignment = assignment # not remotely thread-safe
+        # Now eval the string.  (A security hole; do not use with an adversary.)
         try:
             result = eval(to_eval, dict(), lcopy)
         except SyntaxError as e:
+            with parsing.parse_error_wrap("Binding operator parse error",
+                                            s=pre_expansion):
+                # try to induce some more informative error messages
+                # if re.match(BindingOp.init_op_regex, pre_expansion):
+                if BindingOp.init_op_match(pre_expansion):
+                    BindingOp.try_parse_header(pre_expansion)
+            # n.b. the msg here is probably just a placeholder, it should get
+            # overridden.
             raise parsing.ParseError("Failed to parse expression", s=s, e=e)
             # other exceptions just get raised directly -- what comes up in
             # practice?
@@ -856,6 +905,9 @@ class TypedExpr(object):
             if not e.met_preconditions:
                 return None
             else:
+                if not e.s:
+                    e.s = parsing.flatten_paren_struc(s)
+                    e.i = None # lost any context for this
                 raise e
 
     @classmethod
@@ -877,6 +929,13 @@ class TypedExpr(object):
             else:
                 sub_expr = cls.try_parse_paren_struc_r(sub,
                         assignment=assignment, locals=locals, vprefix=vprefix)
+                if sub_expr is None:
+                    # This might be unreachable: `()` parses as a 0-length
+                    # tuple.
+                    # probably could calculate `i`...
+                    raise parsing.ParseError(
+                        f"Empty subexpression {vnum}",
+                        s=f"`{parsing.flatten_paren_struc(struc)}`")
                 var = vprefix + str(vnum)
                 s += "(" + var + ")"
                 vnum += 1
@@ -1186,8 +1245,8 @@ class TypedExpr(object):
                 # make the reason a bit more coherent for people who don't
                 # really know about type inference vs type checking
                 reason = ((typ.is_polymorphic() or result.type.is_polymorphic())
-                            and "type inference" or "type checking")
-                raise TypeMismatch(result, typ, mode=reason)
+                            and "type inference failure" or "type checking failure")
+                raise TypeMismatch(result, typ, error=reason)
             else:
                 return r_adjusted
 
@@ -1386,7 +1445,7 @@ class TypedExpr(object):
         return (isinstance(self.op, str) and len(self.args) == 0)
 
     def functional(self):
-        funtype = unify(self.type, tp("<?,?>"))
+        funtype = ts_unify(self.type, tp("<?,?>"))
         return (funtype is not None)
 
     def atomic(self):
@@ -1619,12 +1678,15 @@ TypedExpr.add_local('TypedExpr', TypedExpr)
 class ApplicationExpr(TypedExpr):
     def __init__(self, fun, arg, defer=False, assignment=None, type_check=True):
         if type_check and not defer:
+            # this call may raise
             tc_result = self.fa_type_inference(fun, arg, assignment)
             if tc_result is None:
                 if not fun.functional():
-                    raise TypeMismatch(fun, arg, "Function-argument expression: left subexpression is not a function")
+                    raise TypeMismatch(fun, arg,
+                        error=f"Function-argument expression: `{repr(fun)}` is not a function")
                 else:
-                    raise TypeMismatch(fun, arg, "Function-argument expression: mismatched types")
+                    raise TypeMismatch(fun, arg,
+                        error=f"Function-argument expression: mismatched argument types `{repr(fun.type.left)}` and `{arg.type}`")
             f, a, out_type, history = tc_result
             op = "Apply"
             args = [f, a]
@@ -1745,13 +1807,18 @@ class ApplicationExpr(TypedExpr):
 
     @classmethod
     def fa_type_inference(cls, fun, arg, assignment):
-        ts = get_type_system()
         if fun.let:
             fun = fun.freshen_type_vars()
         if arg.let:
             arg = arg.freshen_type_vars()
         history = False
-        (f_type, a_type, out_type) = ts.unify_fa(fun.type, arg.type)
+        try:
+            (f_type, a_type, out_type) = get_type_system().unify_fa(fun.type, arg.type)
+        except TypeMismatch as e:
+            # replace pure types with the function and argument in question
+            e.i1 = fun
+            e.i2 = arg
+            raise e
         if f_type is None:
             return None
 
@@ -1926,7 +1993,7 @@ class TypedTerm(TypedExpr):
         if isinstance(self.op, Number): # this isn't very elegant...
             if self.type != type_n:
                 raise TypeMismatch(self.op, self.type,
-                                                "Numeric must have type n")
+                                            error="Numeric must have type n")
             self.type_guessed = False
             self.suppress_type = True # suppress types for numbers
         self.args = list()
@@ -2289,8 +2356,8 @@ class Disjunctive(TypedExpr):
                     if r.type in t_adjust:
                         raise parsing.ParseError(
                             "Disjoined expressions must determine unique types"
-                            " (type %s appears duplicated in expression '%s' "
-                            "for disjuncts '%s')"
+                            " (type `%s` appears duplicated in expression `%s` "
+                            "for disjuncts `%s`)"
                             % (repr(t), repr(d), repr(disjuncts)))
                     else:
                         t_adjust |= {r.type}
@@ -2336,7 +2403,8 @@ class Disjunctive(TypedExpr):
 
     def apply(self, arg):
         if not self.type.functional():
-            raise TypeMismatch(self,arg, "Application to a non-functional Disjunction")
+            raise TypeMismatch(self, arg,
+                        error="Application to a non-functional Disjunction")
         applied_disjuncts = list()
         for d in self.args:
             if not d.functional():
@@ -2347,7 +2415,8 @@ class Disjunctive(TypedExpr):
                 continue
         result = self.factory(*applied_disjuncts)
         if result is None:
-            raise TypeMismatch(self,arg, "Application to a non-functional Disjunction")
+            raise TypeMismatch(self,arg,
+                        error="Application to a non-functional Disjunction")
         return result
 
 
@@ -2581,9 +2650,8 @@ class BinaryGenericEqExpr(SyncatOpExpr):
     """Type-generic equality.  This places no constraints on the type of `arg1`
     and `arg2` save that they be equal."""
     def __init__(self, arg1, arg2):
-        t = get_type_system().unify(arg1.type, arg2.type)
-        if t is None:
-            raise types.TypeMismatch(arg1, arg2, mode="Equality requires compatible types")
+        t = ts_unify_with(arg1, arg2,
+                                error="Equality requires compatible types")
         arg1 = self.ensure_typed_expr(arg1, t)
         # maybe raise the exception directly?
         arg2 = self.ensure_typed_expr(arg2, t)
@@ -2608,7 +2676,7 @@ class BinaryGenericEqExpr(SyncatOpExpr):
     def check_viable(cls, *args):
         if len(args) != 2:
             return False
-        principal_type = get_type_system().unify(args[0].type, args[1].type)
+        principal_type = ts_unify(args[0].type, args[1].type)
         # leave type t to the simply-typed biconditional operator
         # TODO: it should be possible to handle this in a more generalized way
         return principal_type is not None and principal_type != type_t
@@ -2622,13 +2690,13 @@ class TupleIndex(SyncatOpExpr):
         arg1 = self.ensure_typed_expr(arg1)
         if not isinstance(arg1.type, types.TupleType):
             raise types.TypeMismatch(arg1, arg2,
-                    mode="Tuple indexing expression with a non-tuple")
+                    error="Tuple indexing expression with a non-tuple")
         arg2 = self.ensure_typed_expr(arg2, types.type_n)
         if isinstance(arg2.op, Number): # TODO better way to determine whether
                                         # arg2 is a constant of type type_n?
             if arg2.op >= len(arg1.type):
                 raise TypeMismatch(arg1, arg2,
-                    mode="Tuple indexing expression with out-of-range index")
+                    error="Tuple indexing expression with out-of-range index")
             output_type = arg1.type[arg2.op]
         else:
             output_type = types.VariableType("X") # TODO this is problematic
@@ -2728,32 +2796,33 @@ class BindingOp(TypedExpr):
     partiality_weak = True
 
     @classmethod
-    def binding_op_factory(self, op_class, var_list, body, assignment=None):
+    def binding_op_precheck(self, op_class, var_list):
         for i in range(len(var_list)):
             if not is_var_symbol(var_list[i][0]):
                 raise parsing.ParseError(
                     "Need variable name in binding operator expression"
-                    " (received '%s')" % var_list[i][0], None)
+                    " (received `%s`)" % var_list[i][0], None)
+        if (not op_class.allow_multivars) and len(var_list) > 1:
+            raise parsing.ParseError(
+                "Operator class `%s` does not allow >1 variables"
+                % (op_class.canonical_name), None)
+        if (not op_class.allow_novars) and len(var_list) == 0:
+            raise parsing.ParseError(
+                "Operator class `%s` does not allow 0 variables"
+                % (op_class.canonical_name), None)
+
+    @classmethod
+    def binding_op_factory(cls, op_class, var_list, body, assignment=None):
+        cls.binding_op_precheck(op_class, var_list)
+        for i in range(len(var_list)):
             if var_list[i][1] is None:
-                # TODO: flag as a guessed type somehow?
                 var_list[i] = (var_list[i][0],
                                 default_variable_type(var_list[i][0]))
         if op_class.allow_multivars or op_class.allow_novars:
             # use alternate constructor
-            if (not op_class.allow_multivars) and len(var_list) > 1:
-                raise parsing.ParseError(
-                    "Operator class '%s' does not allow >1 variables"
-                    % (op_class.canonical_name), None)                
-            if (not op_class.allow_novars) and len(var_list) == 0:
-                raise parsing.ParseError(
-                    "Operator class '%s' does not allow 0 variables"
-                    % (op_class.canonical_name), None)                
+            # TODO: unify these constructors
             return op_class(var_list, body, assignment=assignment)
         else:
-            if len(var_list) != 1:
-                raise parsing.ParseError(
-                    "Operator class '%s' does not allow %i variables"
-                    % (op_class.canonical_name, len(var_list)), None)
             return op_class(var_or_vtype=var_list[0][1],
                             varname=var_list[0][0],
                             body=body,
@@ -2767,7 +2836,7 @@ class BindingOp(TypedExpr):
         # to this function.  Subclass is responsible for doing this properly...
         if body_type is None:
             body_type = typ
-        if isinstance(var_or_vtype, str): # TODO: support type strings
+        if isinstance(var_or_vtype, str):
             var_or_vtype = TypedExpr.term_factory(var_or_vtype)
         if isinstance(var_or_vtype, TypedTerm):
             if varname is not None:
@@ -2775,7 +2844,7 @@ class BindingOp(TypedExpr):
                                             % (varname, var_or_vtype.op))
             varname = var_or_vtype.op
             vartype = var_or_vtype.type
-        elif isinstance(var_or_vtype, types.TypeConstructor):
+        elif types.is_type(var_or_vtype):
             if varname is None:
                 varname = self.default_varname()
             vartype = var_or_vtype
@@ -2795,8 +2864,12 @@ class BindingOp(TypedExpr):
         # TODO: consider overriding __eq__ and __hash__.
         if type_check:
             sassign = self.scope_assignment(assignment=assignment)
-            self.init_body(self.ensure_typed_expr(body, body_type,
+            try:
+                self.init_body(self.ensure_typed_expr(body, body_type,
                                                         assignment=sassign))
+            except types.TypeMismatch as e:
+                e.error = f"Failed to ensure body type {body_type} for operator class `{self.canonical_name}`"
+                raise e
             body_env = self.body.get_type_env()
             if self.varname in body_env.var_mapping: # binding can be vacuous
                 if body_env.var_mapping[self.varname] != self.vartype:
@@ -2881,13 +2954,32 @@ class BindingOp(TypedExpr):
         # names i.e. | is not greedy, need to work around that.
         op_names = list(op_names)
         op_names.sort(reverse=True)
+        # somewhat ad hoc: allow `λx`. (Could add unicode quantifiers?)
+        # TODO: would it be better to always require a space?
+        nospace = {"λ"}
+
+        nospace_ops = [o for o in op_names if o in nospace]
         if len(op_names) == 0:
             BindingOp.op_regex = None
             BindingOp.init_op_regex = None
         else:
-            regex = "(" + ("|".join(op_names)) + ")"
+            regex = f"({'|'.join(op_names)})\\s+"
+            if nospace_ops:
+                regex = f"(?:({'|'.join(nospace_ops)})|{regex})"
             BindingOp.op_regex = re.compile(regex)
             BindingOp.init_op_regex = re.compile(r'^\s*' + regex)
+
+    @classmethod
+    def init_op_match(cls, s):
+        if BindingOp.init_op_match:
+            # TODO: is there a clever way to do this with a single match group
+            match = re.match(BindingOp.init_op_regex, s)
+            if match:
+                if match.group(2):
+                    return match.group(2), match.end(2)
+                else:
+                    return match.group(1), match.end(1)
+        return None
 
     def alpha_convert(self, new_varname):
         """Produce an alphabetic variant of the expression w.r.t. the bound
@@ -2994,7 +3086,7 @@ class BindingOp(TypedExpr):
         else: # IotaPartial handled in subclass
             # is this really a type issue?
             raise TypeMismatch(b, None,
-                    "No implemented way of projecting partiality for BindingOp %s"
+                    error="No implemented way of projecting partiality for BindingOp %s"
                     % repr(type(b).__name__))
 
     def calculate_partiality(self, vars=None):
@@ -3047,36 +3139,46 @@ class BindingOp(TypedExpr):
         global registry
 
         i = 0
-        if BindingOp.init_op_regex is None:
-            return None # no operators to parse
-        op_match = re.match(BindingOp.init_op_regex, s)
+        # if BindingOp.init_op_regex is None:
+        #     return None # no operators to parse
+        # op_match = re.match(BindingOp.init_op_regex, s)
+        op_match = cls.init_op_match(s)
         if not op_match:
             raise parsing.ParseError(
-                "Unknown operator when trying to parsing "
-                "binding operator expression", s, None, met_preconditions=False)
-        op_name = op_match.group(1) # operator name
-        i = op_match.end(1)
+                "Unknown operator when trying to parse binding operator expression",
+                s, None, met_preconditions=False)
+        op_name, i = op_match
 
         if op_name in registry.canonicalize_binding_ops:
             op_name = registry.canonicalize_binding_ops[op_name]
         if op_name not in registry.binding_ops:
-            raise Error(
+            raise Exception(
                 "Can't find binding operator '%s'; should be impossible"
                 % op_name)
         op_class = registry.binding_ops[op_name]
 
         split = s.split(":", 1)
+        header = split[0]
+        vname = header[i:].strip() # removes everything but a variable name
+        try:
+            var_seq = cls.try_parse_term_sequence(vname, lower_bound=None,
+                                    upper_bound=None, assignment=assignment)
+            cls.binding_op_precheck(op_class, var_seq)
+        except parsing.ParseError as e:
+            # somewhat involved logic: try to parse the var sequence before
+            # reporting errors about a missing `:`. However, if we are missing
+            # a `:`, mark `met_preconditions` as false so that the parser isn't
+            # committed to a binding op header.
+            if len(split) != 2:
+                e.met_preconditions = False
+            raise e
         if (len(split) != 2):
             # possibly should change to met_preconditions = True in the future.
             # At this point, we have seen a binding expression token.
             raise parsing.ParseError(
                 "Missing ':' in binding operator expression", s, None,
                 met_preconditions=False)
-        header, remainder = split
-        vname = header[i:].strip() # removes everything but a variable name
-        var_seq = cls.try_parse_term_sequence(vname, lower_bound=None,
-                                    upper_bound=None, assignment=assignment)
-        return (op_class, var_seq, remainder)
+        return (op_class, var_seq, split[1])
 
     @classmethod
     def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None,
@@ -3135,22 +3237,21 @@ class BindingOp(TypedExpr):
             (v,t) = var_tuple
             assignment[v] = TypedTerm(v, t)
         body = None
-        try:
+        with parsing.parse_error_wrap(
+                        "Binding operator expression has unparsable body",
+                        paren_struc=struc):
             body = TypedExpr.try_parse_paren_struc_r(new_struc,
                         assignment=assignment, locals=locals, vprefix=vprefix)
-        except Exception as e:
-            if isinstance(e, parsing.ParseError):
-                raise e
-            else:
-                raise parsing.ParseError(
-                    "Binding operator expression has unparsable body",
-                    parsing.flatten_paren_struc(struc), None, e=e)
+
         if body is None:
             raise parsing.ParseError(
                 "Can't create body-less binding operator expression",
                 parsing.flatten_paren_struc(struc), None)
-        result = BindingOp.binding_op_factory(op_class, var_list, body,
-            assignment=assignment)
+
+        with parsing.parse_error_wrap("Binding operator parse error",
+                                    paren_struc=struc):
+            result = BindingOp.binding_op_factory(op_class, var_list, body,
+                assignment=assignment)
         return result
 
     @classmethod
@@ -3256,7 +3357,7 @@ class LFun(BindingOp):
             # fixed.
             return (beta_reduce_ts(new_self.body, new_self.varname, arg)).copy()
         else:
-            raise TypeMismatch(self,arg, "Application")
+            raise TypeMismatch(self, arg, error="Function-argument application: mismatched argument type")
 
     def compose(self, other):
         """Function composition."""
@@ -3285,7 +3386,8 @@ def fun_compose(g, f):
     defined above."""
     if (not (g.type.functional() and f.type.functional()
              and g.type.left == f.type.right)):
-        raise types.TypeMismatch(g, f, "Function composition type constraints not met")
+        raise types.TypeMismatch(g, f,
+                        error="Function composition type constraints not met")
     combinator = geach_combinator(g.type, f.type)
     result = (combinator(g)(f)).reduce_all()
     return result
@@ -3324,18 +3426,22 @@ def variable_replace_strict(expr, m):
     def transform(e):
         result = TypedExpr.factory(m[e.op])
         if result.type != e.type:
-            raise TypeMismatch(e, result, "Strict variable replace failed with mismatched types")
+            raise TypeMismatch(e, result,
+                error="Strict variable replace failed with mismatched types")
         return result
     return variable_transform(expr, m.keys(), transform)
 
 def term_replace_unify(expr, m):
     def transform(e):
-        ts = get_type_system()
         result = TypedExpr.factory(m[e.op])
         if result.type != e.type:
-            unify = ts.unify(result.type, e.type)
+            # note: error reporting from here has a different order than the
+            # raise below, so we handle it manually... (unclear to me if this
+            # is important)
+            unify = ts_unify_with(result, e, error=None)
             if unify is None:
-                raise TypeMismatch(e, result, "Variable replace failed with mismatched types")
+                raise TypeMismatch(e, result,
+                        error="Variable replace failed with mismatched types")
             if unify == e.type: # unify gives us back e.  Can we return e?
                 if result.term() and result.op == e.op:
                     return e

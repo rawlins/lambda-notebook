@@ -65,15 +65,21 @@ class ListedSet(TypedExpr):
         args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
         args = sorted(args, key=repr) # for a canonical ordering
         if len(args) == 0 and typ is None:
+            # note: UnknownType might be more appropriate here, but it leads
+            # copy equality test failures
             typ = types.VariableType("X") # could be a set of anything
         elif typ is None:
+            # inherit the type from the first argument
             typ = args[0].type
         for i in range(len(args)):
             # type checking TODO: this isn't right, would need to pick the
             # strongest type
-            args[i] = self.ensure_typed_expr(args[i], typ)
+            try:
+                args[i] = self.ensure_typed_expr(args[i], typ)
+            except types.TypeMismatch as e:
+                e.error = "Set elements must have compatible types"
+                raise e
         super().__init__("Set", *args)
-        #self.op = "Set"
         self.type = SetType(typ)
 
     def subst(self, i, s):

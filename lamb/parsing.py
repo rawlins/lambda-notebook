@@ -1,4 +1,6 @@
 import sys, re, traceback, collections
+from contextlib import contextmanager
+
 from lamb import utils
 from lamb.utils import * # TODO: remove
 
@@ -29,20 +31,27 @@ class ParseError(Exception):
             if (isinstance(self.e, SyntaxError)):
                 # SyntaxError's full str representation is not helpful when
                 # generated from an eval, so just show the message
-                aux = " (%s)" % str(self.e.msg)
+                aux = ": %s" % str(self.e.msg)
             else:
-                aux = " (%s)" % str(self.e)
+                aux = ": %s" % str(self.e)
         if self.s is None:
             return self.msg + aux
         if self.i is None:
-            return "%s, in string '%s'%s" % (self.msg, self.s, aux)
+            return "%s, in string `%s`%s" % (self.msg, self.s, aux)
         elif self.i >= len(self.s):
             # TODO: these would be better printed using some multiline approach
-            return "%s, at point '%s!here!'%s" % (self.msg, self.s, aux)
+            return "%s, at point `%s!here!`%s" % (self.msg, self.s, aux)
         else:
-            return "%s, at point '%s!here!%s'%s" % (self.msg, self.s[0:self.i],
+            return "%s, at point `%s!here!%s`%s" % (self.msg, self.s[0:self.i],
                                                         self.s[self.i:], aux)
 
+    def _repr_markdown_(self):
+        # it's convenient to use markdown here for backticks, but colab will
+        # strip out the color. So, use both red and bold.
+        return f"<span style=\"color:red\">**ParseError**</span>: {str(self)}"
+
+    def __repr__(self):
+        return f"ParseError: {str(self)}"
 
 def consume_char(s, i, match, error=None):
     if i >= len(s):
@@ -101,6 +110,61 @@ def vars_only(env):
                                     if isinstance(env[key], meta.TypedExpr)}
     return env2
 
+# wrap other exception types in ParseError with designated parameters
+@contextmanager
+def parse_error_wrap(msg, paren_struc=None, wrap_all=True, **kwargs):
+    from lamb import types
+    try:
+        yield
+    except (types.TypeParseError, types.TypeMismatch) as e:
+        if not wrap_all:
+            raise e
+        kwargs['e'] = e
+        # special case this, so that the caller doesn't need to preemptively
+        # flatten
+        if paren_struc:
+            kwargs['s'] = flatten_paren_struc(paren_struc)
+        raise ParseError(msg, **kwargs)
+    except ParseError as e:
+        if not e.msg:
+            e.msg = msg # this should essentially not trigger ever?
+        if paren_struc:
+            e.s = flatten_paren_struc(paren_struc)
+            e.i = kwargs.get('i', None)
+        elif 's' in kwargs:
+            e.s = kwargs['s']
+            # `i` may or may not be set, but any previous `i` won't make sense
+            # in the context of the updated `s`
+            e.i = kwargs.get('i', None)
+        raise e
+
+
+
+# generalized context manager for displaying lnb errors in a sensible way. Tries
+# to display them, and if not, falls back on logging.
+@contextmanager
+def error_manager(summary=None):
+    from lamb import meta, types
+    display = None
+    try:
+        from IPython.display import display
+    except ImportError:
+        pass
+
+    try:
+        try:
+            yield
+        except (types.TypeParseError,
+                types.TypeMismatch,
+                ParseError) as e:
+            if not display:
+                raise e
+            display(e)
+    except Exception as e:
+        if summary:
+            meta.logger.error(summary)
+        meta.logger.error(e)
+
 def parse_te(line, env=None, use_env=False):
     from lamb import meta
     line = remove_comments(line)
@@ -111,7 +175,8 @@ def parse_te(line, env=None, use_env=False):
     if env is None or not use_env:
         env = dict()
     var_env = vars_only(env)
-    try:
+    result = None
+    with error_manager("Parsing of typed expression failed with exception:"):
         result = meta.te(line, assignment=var_env)
         if isinstance(result, meta.TypedExpr):
             result = result.regularize_type_env(var_env, constants=True)
@@ -119,13 +184,10 @@ def parse_te(line, env=None, use_env=False):
                 result = result.reduce_all()
         else:
             pass # warning here?
-    except Exception as e:
-        meta.logger.error("Parsing of typed expression failed with exception:")
-        meta.logger.error(e)
-        return (None, dict())
 
     accum = dict()
-    accum["_llast"] = result
+    if result is not None:
+        accum["_llast"] = result
     return (result, accum)
 
 def try_parse_item_name(s, env=None, ambiguity=False):
@@ -149,6 +211,17 @@ def try_parse_item_name(s, env=None, ambiguity=False):
         index = int(index_str[1:-1])
     return (lex_name, index)
 
+def parse_right(left_s, right_s, env, constants=False):
+    from lamb import meta
+    right_side = None
+    with error_manager():
+        with parse_error_wrap(f"Parsing of assignment to `{left_s}` failed"):
+            right_side = meta.te(right_s.strip(), assignment=env)
+            right_side = right_side.regularize_type_env(env, constants=constants)
+            right_side = right_side.under_assignment(env)
+
+    return right_side
+
 def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
     from lamb import meta, lang, types
     # TODO should this go by lines....
@@ -161,7 +234,7 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
     a_ctl = system.assign_controller
     l = s.split("=", 1)
     if len(l) != 2:
-        raise ParseError("Missing =") # TODO expand
+        raise ParseError("Missing `=`") # TODO expand
     transform = None
     right_str = l[1]
     if right_str[0] == "<":
@@ -172,7 +245,7 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
                 transform = transforms[trans_name]
                 right_str = right_str[trans_match.end(0):]
             else:
-                raise ParseError("Unknown transform '<%s>'" % (trans_name))
+                raise ParseError("Unknown transform `<%s>`" % (trans_name))
     if transform is None and "default" in transforms:
         transform = transforms["default"]
 
@@ -184,14 +257,8 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
     if lex_name:
         default = a_ctl.default()
         db_env = default.modify(var_env)
-        try:
-            right_side = meta.te(right_str.strip(), assignment=db_env)
-            right_side = right_side.regularize_type_env(db_env)
-            right_side = right_side.under_assignment(db_env)
-        except Exception as e:
-            meta.logger.error(
-                "Parsing of assignment to '%s' failed with exception:" % left_s)
-            meta.logger.error(e)
+        right_side = parse_right(left_s, right_str, db_env)
+        if right_side is None:
             return (dict(), env)
 
         # lexical assignment
@@ -222,15 +289,8 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
                 item = env[lex_name]
         return ({lex_name: item}, env)
     else: # assignment to variable
-        try:
-            right_side = meta.te(right_str.strip(), assignment=var_env)
-            right_side = right_side.regularize_type_env(var_env, constants=True)
-            right_side = right_side.under_assignment(var_env)
-        except Exception as e:
-            meta.logger.error(
-                "Parsing of assignment to '%s' failed with exception:" % left_s)
-            meta.logger.error(e)
-            #raise e
+        right_side = parse_right(left_s, right_str, var_env, constants=True)
+        if right_side is None:
             return (dict(), env)
 
         # variable assignment case
@@ -424,7 +484,7 @@ def flatten_paren_struc(struc):
             s += sub
         else:
             s += flatten_paren_struc(sub)
-    return s
+    return s.strip()
 
 global brackets, close_brackets
 brackets = {"(" : ")"}

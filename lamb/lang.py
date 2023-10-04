@@ -165,8 +165,9 @@ class CompositionFailure(Exception):
             [self.item_str(i, latex=latex) for i in self.items])
 
     def class_desc(self, latex=False):
+        # TODO: convert to markdown
         if latex:
-            return '<span style="color:red">Composition failure</span>'
+            return '<span style="color:red"><b>Composition failure</b></span>'
         else:
             return "Composition failure"
 
@@ -193,8 +194,9 @@ class CompositionFailure(Exception):
 
 class PreconditionFailure(CompositionFailure):
     def class_desc(self, latex=False):
+        # TODO: convert to markdown
         if latex:
-            return '<span style="color:red">Composition precondition failure</span>'
+            return '<span style="color:red"><b>Composition precondition failure</b></span>'
         else:
             return "Composition precondition failure"
 
@@ -477,7 +479,7 @@ class SingletonComposable(Composable):
 
     @property
     def type(self):
-        if self.content is None:
+        if self.content is None or isinstance(self.content, Exception):
             return None
         else:
             return self.content.type
@@ -533,6 +535,10 @@ class SingletonComposable(Composable):
         if self.content is None:
             # separate rendering for vacuous indexed elements?
             return ensuremath(self.short_str_latex() + "\\text{ [vacuous]}")
+        elif isinstance(self.content, Exception):
+            # TODO: the relevant exceptions would need markdown to be displayed.
+            # they can still be viewed by looking at `content` directly...
+            return ensuremath(self.short_str_latex() + "\\:=\\:" + latexbf("error!"))
         elif isinstance(self.content, PlaceholderTerm):
             return self.content.latex_str()
         return (ensuremath(self.short_str(latex=True, i=i)
@@ -2776,7 +2782,7 @@ def tree_index_carrier(t):
 # operation.
 def tree_percolate_index(t, assignment=None):
     if not tree_index_carrier(t): # also set as precondition
-        raise TypeMismatch(t, "Cannot percolate an index") # abuse of TypeMismatch
+        raise TypeMismatch(t, error="Cannot percolate an index") # abuse of TypeMismatch
     r = UnaryComposite(t[0], content=None, source=t)
     r.inherit_index = t[0].get_index()
     return r
@@ -2793,7 +2799,7 @@ def tree_binary_vacuous(t, assignment=None, pass_source=True):
     parent content is still None. If exactly one is vacuous, the parent content
     is the other's content. Ignores order."""
     if not binary_trivial(t): # also precondition
-        raise TypeMismatch(t[0], t[1], "Need at least one fully vacuous element") # abuse of TypeMismatch
+        raise TypeMismatch(t[0], t[1], error="Need at least one fully vacuous element") # abuse of TypeMismatch
     # hacky, needs to be generalized somehow. The issue is that only tree
     # composition expects to pass a source right now, and it needs to be a real
     # tree object, not a list-like.

@@ -141,10 +141,8 @@ class LambMagics(Magics):
 
     @line_magic
     def tp(self, line):
-        try:
+        with parsing.error_manager():
             return meta.tp(line)
-        except types.TypeParseError as e:
-            IPython.display.display(e)
 
 
 def setup_magics():

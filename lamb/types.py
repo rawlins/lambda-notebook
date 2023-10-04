@@ -53,6 +53,11 @@ class SimpleIntegerSet(OntoSet):
     def infcheck(self,x):
         return isinstance(x,int)
 
+
+def is_type(x):
+    return isinstance(x, TypeConstructor)
+
+
 class TypeConstructor(object):
     def __init__(self):
         self.symbol = None
@@ -310,9 +315,9 @@ class FunType(TypeConstructor):
         else:
             i = next
             (left, i) = parse_control_fun(s, i)
-            i = parsing.consume_char(s, i, ",", "Missing comma")
+            i = parsing.consume_char(s, i, ",", "Missing comma in type")
             (right, i) = parse_control_fun(s, i)
-            i = parsing.consume_char(s, i, ">", "Unmatched <")
+            i = parsing.consume_char(s, i, ">", "Unmatched < in function type")
             return (FunType(left, right), i)
 
     @classmethod
@@ -377,7 +382,7 @@ class SetType(TypeConstructor):
         else:
             i = next
             (ctype, i) = parse_control_fun(s, i)
-            i = parsing.consume_char(s, i, "}", "Unmatched {")
+            i = parsing.consume_char(s, i, "}", "Unmatched { in set type")
             return (SetType(ctype), i)
 
     @classmethod
@@ -469,9 +474,10 @@ class TupleType(TypeConstructor):
             while i < len(s) and s[i] != ")":
                 (m, i) = parse_control_fun(s, i)
                 signature.append(m)
-                if s[i] == ")":
+                if i >= len(s) or s[i] == ")":
                     break
-                i = parsing.consume_char(s, i, ",", "Missing comma in tuple")
+                # this error message shouldn't actually arise.
+                i = parsing.consume_char(s, i, ",", "Missing comma in type")
             i = parsing.consume_char(s, i, ")", "Unmatched ( in tuple type")
             return (TupleType(*signature), i)       
 
@@ -722,12 +728,8 @@ class VariableType(TypeConstructor):
         # 3. perform an occurs check -- that is, check for recursive use of
         #    type variables.  (E.g. unifying X with <X,Y>.)
         if PolyTypeSystem.occurs_check(new_principal, t2_principal):
-            from lamb import meta
-            from lamb.meta import logger
-            logger.error(
-                "Failed occurs check: can't unify recursive types %s and %s"
-                % (new_principal, t2_principal))
-            return (None, None)
+            raise OccursCheckFailure(t2_principal, new_principal)
+
         # 4. Deal with cases where `start` is a type variable.  This will end
         #    up with the only instance of `start` as a key in the assignment.
         #    (Or no instance, if `start` and `t2_principal` are equivalent.)
@@ -741,12 +743,8 @@ class VariableType(TypeConstructor):
                 t2_principal = t2_principal.sub_type_vars(assignment,
                                                             trans_closure=True)
                 if PolyTypeSystem.occurs_check(start, t2_principal):
-                    from lamb import meta
-                    from lamb.meta import logger
-                    logger.error(
-                        "Failed occurs check: can't unify recursive types %s and %s"
-                        % (new_principal, t2_principal))
-                    return (None, None)
+                    raise OccursCheckFailure(t2_principal, new_principal)
+
             # 4-b. add `start` => `t2_principal` to the assignment.  
             #      We do this by first clearing out `start` entirely from the
             #      assignment and then mapping it directly to `t2_principal`.
@@ -1206,6 +1204,14 @@ class TypeSystem(object):
         (result, r_assign) = a.unify(b, self.unify, None)
         return result
 
+    def unify_details(self, t1, t2, assignment=None):
+        result = self.unify(t1, t2)
+        if result is None:
+            return None
+        # unification in this system is very straightforward: if a type is
+        # found, it is the principal type.
+        return UnificationResult(result, t1, t2, dict())
+
     def unify_ar(self, arg, ret):
         return FunType(arg, ret)
 
@@ -1455,9 +1461,15 @@ class PolyTypeSystem(TypeSystem):
         super().add_atomic(t)
         self.type_ranking[t.__class__] = ranking
 
-    def unify(self, t1, t2, assignment=None):
+    def unify(self, t1, t2, assignment=None, allow_raise=False):
         assignment = dict()
-        result = self.unify_details(t1, t2, assignment=assignment)
+        try:
+            result = self.unify_details(t1, t2, assignment=assignment)
+        except OccursCheckFailure as e:
+            if allow_raise:
+                raise e
+            else:
+                return None
         if result is None:
             return None
         else:
@@ -1479,7 +1491,10 @@ class PolyTypeSystem(TypeSystem):
             assignment = dict()
         else:
             assignment = assignment.copy() # ugh
+
+        # note: the following may raise OccursCheckFailure!
         (result, r_assign) = self.unify_r(t1, t2, assignment)
+
         if result is None:
             return None
         # a principal type has been found, but may not be fully represented by
@@ -1493,22 +1508,23 @@ class PolyTypeSystem(TypeSystem):
         return UnificationResult(result, t1, t2, r_assign)
 
     def unify_r_swap(self, t1, t2, assignment):
-        return self.unify_r(t2, t1, assignment)
+        try:
+            return self.unify_r(t2, t1, assignment)
+        except TypeMismatch as e:
+            e.swap_order()
+            raise e
 
     def unify_r(self, t1, t2, assignment):
         """Recursive unification of `t1` and `t2` given some assignment.
 
         This is not really intended to be called directly; see comments in
         `unify_details` for more information.  Call `unify` or
-        `unify_detail`."""
+        `unify_details`.
+
+        On failure may return None (as the first element of a tuple) or
+        raise."""
         if self.occurs_check(t1, t2):
-            from lamb import meta
-            from lamb.meta import logger
-            # this should probably raise a TypeMismatch?
-            logger.error(
-                "Failed occurs check: can't unify recursive types %s and %s"
-                % (t1,t2))
-            return (None, assignment)
+            raise OccursCheckFailure(t1, t2)
         # Type rankings put type classes that have custom unification code
         # for polymorphism higher than those that don't. If t2 has a higher
         # or equal type ranking, let it drive unification. However, we provide
@@ -1530,9 +1546,15 @@ class PolyTypeSystem(TypeSystem):
         and its right type.  Returns (None, None, None) on failure."""
         if assignment is None:
             assignment = dict()
-        input_var = VariableType.fresh()
+        input_var = VariableType.fresh() #UnknownType()
         hyp_fun = FunType(input_var, ret)
-        result = self.unify_details(hyp_fun, fun, assignment=assignment)
+        try:
+            # order probably matters here
+            result = self.unify_details(hyp_fun, fun, assignment=assignment)
+        except OccursCheckFailure as e:
+            e.error = f"Occurs check failure while trying to infer function type given return type {ret}"
+            e.swap_order()
+            raise e
         if result is None: # `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:
@@ -1546,9 +1568,16 @@ class PolyTypeSystem(TypeSystem):
         and its right type.  Returns (None, None, None) on failure."""
         if assignment is None:
             assignment = dict()
-        output_var = VariableType.fresh()
+        output_var = VariableType.fresh() #UnknownType()
         hyp_fun = FunType(arg, output_var)
-        result = self.unify_details(hyp_fun, fun, assignment=assignment)
+        try:
+            # order matters here (why?)
+            result = self.unify_details(hyp_fun, fun, assignment=assignment)
+        except OccursCheckFailure as e:
+            e.error = f"Occurs check failure while trying to infer function type given argument `{arg}`"
+            # the other order makes more sense
+            e.swap_order()
+            raise e
         if result is None: # `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:
@@ -1565,8 +1594,13 @@ class PolyTypeSystem(TypeSystem):
         assignment = dict()
         t1safe = make_safe(t1, t2, set(assignment.keys())
                                                     | set(assignment.values()))
-        (result, r_assign) = self.unify_r(t1safe, t2, assignment)
-        return injective(r_assign) and not strengthens(r_assign)
+        try:
+            (result, r_assign) = self.unify_r(t1safe, t2, assignment)
+        except OccursCheckFailure:
+            # only used in a test context, so we don't need to make occurs
+            # checks presentable..
+            return False
+        return result is not None and injective(r_assign) and not strengthens(r_assign)
 
     def compact_type_vars(self, t1, unsafe=None):
         """Compact the type variables in `t1` so as to make them more
@@ -1589,7 +1623,7 @@ class PolyTypeSystem(TypeSystem):
         if ((r1 is None) and (r2 is None)):
             return True
         if ((r1 is None) or (r2 is None)):
-            print("Unify failed in one direction, results '%s' and '%s'"
+            logger.error("Unify failed in one direction, results '%s' and '%s'"
                                                     % (repr(r1), repr(r2)))
             return False
         result = self.alpha_equiv(r1, r2)
@@ -1644,49 +1678,78 @@ class PolyTypeSystem(TypeSystem):
 
 class TypeMismatch(Exception):
     """Exception for type mismatches of all sorts."""
-    def __init__(self, i1, i2, mode=None):
+    def __init__(self, i1, i2, error=None, occurs_check=False, mode=None):
         self.i1 = i1
         self.i2 = i2
-        try:
-            self.type1 = self.i1.type
-        except AttributeError:
-            self.type1 = "?"
-        try:
-            self.type2 = self.i2.type
-        except AttributeError:
-            self.type2 = "?"
-        if mode is None:
-            self.mode = "unknown"
+        self.occurs_check = occurs_check
+        if is_type(i1):
+            self.type1 = i1
         else:
-            self.mode = mode
+            try:
+                self.type1 = self.i1.type
+            except AttributeError:
+                self.type1 = "?"
+
+        if is_type(i2):
+            self.type2 = i2
+        else:
+            try:
+                self.type2 = self.i2.type
+            except AttributeError:
+                self.type2 = "?"
+
+        # mode is for backwards compatibility
+        if error is None:
+            error = mode
+        if error is None:
+            self.error = "unknown"
+        else:
+            self.error = error
+
+    def swap_order(self):
+        tmp = self.i1, self.type1
+        self.i1, self.type1 = self.i2, self.type2
+        self.i2, self.type2 = tmp
 
     def item_str(self, i, t, latex=False):
+        from lamb import meta, lang
+        # this is hacky for now: if we are printing an error about a TypedExpr
+        # we want the repr for markdown backticks, but for composition results
+        # we want the latex code
+        if isinstance(i, meta.TypedExpr):
+            latex = False
         if i is None:
             return None
-        if isinstance(i, TypeConstructor):
+        if is_type(i):
             if latex:
                 return "type %s" % i.latex_str()
             else:
-                return "type %s" % repr(i)
+                return "type `%s`" % repr(i)
         elif isinstance(i, str):
             if t is None or t == "?":
-                return "'" + i + "'"
+                return f"`{i}`"
             else:
                 if latex:
-                    return "'%s'/%s" % (i, t.latex_str())
+                    return "%s/%s" % (i, t.latex_str())
                 else:
-                    return "'%s'/%s" % (i, repr(t))
+                    return "`%s`/%s" % (i, repr(t))
         else:
-            if t is None or t == "?":
+            # a TypedTerm's repr always shows the type right there, making
+            # the longer form below redundant
+            if (t is None or t == "?"
+                                or isinstance(i, meta.TypedTerm)
+                                or isinstance(i, lang.Item)):
                 if latex:
-                    return "'" + i.latex_str() + "'"
+                    return f"{i.latex_str()}"
                 else:
-                    return "'" + repr(i) + "'"
+                    return f"`{repr(i)}`"
             else:
+                # assumption: type is shown as part of `i`, so it would be
+                # redundant to print it
                 if latex:
-                    return "'%s'/%s" % (i.latex_str(), t.latex_str())
+                    return f"{i.latex_str()}/{t.latex_str()}"
                 else:
-                    return "'%s'/%s" % (repr(i), repr(t))
+                    return f"`{repr(i)}/{repr(t)}`"
 
     def __str__(self):
         return self.description(latex=False)
@@ -1698,26 +1761,31 @@ class TypeMismatch(Exception):
         is_1 = self.item_str(self.i1, self.type1, latex=latex)
         is_2 = self.item_str(self.i2, self.type2, latex=latex)
         if latex:
-            tm_str = '<span style="color:red">Type mismatch</span>'
+            tm_str = '<span style="color:red">**TypeMismatch**</span>'
         else:
-            tm_str = "Type mismatch"
+            tm_str = "TypeMismatch"
         if is_1 is None:
             if is_2 is None:
-                return "%s, unknown context (%s)" % (tm_str, self.mode)
+                return "%s, unknown context (%s)" % (tm_str, self.error)
             else:
-                return "%s on %s (%s)" % (tm_str, is_2, self.mode)
+                return "%s on %s (%s)" % (tm_str, is_2, self.error)
         else:
             if is_2 is None:
-                return "%s on %s (%s)" % (tm_str, is_1, self.mode)
+                return "%s on %s (%s)" % (tm_str, is_1, self.error)
             else:
                 return ("%s: %s and %s conflict (%s)"
-                                            % (tm_str, is_1, is_2, self.mode))
+                                            % (tm_str, is_1, is_2, self.error))
 
-    def _repr_html_(self):
+    def _repr_markdown_(self):
         return self.description(latex=True)
 
     def __repr__(self):
         return self.__str__()
+
+
+class OccursCheckFailure(TypeMismatch):
+    def __init__(self, t1, t2):
+        super().__init__(t1, t2, occurs_check=True, error="Occurs check failed")
 
 
 class TypeParseError(Exception):
