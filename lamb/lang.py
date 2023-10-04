@@ -2460,24 +2460,20 @@ class CompositionSystem(object):
             if arity == 1:
                 if mode.typeshift:
                     continue
-                orders = ((items[0],),)
+                orders = ((0,),)
             elif arity == 2:
                 if mode.commutative:
-                    orders = ((items[0], items[1]),)
+                    orders = ((0, 1),)
                 else:
-                    orders = ((items[0], items[1]), (items[1], items[0]))
+                    orders = ((0, 1), (1, 0))
             else:
                 raise NotImplementedError
             for order in orders:
+                order_items = (items[i] for i in order)
                 try:
-                    result = mode(*order, assignment=assignment)
-                    if arity == 1:
-                        if isinstance(order[0], Tree):
-                            result.c_name = order[0].label()
-                        else:
-                            result.c_name = order[0].name
-                    else:
-                        result.c_name = mode.composite_name(items[0], items[1])
+                    result = mode(*order_items, assignment=assignment)
+                    if len(order) > 1 and order[0] > order[1]:
+                        result.reverse()
                     ret.extend(result)
                 except (CompositionFailure,
                         TypeMismatch,
@@ -2491,9 +2487,9 @@ class CompositionSystem(object):
                         else:
                             raise e
                     if arity == 1:
-                        ret.failures.append(Composite(order[0], e, mode=mode))
+                        ret.failures.append(Composite(items[0], e, mode=mode))
                     else:
-                        ret.failures.append(BinaryComposite(order[0], order[1],
+                        ret.failures.append(BinaryComposite(items[0], items[1],
                                                             e, mode=mode))
         # typeshift as a last resort
         if len(ret.results) == 0 and self.typeshift and not block_typeshift:
