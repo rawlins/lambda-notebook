@@ -153,21 +153,24 @@ def elem_join(parent, j, l):
     parent.append(l[-1])
     return parent
 
-def html_text_wrap(t):
+def html_text_wrap(t, span=False):
     """The idea is that this is a safe wrapper for putting a string into an
     html output somewhere. It's a bit convoluted, because of attempting to
     work around various things that produce bad line breaking in mathjax
     rendering."""
-    e = Element("div", style="display:inline-block;")
-    subelement_with_text(e, "span", text=t)
-    return e
+    if span:
+        return element_with_text("span", text=t)
+    else:
+        e = Element("div", style="display:inline-block;")
+        subelement_with_text(e, "span", text=t)
+        return e
 
 def alert_span(t):
     return element_with_text("span", text=t, style="color:red;")
 
-def to_html(x, style=None):
+def to_html(x, style=None, span=False):
     if isinstance(x, str):
-        return html_text_wrap(x)
+        return html_text_wrap(x, span=span)
     elif isinstance(x, Element):
         return x
     if style is None:
@@ -179,9 +182,9 @@ def to_html(x, style=None):
             return ElementTree.fromstring(x._repr_html_())
         except:
             try:
-                return html_text_wrap(x._repr_latex_())
+                return html_text_wrap(x._repr_latex_(), span=span)
             except:
-                return html_text_wrap(repr(x))
+                return html_text_wrap(repr(x), span=span)
 
 def equality_table(lines):
     e = Element("table", style="margin:0px;")
@@ -341,7 +344,8 @@ class HTMLNodeDisplay(Styled):
     def render_explanation(self, explanation, **kwargs):
         color = self.get_style(kwargs, "expl_color", "blue")
         if explanation is not None:
-            expl = to_html(explanation, style=kwargs)
+            # is expl ever not just a string?
+            expl = to_html(explanation, style=kwargs, span=True)
             e = Element("div", style=("white-space:nowrap; color:%s;" % color))
             if self.get_style(kwargs, "expl_style", "default") == "bracket":
                 bold = SubElement(e, "b")
@@ -450,7 +454,7 @@ class TDProofDisplay(HTMLNodeDisplay):
         # is there a simpler way?
         color = self.get_style(kwargs, "expl_color", "blue")
         if explanation is not None:
-            expl = to_html(explanation, style=kwargs)
+            expl = to_html(explanation, style=kwargs, span=True)
             # align this div with the middle of the proof line
             e = Element("div", style=("color:%s;" % color
                 + "transform: translateY(-1em); padding-left:0.5em;"))
