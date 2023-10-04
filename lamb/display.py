@@ -1,3 +1,5 @@
+import os
+
 from lamb import utils
 try:
     # for now, fail silently if this doesn't work.
@@ -229,8 +231,11 @@ class DisplayNode(object):
                                                                     **kwargs)
 
     def _repr_html_(self):
-        return ElementTree.tostring(self.render(), encoding="unicode",
+        r = ElementTree.tostring(self.render(), encoding="unicode",
                                                    method="html")
+        if "VSCODE_PID" in os.environ:
+            r = "<div><b>Complex HTML rendering (trees and derivations) is not currently supported in VSCode, sorry! See <a href='https://github.com/microsoft/vscode-jupyter/issues/7801'>https://github.com/microsoft/vscode-jupyter/issues/7801</a>.</b></div>" + r
+        return r
 
     def __repr__(self):
         # this is to avoid a unique object identifier showing up in
