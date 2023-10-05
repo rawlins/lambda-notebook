@@ -638,6 +638,17 @@ class CompositionTree(Tree, Composable):
             else:
                 raise NotImplementedError()
 
+    def source_tree(self):
+        """Convert a CompositionTree into a plain Tree object; useful in order
+        to display it among other things."""
+        # code dup with TreeComposite
+        def _as_source_tree(x):
+            try:
+                return x.source_tree()
+            except AttributeError:
+                return x
+        return Tree(self.name, [_as_source_tree(c) for c in self.children])
+
     def build_local_tree(self, override=True):
         """This function ensures that any necessary PlaceholderTerms are
         inserted into the denotation of a daughter node."""
@@ -1001,6 +1012,17 @@ class TreeComposite(Composite, Tree):
     def p2(self):
         return self[1]
 
+    def source_tree(self):
+        """Convert a TreeComposite into a plain Tree object; useful in order
+        to display it among other things."""
+        # code dup with CompositionTree
+        def _as_source_tree(x):
+            try:
+                return x.source_tree()
+            except AttributeError:
+                return x
+        return Tree(self.name, [_as_source_tree(c) for c in self.children])
+
     def get_index(self):
         return self.inherit_index
 
@@ -1290,6 +1312,13 @@ class CompositionResult(Composable):
                         + "Composition attempts that failed:" + newline
                         + self.failures_str(latex = not plain))
         return s
+
+    def source_tree(self):
+        trees = [i.source_tree() for i in self]
+        # convenient for rendering, possibly very annoying programmatically:
+        if len(trees) == 1:
+            trees = trees[0]
+        return trees
 
     def show(self, recurse=True, style=None, failures=False):
         # TODO: the plain version of this is extremely unreadable
