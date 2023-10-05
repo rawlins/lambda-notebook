@@ -243,20 +243,30 @@ class Composable(object):
         return False
 
     def _repr_html_(self):
+        # ... is this needed?
+        # (currently: there are some direct calls to _repr_html_() that seem
+        # to go through here; these should be cleaned up)
         return self.show()._repr_html_()
 
     def latex_str(self):
+        # ... is this needed? does it even work any more?
         return self.show()._repr_latex_()
 
+    # should return an IPython repr-able object, usually a utils.BaseLNDisplay
+    # object of some kind
     def show(self, recurse=True, style=None):
         raise NotImplementedError(repr(self))
 
+    # should return a display.DisplayNode object
     def build_display_tree(self, derivations=False, recurse=True, style=None):
         raise NotImplementedError(repr(self))
 
+    # should return an IPython repr-able object, usually a utils.BaseLNDisplay
+    # object of some kind
     def tree(self, derivations=False, recurse=True, style=None):
-        return self.build_display_tree(derivations=derivations, recurse=recurse,
-                                                                    style=style)
+        return utils.show(
+            html=self.build_display_tree(derivations=derivations,
+                                            recurse=recurse, style=style))
 
     def __mul__(self, other):
         return self.compose(other)
@@ -677,6 +687,9 @@ class CompositionTree(Tree, Composable):
                                                         assignment=assignment)
         return self
 
+    def __mul__(self, other):
+        return Composable.__mul__(self, other)
+
     def compose_path(self, path, assignment=None):
         if len(path) > 0:
             sub = self[path[0]]
@@ -803,17 +816,16 @@ class CompositionTree(Tree, Composable):
             self.denotations = CompositionResult(self, list(), child_failures,
                 source=self)
 
-    def _repr_html_(self):
-        return self.show()._repr_html_()
-
     def tree(self, derivations=False, recurse=True, style=None):
-        return self.build_display_tree(derivations=derivations, recurse=recurse,
-                                                                    style=style)
+        # TODO: set plain
+        return utils.show(
+            html=self.build_display_tree(derivations=derivations,
+                                        recurse=recurse, style=style))
 
     def show(self,derivations=False, short=True, failures=False, style=None):
         """Show the step-by-step derivation(s) as a proof tree."""
         if self.content is None:
-            return self.build_display_tree(derivations=derivations, style=style)
+            return self.tree(derivations=derivations, style=style)
         elif isinstance(self.content, CompositionResult):
             if short:
                 return self.content.show(style=style, failures=failures)
@@ -859,8 +871,9 @@ class CompositionTree(Tree, Composable):
         node_style = display.deriv_style(style)
         return display.DisplayNode(content=node, parts=parts, style=node_style)
 
-    def __mul__(self, other):
-        return Composable.__mul__(self, other)
+    def _ipython_display_(self):
+        import IPython
+        IPython.display.display(self.show())
 
     @classmethod
     def from_tree(cls, t, system=None):

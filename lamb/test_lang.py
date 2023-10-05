@@ -22,6 +22,21 @@ class LangParsingTest(unittest.TestCase):
         self.assertEqual(state["test3"].content, meta.te("f_<X,Y>"))        
         self.assertEqual(state["test4"], meta.te("g_<e,t>"))
 
+def has_ipython_repr(o):
+    # test for the existence of one of the relevant IPython reprs. This doesn't
+    # test that _display_ipython_ actually does something, but it's assumed
+    # that if it is defined at all on `o`, we are good.
+    # note: we explicitly don't look for _repr_svg_() here. Many objects will
+    # inherit this from nltk.Tree, but it shows the base Tree object as-is,
+    # with no lambda notebook info.
+    return ('_ipython_display_' in dir(o)
+            # note: currently everything inherits _repr_html_() from Composable,
+            # but it may be None or raise NotImplementedError
+            or '_repr_html_' in dir(o) and o._repr_html_()
+            or '_repr_latex_' in dir(o) and o._repr_latex_()
+            or '_repr_markdown_' in dir(o) and o._repr_markdown_())
+
+
 # this is far from exhaustive. TODO:
 # * test all built in composition ops
 # * test all composition systems (currently, this is just td_system)
@@ -85,6 +100,14 @@ class LangTest(unittest.TestCase):
             (self.state['test2'] * self.state['test2']) * self.state['test2'], # two-step failure
             ]
         for o in outs:
+            # all of the tested objects should support at least one non-trivial
+            # IPython repr. (Currently, we don't actually test that
+            # _display_ipython_ does something...)
+            self.assertTrue(has_ipython_repr(o),
+                msg=f"Failed repr existence test on {o.__class__}")
+            self.assertTrue(has_ipython_repr(o.show()),
+                msg=f"Failed .show() repr existence test on {o.__class__}")
+            # now run all the reprs to look for crashes
             repr(o),
             repr(o.show())
             str(o.show())
@@ -94,6 +117,8 @@ class LangTest(unittest.TestCase):
 
         # test Lexicon repr
         l = lang.Lexicon()
+        self.assertTrue(has_ipython_repr(l),
+            msg=f"Failed repr existence test on Lexicon")
         l._repr_markdown_()
         l.update(self.state)
         l._repr_markdown_()
