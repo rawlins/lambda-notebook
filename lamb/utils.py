@@ -161,6 +161,26 @@ LNDisplay = BaseLNDisplay
 def show(*args, **kwargs):
     return LNDisplay(*args, **kwargs)
 
+
+def error_pos_str(s, i, prefix="", multiline=False, plain=True):
+    i = max(0, min(i, len(s)))
+    if len(prefix) and not prefix[-1] == " ":
+        prefix += ": "
+    if not plain:
+        multiline = True
+    if multiline:
+        if plain:
+            i += len(prefix)
+            base = f"`{s}`\n {' ' * i}^"
+        else:
+            base = f"\n```\n    '{s}'\n {' ' * (i + 4)}^\n```"
+    else:
+        if i >= len(s):
+            base = f"`{s}`!here!"
+        else:
+            base = f"`{s[0:i]}!here!{s[i:]}`"
+    return f"{prefix}{base}"
+
 # This is here only for compatibility with the 2013 LSA demo notebook, you
 # should just use `IPython.display.display` instead
 def ltx_print(*args):

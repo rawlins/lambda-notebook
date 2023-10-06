@@ -1788,26 +1788,12 @@ class OccursCheckFailure(TypeMismatch):
         super().__init__(t1, t2, occurs_check=True, error="Occurs check failed")
 
 
-class TypeParseError(Exception):
+class TypeParseError(parsing.ParseError):
     """Exception for when types can't be parsed or generated correctly."""
     def __init__(self, msg, s, i):
-        self.s = s
-        self.i = i
-        self.msg = msg
+        # simplified Type ParseError setup; don't use some of the fields
+        super().__init__(msg, s=s, i=i)
 
-    def __str__(self):
-        if self.s == None or self.i == None:
-            return self.msg
-        if self.i >= len(self.s):
-            return "%s at point `%s!here!`" % (self.msg, self.s)
-        else:
-            return "%s at point `%s!here!%s`" % (self.msg, self.s[0:self.i],
-                                                            self.s[self.i:])
-
-    def _repr_markdown_(self):
-        # it's convenient to use markdown here for backticks, but colab will
-        # strip out the color. So, use both red and bold.
-        return f"<span style=\"color:red\">**TypeParseError**</span>: {str(self)}"
 
 def reset():
     global type_e, type_t, type_n, type_property, type_transitive

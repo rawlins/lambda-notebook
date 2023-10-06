@@ -25,33 +25,68 @@ class ParseError(Exception):
         # preconditions for what it is supposed to consume
         self.met_preconditions = met_preconditions
 
-    def __str__(self):
-        aux = ""
-        if self.e is not None:
-            if (isinstance(self.e, SyntaxError)):
-                # SyntaxError's full str representation is not helpful when
-                # generated from an eval, so just show the message
-                aux = ": %s" % str(self.e.msg)
-            else:
-                aux = ": %s" % str(self.e)
-        if self.s is None:
-            return self.msg + aux
-        if self.i is None:
-            return "%s, in string `%s`%s" % (self.msg, self.s, aux)
-        elif self.i >= len(self.s):
-            # TODO: these would be better printed using some multiline approach
-            return "%s, at point `%s!here!`%s" % (self.msg, self.s, aux)
+    def _aux_str(self, plain=True):
+        if self.e is None:
+            return ""
+
+        newline = False
+        if (isinstance(self.e, SyntaxError)):
+            # SyntaxError's full str representation is not helpful when
+            # generated from an eval, so just show the message
+            e_str = str(self.e.msg)
         else:
-            return "%s, at point `%s!here!%s`%s" % (self.msg, self.s[0:self.i],
-                                                        self.s[self.i:], aux)
+            if plain:
+                e_str = str(self.e)
+            else:
+                e_str = None
+                try:
+                    e_str = self.e._repr_markdown_()
+                    newline = True
+                except AttributeError:
+                    pass
+                if not e_str:
+                    e_str = str(self.e)
+                    newline = True
+
+        if newline:
+            sep = plain and "\n" or "<br />&nbsp;&nbsp;&nbsp;&nbsp;"
+        else:
+            sep = ": "
+        return sep + e_str
+
+    def __str__(self):
+        # include this in `prefix` so it is counted for positioning an error
+        # marker
+        m = f"{self.__class__.__name__}: {self.msg}"
+        aux = self._aux_str()
+        if self.s is None:
+            return m + aux
+        elif self.i is None:
+            return f"{m}, in string `{self.s}`{aux}"
+        else:
+            return utils.error_pos_str(self.s, self.i, prefix=m,
+                                    plain=True, multiline=True)
 
     def _repr_markdown_(self):
         # it's convenient to use markdown here for backticks, but colab will
         # strip out the color. So, use both red and bold.
-        return f"<span style=\"color:red\">**ParseError**</span>: {str(self)}"
+        aux = self._aux_str(plain=False)
+        # note: the case that combines an aux string and an error position is
+        # relatively untested
+        if self.s is None:
+            m = self.msg
+        elif self.i is None:
+            m = f"{self.msg}, in string `{self.s}`"
+        else:
+            m = utils.error_pos_str(self.s, self.i, prefix=self.msg,
+                                    plain=False, multiline=True)
+        # it's convenient to use markdown here for backticks, but colab will
+        # strip out the color. So, use both red and bold.
+        return f"<span style=\"color:red\">**{self.__class__.__name__}**</span>: {m}{aux}"
 
     def __repr__(self):
-        return f"ParseError: {str(self)}"
+        return self.__str__()
+
 
 def consume_char(s, i, match, error=None):
     if i >= len(s):
@@ -129,15 +164,15 @@ def parse_error_wrap(msg, paren_struc=None, wrap_all=True, **kwargs):
         if not e.msg:
             e.msg = msg # this should essentially not trigger ever?
         if paren_struc:
-            e.s = flatten_paren_struc(paren_struc)
-            e.i = kwargs.get('i', None)
-        elif 's' in kwargs:
-            e.s = kwargs['s']
+            # override any provided s...
+            kwargs['s'] = flatten_paren_struc(paren_struc)
+
+        if 's' in kwargs and e.s != kwargs['s']:
             # `i` may or may not be set, but any previous `i` won't make sense
             # in the context of the updated `s`
             e.i = kwargs.get('i', None)
+            e.s = kwargs['s']
         raise e
-
 
 
 # generalized context manager for displaying lnb errors in a sensible way. Tries
@@ -163,7 +198,7 @@ def error_manager(summary=None):
     except Exception as e:
         if summary:
             meta.logger.error(summary)
-        meta.logger.error(e)
+        meta.logger.error(str(e))
 
 def parse_te(line, env=None, use_env=False):
     from lamb import meta

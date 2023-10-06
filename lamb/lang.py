@@ -510,8 +510,11 @@ class SingletonComposable(Composable):
 
     def __repr__(self):
         # TODO: make this parse?
-        return text_inbr(self.name) + ("%s = %s" %
-            (self.assign_controller.render(latex=False), repr(self.content)))
+        if isinstance(self.content, Exception):
+            content_str = "Error!"
+        else:
+            content_str = repr(self.content)
+        return f"{text_inbr(self.name)}{self.assign_controller.render(latex=False)} = {content_str}"
 
     def short_str(self, latex=False, i=None, **args):
         if i is None:
