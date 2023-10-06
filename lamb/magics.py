@@ -4,7 +4,7 @@ from lamb import parsing, utils, lang, meta, types
 from lamb.utils import *
 
 from IPython.core.magic import (Magics, magics_class, line_magic,
-                                cell_magic, line_cell_magic)
+                                cell_magic, line_cell_magic, no_var_expand)
 import IPython.display
 
 
@@ -69,6 +69,7 @@ class LambMagics(Magics):
                 "shadowed in python" % k)
 
     @line_cell_magic
+    @no_var_expand
     def lamb(self, line, cell=None):
         """Magic that works both as %lamb and as %%lamb"""
         self.cur_ambiguity = self.ambiguity
@@ -130,16 +131,19 @@ class LambMagics(Magics):
                 return None
 
     @line_magic
+    @no_var_expand
     def lambctl(self, line):
         return self.control_line(line)
 
     @line_magic
+    @no_var_expand
     def te(self, line):
         (result, accum) = parsing.parse_te(line, self.env)
         self.shell.push(accum)
         return result
 
     @line_magic
+    @no_var_expand
     def tp(self, line):
         with parsing.error_manager():
             return meta.tp(line)
