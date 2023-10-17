@@ -200,13 +200,19 @@ def error_manager(summary=None):
             meta.logger.error(summary)
         meta.logger.error(str(e))
 
+def magic_opt(optname, line):
+    # simple and dumb, maybe improve some day
+    if line.startswith(f"{optname} "):
+        return (True, line[len(optname) + 1:])
+    else:
+        return (False, line)
+
 def parse_te(line, env=None, use_env=False):
     from lamb import meta
     line = remove_comments(line)
-    reduce = False
-    if line.startswith("reduce "):
-        line = line[7:]
-        reduce = True
+    reduce, line = magic_opt("reduce", line)
+    simplify, line = magic_opt("simplify", line)
+
     if env is None or not use_env:
         env = dict()
     var_env = vars_only(env)
@@ -215,8 +221,12 @@ def parse_te(line, env=None, use_env=False):
         result = meta.te(line, assignment=var_env)
         if isinstance(result, meta.TypedExpr):
             result = result.regularize_type_env(var_env, constants=True)
-            if reduce:
+            # TODO: should calling simplify_all simply entail reduce_all in the
+            # first place?
+            if reduce or simplify:
                 result = result.reduce_all()
+            if simplify:
+                result = result.simplify_all()
         else:
             pass # warning here?
 

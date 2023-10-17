@@ -188,8 +188,11 @@ def test_repr_parse_abstract(self, depth):
             print("Failure on depth %i expression '%s'" % (depth, repr(x)))
         self.assertTrue(result)
 
-def testsimp(self, a, b):
-    intermediate = a.simplify()
+def testsimp(self, a, b, all=False):
+    if all:
+        intermediate = a.simplify_all()
+    else:
+        intermediate = a.simplify()
     teb = te(b)
     if intermediate != teb:
         print("Failed simplification test: '%s == %s'" % (repr(a), repr(b)))
@@ -324,11 +327,16 @@ class MetaTest(unittest.TestCase):
             te("(λ f_<e,<e,t>>: (λ g_<e,e>: (λ x_e: f_<e,<e,t>>(g_<e,e>(x_e))(x_e))))"))
 
 
-    def test_binary_simplify(self):
+    def test_boolean_simplify(self):
         # negation
         testsimp(self, te("~False"), True)
         testsimp(self, te("~True"), False)
+        testsimp(self, te("~~True"), True, all=True)
+        testsimp(self, te("~~False"), False, all=True)
         testsimp(self, te("~p_t"), te("~p_t"))
+        testsimp(self, te("~~p_t"), te("p_t"))
+        testsimp(self, te("~~~p_t"), te("~p_t"))
+        testsimp(self, te("~~~~p_t"), te("p_t"), all=True)
 
         # conjunction
         testsimp(self, te("True & True"), True)
@@ -339,8 +347,9 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t & False"), False)
         testsimp(self, te("True & p_t"), te("p_t"))
         testsimp(self, te("p_t & True"), te("p_t"))
-        testsimp(self, te("p_t & p_t"), te("p_t & p_t"))
+        testsimp(self, te("p_t & p_t"), te("p_t"))
         testsimp(self, te("p_t & q_t"), te("p_t & q_t"))
+        testsimp(self, te("p_t & ~p_t"), False)
 
         # disjunction
         testsimp(self, te("True | True"), True)
@@ -351,8 +360,9 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t | False"), te("p_t"))
         testsimp(self, te("True | p_t"), True)
         testsimp(self, te("p_t | True"), True)
-        testsimp(self, te("p_t | p_t"), te("p_t | p_t"))
+        testsimp(self, te("p_t | p_t"), te("p_t"))
         testsimp(self, te("p_t | q_t"), te("p_t | q_t"))
+        testsimp(self, te("p_t | ~p_t"), True)
 
         # arrow
         testsimp(self, te("True >> True"), True)
@@ -363,7 +373,7 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t >> False"), te("~p_t"))
         testsimp(self, te("True >> p_t"), te("p_t"))
         testsimp(self, te("p_t >> True"), True)
-        testsimp(self, te("p_t >> p_t"), te("p_t >> p_t"))
+        testsimp(self, te("p_t >> p_t"), True)
         testsimp(self, te("p_t >> q_t"), te("p_t >> q_t"))
 
         # biconditional
@@ -376,7 +386,7 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("True <=> p_t"), te("p_t"))
         testsimp(self, te("p_t <=> True"), te("p_t"))
         testsimp(self, te("p_t <=> q_t"), te("p_t <=> q_t"))
-        testsimp(self, te("p_t <=> p_t"), te("p_t <=> p_t"))
+        testsimp(self, te("p_t <=> p_t"), True)
 
         # neq
         testsimp(self, te("True =/= True"), False)
@@ -388,7 +398,26 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("True =/= p_t"), te("~p_t"))
         testsimp(self, te("p_t =/= True"), te("~p_t"))
         testsimp(self, te("p_t =/= q_t"), te("p_t =/= q_t"))
-        testsimp(self, te("p_t =/= p_t"), te("p_t =/= p_t"))
+        testsimp(self, te("p_t =/= p_t"), False)
+
+        # interactions (not exhaustive)
+        testsimp(self, te("p_t & ~~p_t"), te("p_t"), all=True)
+        testsimp(self, te("~p_t & ~~~p_t"), te("~p_t"), all=True)
+        testsimp(self, te("p_t | ~~p_t"), te("p_t"), all=True)
+        testsimp(self, te("~p_t | ~~~p_t"), te("~p_t"), all=True)
+        testsimp(self, te("p_t => ~~p_t"), True, all=True)
+        testsimp(self, te("p_t & ~~~p_t"), False, all=True)
+        # left here as a dangling indication of why syntactic equivalence is
+        # very ad hoc.
+        # these could be fixed by normalizing order:
+        testsimp(self, te("p_t & q_t & p_t"), te("p_t & q_t & p_t"), all=True) # not simplified!
+        testsimp(self, te("p_t & q_t | q_t & p_t"), te("p_t & q_t | q_t & p_t"), all=True) # not simplified!
+        # In principle you could add all sorts of other patterns, e.g.
+        # conversion of material implication to |, de morgan's laws, etc; but
+        # going any further on syntactic equivalence only seems a bit pointless
+        # testsimp(self, te("~p_t => p_t"), te("p_t"), all=True)
+        # testsimp(self, te("~(p_t & q_t)"), te("~p_t | ~p_t"), all=True)
+        # etc..
 
     # each of these generates 1000 random expressions with the specified depth,
     # and checks whether their repr parses as equal to the original expression

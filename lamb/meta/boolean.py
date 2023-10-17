@@ -1,6 +1,6 @@
 import lamb
 from lamb import types
-from .core import op, derived, registry, TypedTerm, SyncatOpExpr, BindingOp, Partial, LFun
+from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr, BindingOp, Partial, LFun
 from lamb.types import type_t
 
 global true_term, false_term
@@ -40,9 +40,15 @@ false_term = FalseTypedTerm("False", type_t)
 
 # proof of concept for now: the rest of the logical operators do not quite
 # work as pure python
-@op("~", type_t, type_t, op_uni="¬", op_latex="\\neg{}", deriv_desc="negation")
+@op("~", type_t, type_t, op_uni="¬", op_latex="\\neg{}", deriv_desc="negation", python_only=False)
 def UnaryNegExpr(self, x):
-    return not x
+    if isinstance(x, TypedExpr):
+        if isinstance(x, UnaryNegExpr):
+            return x[0].copy()
+        else:
+            return self
+    else:
+        return not x
 
 # could make a factory function for these
 class BinaryAndExpr(SyncatOpExpr):
@@ -54,14 +60,23 @@ class BinaryAndExpr(SyncatOpExpr):
         super().__init__(type_t, arg1, arg2)
 
     def simplify(self):
-        def d(x):
-            return derived(x, self, desc="conjunction")
+        def d(x, desc="conjunction"):
+            return derived(x, self, desc=desc)
         if self.args[0] == false_term or self.args[1] == false_term:
             return d(false_term)
         elif self.args[0] == true_term:
             return d(self.args[1].copy())
         elif self.args[1] == true_term:
             return d(self.args[0].copy())
+        elif self.args[0] == self.args[1]:
+            # *heuristic* simplification rule: under syntactic equivalence,
+            # simplify `p & p` to just p.
+            return d(self.args[0].copy())
+        elif (isinstance(self.args[0], UnaryNegExpr) and self.args[0][0] == self.args[1]
+                or isinstance(self.args[1], UnaryNegExpr) and self.args[1][0] == self.args[0]):
+            # *heuristic* simplification rule: non-contradiction law,
+            # simplify `p & ~p` to just False.
+            return d(false_term, desc="non-contradiction")
         else:
             return self
 
@@ -74,8 +89,8 @@ class BinaryOrExpr(SyncatOpExpr):
         super().__init__(type_t, arg1, arg2)
 
     def simplify(self):
-        def d(x):
-            return derived(x, self, desc="disjunction")
+        def d(x, desc="disjunction"):
+            return derived(x, self, desc=desc)
         if self.args[0] == true_term or self.args[1] == true_term:
             return d(true_term)
         elif self.args[0] == false_term:
@@ -83,6 +98,15 @@ class BinaryOrExpr(SyncatOpExpr):
             return d(self.args[1].copy())
         elif self.args[1] == false_term:
             return d(self.args[0].copy())
+        elif self.args[0] == self.args[1]:
+            # *heuristic* simplification rule: under syntactic equivalence,
+            # simplify `p | p` to just p.
+            return d(self.args[0].copy())
+        elif (isinstance(self.args[0], UnaryNegExpr) and self.args[0][0] == self.args[1]
+                or isinstance(self.args[1], UnaryNegExpr) and self.args[1][0] == self.args[0]):
+            # *heuristic* simplification rule: excluded middle,
+            # simplify `p | ~p` to just True.
+            return d(true_term, desc="excluded middle")
         else:
             return self
 
@@ -105,6 +129,10 @@ class BinaryArrowExpr(SyncatOpExpr):
         elif self.args[1] == false_term:
             return d(UnaryNegExpr(self.args[0]))
         elif self.args[1] == true_term:
+            return d(true_term)
+        elif self.args[0] == self.args[1]:
+            # *heuristic* simplification rule: under syntactic equivalence,
+            # simplify `p >> p` to just `true`.
             return d(true_term)
         else:
             return self
@@ -139,6 +167,10 @@ class BinaryBiarrowExpr(SyncatOpExpr):
             return d(UnaryNegExpr(self.args[0]))
         elif self.args[1] == true_term:
             return d(self.args[0].copy())
+        elif self.args[0] == self.args[1]:
+            # *heuristic* simplification rule: under syntactic equivalence,
+            # simplify `p <-> p` to just `true`.
+            return d(true_term)
         else:
             return self
 
@@ -174,6 +206,10 @@ class BinaryNeqExpr(SyncatOpExpr):
             return d(UnaryNegExpr(self.args[0]))
         elif self.args[1] == false_term:
             return d(self.args[0].copy())
+        elif self.args[0] == self.args[1]:
+            # *heuristic* simplification rule: under syntactic equivalence,
+            # simplify `p =/= p` to just `false`.
+            return d(false_term)
         else:
             # note: don't simplify p =/= q; this would be a job for a prover
             return self
@@ -201,7 +237,8 @@ class ForallUnary(BindingOp):
 
     def simplify(self):
         # note: not valid if the domain of individuals is completely empty
-        # (would return True)
+        # (would return True). We are therefore assuming that this case is
+        # ruled out a priori.
         if not self.varname in self.body.free_variables():
             return self.body
         return self

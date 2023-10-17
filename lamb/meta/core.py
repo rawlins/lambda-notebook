@@ -2664,6 +2664,10 @@ class BinaryGenericEqExpr(SyncatOpExpr):
                             and isinstance(self.args[1].op, Number)):
             return derived(te(self.args[0].op == self.args[1].op),
                                                     self, desc="Equality")
+        elif self.args[0] == self.args[1]:
+            # *heuristic* simplification rule: under syntactic equivalence,
+            # simplify `p == p` to just `true`.
+            return d(true_term)
         else:
             return self # this would require a solver for the general case
 
