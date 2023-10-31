@@ -66,6 +66,7 @@ def reload_lamb(use_nltk_tree=None):
     importlib.reload(lamb.types)
     importlib.reload(lamb.meta.core)
     importlib.reload(lamb.meta.boolean)
+    importlib.reload(lamb.meta.evaluation)
     importlib.reload(lamb.meta.number)
     importlib.reload(lamb.meta.sets)
     importlib.reload(lamb.meta)

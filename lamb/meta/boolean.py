@@ -357,55 +357,15 @@ class IotaPartial(IotaUnary):
 pure_ops = {UnaryNegExpr, BinaryAndExpr, BinaryOrExpr, BinaryArrowExpr,
             BinaryNeqExpr, BinaryBiarrowExpr}
 
+
 def is_pure(e):
-    if isinstance(e, TypedTerm) and e.type == type_t:
+    if e.is_atomic() and e.type == type_t:
         return True
     elif e.__class__ not in pure_ops:
         return False
     else:
         return all(is_pure(a) for a in e.args)
 
-# TODO: run these with time-based timeouts, rather than heuristic maxes
-
-# warning, exponential in both time and space in the size of l...
-def all_boolean_combos(l, cur=None, max_length=20):
-    # 20 here is somewhat arbitrary: it's about where exponential blowup gets
-    # noticeable on a reasonably fast computer
-    if len(l) > max_length:
-        raise ValueError("Tried to calculate boolean combos for too long a sequence: %s" % repr(l))
-    if cur is None:
-        cur = dict()
-    if len(l) == 0:
-        return [cur]
-    remainder = l[1:]
-    if l[0] == 'True' or l[0] == 'False':
-        # this is a bit messy, but we are dealing with term names a this point
-        cur[l[0]] = l[0] == 'True' and True or False
-        return all_boolean_combos(remainder, cur)
-    cur_false = cur.copy()
-    cur[l[0]] = True
-    cur_false[l[0]] = False
-    return all_boolean_combos(remainder, cur) + all_boolean_combos(remainder, cur_false)
-
-def truthtable(e, max_length=12):
-    """
-    Calculate a full truth-table for a pure boolean expression `e`. This is a
-    brute-force calculation, and so is exponential (time and space) in the
-    number of terms.
-    """
-    se = e.simplify_all() # maybe not what you'd want?
-    if not is_pure(se):
-        raise ValueError("Cannot produce a truthtable for a non-boolean TypedExpr")
-    terms = list(se.get_type_env().var_mapping.keys())
-    terms.sort()
-    # 12 here is once again just chosen as a default heuristic
-    if len(terms) > max_length:
-        raise ValueError("Tried to calculate truthtable for too long a sequence: %s" % repr(e))
-    in_tvs = all_boolean_combos(terms)
-    return [(v, e.under_assignment(v).simplify_all()) for v in in_tvs]
-
-def truthtable_equiv(e1, e2):
-    return truthtable(e1) == truthtable(e2)
 
 def to_nltk_sem_expr(e):
     # generates a version of the expression that can be parsed by nltk.
@@ -432,6 +392,7 @@ def to_nltk_sem_expr(e):
         return "-" + nltk_bin("<->")
     else:
         raise NotImplementedError
+
 
 def to_nltk_sem(e):
     import nltk

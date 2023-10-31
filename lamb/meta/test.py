@@ -2,7 +2,7 @@ import logging, unittest, random
 import lamb
 from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
-from . import core, boolean, number, sets
+from . import core, boolean, number, sets, evaluation
 from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
 
 def repr_parse(e):
@@ -326,7 +326,6 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(z.try_adjust_type(tp("<<e,<e,t>>,?>")),
             te("(λ f_<e,<e,t>>: (λ g_<e,e>: (λ x_e: f_<e,<e,t>>(g_<e,e>(x_e))(x_e))))"))
 
-
     def test_boolean_simplify(self):
         # negation
         testsimp(self, te("~False"), True)
@@ -418,6 +417,20 @@ class MetaTest(unittest.TestCase):
         # testsimp(self, te("~p_t => p_t"), te("p_t"), all=True)
         # testsimp(self, te("~(p_t & q_t)"), te("~p_t | ~p_t"), all=True)
         # etc..
+
+    def test_boolean_evaluation(self):
+        # this test is more to ensure that this code isn't crashing, than a
+        # deep test of boolean inference.
+        evaluation.truthtable(te("p_t & q_t & ~p_t"))
+        evaluation.truthtable(te("p_t & q_t & P_<e,t>(x_e)"))
+        evaluation.extract_boolean(te("p4_t & Q_<X,t>(x_X)"),
+                                    te("p2_t & Q_<Y,t>(x_Y) | p4_t & ~P_<e,t>(x_e)"))
+        self.assertEqual(
+            evaluation.truthtable(te("p_t & q_t")),
+            evaluation.truthtable(te("~(~p_t | ~q_t)")))
+        self.assertTrue(evaluation.truthtable_equiv(
+            te("~(p_t & P_<e,t>(x_e) & q_t)"),
+            te("~P_<e,t>(x_e) | ~(p_t & q_t)")))
 
     # each of these generates 1000 random expressions with the specified depth,
     # and checks whether their repr parses as equal to the original expression

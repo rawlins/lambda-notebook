@@ -1,4 +1,4 @@
-__all__ = ['core', 'boolean', 'number', 'sets']
+__all__ = ['core', 'boolean', 'evaluation', 'number', 'sets']
 
 # -*- coding: utf-8 -*-
 from numbers import Number
@@ -17,6 +17,8 @@ from lamb.meta.core import te, tp, term, let_wrapper, check_type, MiniOp, typed_
 from lamb.meta.core import geach_combinator, fun_compose, unify
 
 from lamb.meta.boolean import true_term, false_term
+
+from lamb.meta.evaluation import truthtable, truthtable_equiv
 
 ###############
 #
@@ -62,8 +64,3 @@ def test_setup():
     assert test2.apply(x) != test2b
 
 test_setup()
-
-
-
-
-
