@@ -3,8 +3,8 @@ import collections.abc
 import lamb
 from lamb import types
 
-from .core import TypedTerm, TypeEnv
-from .boolean import true_term, false_term, pure_ops, is_pure
+from .core import TypedTerm, TypeEnv, term
+from .boolean import pure_ops, is_pure
 from lamb.types import type_t
 
 def is_propositional(e):
@@ -25,10 +25,7 @@ def all_boolean_combos(l, cur=None, max_length=20):
     if len(l) == 0:
         return [cur]
     remainder = l[1:]
-    if l[0] == 'True' or l[0] == 'False':
-        # this is a bit messy, but we are dealing with term names at this point
-        cur[l[0]] = l[0] == 'True' and True or False
-        return all_boolean_combos(remainder, cur)
+    # note: if `MetaTerm`s can ever show up in l, they need to be handled here
     cur_false = cur.copy()
     cur[l[0]] = True
     cur_false[l[0]] = False
@@ -45,6 +42,20 @@ def sorted_term_names(e, var_map = None):
     return terms
 
 
+def truthtable_repr(t):
+    # this is maybe a bit misleading to use, since `0` and `1` in the
+    # metalanguage are not convertable to False/True. But I find these
+    # the most readable symbols to use in a truth-table.
+    if t == False:
+        return 0
+    if t == True:
+        return 1
+    try:
+        return t._repr_latex_()
+    except AttributeError:
+        return t
+
+
 class Evaluations(collections.abc.Sequence):
     def __init__(self, expression, assignments=None, display_assignment={}):
         if assignments is None:
@@ -56,7 +67,7 @@ class Evaluations(collections.abc.Sequence):
         self.terms = sorted_term_names(expression, var_map=var_map)
         # slightly weird, but we need to reconstruct the terms for display
         # purposes, and all we have right now is strings
-        self.term_exprs = [TypedTerm(t, typ=var_map[t]) for t in self.terms]
+        self.term_exprs = [term(t, typ=var_map[t]) for t in self.terms]
         self.update_evals(assignments)
 
     def update_evals(self, assignments):
@@ -98,19 +109,10 @@ class Evaluations(collections.abc.Sequence):
                   + [f"| {self.expression.under_assignment(self.display_assignment)._repr_latex_()}"])
         sep = ["| :---:" for col in header]
         rows = []
-        def tval(t):
-            if t == False or t == false_term:
-                return 0
-            if t == True or t == true_term:
-                return 1
-            try:
-                return t._repr_latex_()
-            except AttributeError:
-                return t
         
         def tname(v, t):
             if t in v:
-                return tval(v[t])
+                return truthtable_repr(v[t])
             else:
                 return ""
 
@@ -118,7 +120,7 @@ class Evaluations(collections.abc.Sequence):
             v, result = row
             rows.append(
                 [f"| {tname(v, t)}" for t in self.get_valued_terms()]
-                + [f"| {tval(result)}"])
+                + [f"| {truthtable_repr(result)}"])
 
         return ("".join(header) + "|\n"
                 + "".join(sep) + "|\n"
@@ -228,12 +230,12 @@ def truthtable_valid(e, simplify=True):
     if simplify:
         e = e.simplify_all()
     result, assignment = extract_boolean(e)
-    return all((eval[1] == true_term) for eval in truthtable(result[0]))
+    return all((eval[1] == True) for eval in truthtable(result[0]))
 
 
 def truthtable_contradictory(e, simplify=True):
     if simplify:
         e = e.simplify_all()
     result, assignment = extract_boolean(e)
-    return all((eval[1] == false_term) for eval in truthtable(result[0]))
+    return all((eval[1] == False) for eval in truthtable(result[0]))
 

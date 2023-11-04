@@ -552,6 +552,9 @@ def parse_paren_str(s, i, type_sys=None):
     return (seq, i)
 
 
+term_symbols_re = r'[a-zA-Z0-9]'
+
+
 def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
     accum = ""
     seq = list()
@@ -559,7 +562,13 @@ def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
         seq.append(initial_accum)
     start_i = i
     while i < len(s):
-        if s[i] == "_" and type_sys != None:
+        # TODO: code dup/overlap with parse_term
+        if (i > 0 and s[i] == "_" and s[i-1] == "_"):
+            # without special handling here for this error case, an error
+            # message can be triggered on eval and is extremely cryptic.
+            raise ParseError("Stray `_` in expression", s=s, i=i)
+        elif (i > 0 and s[i] == "_" and re.match(term_symbols_re, s[i-1])
+                        and type_sys != None):
             accum += "_"
             # have to parse type here in order to handle bracketing in types
             # correctly. I don't think there's a shortcut to this.  In the long
@@ -590,7 +599,7 @@ def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
                 i += 1
                 return (seq, i)
             else:
-                raise ParseError("Unbalanced '%s...%s' expression"
+                raise ParseError("Unbalanced `%s...%s` expression"
                                         % (close_brackets[s[i]], s[i]), s, i)
         else:
             accum += s[i]

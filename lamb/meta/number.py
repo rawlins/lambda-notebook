@@ -1,6 +1,6 @@
 import lamb.meta.core, lamb.types
-from lamb.meta.core import op, registry
-from lamb.types import type_t, type_n
+from lamb.meta.core import op, registry, TypedExpr
+from lamb.types import type_t, type_n, is_numeric
 
 
 def setup_operators():
@@ -8,7 +8,6 @@ def setup_operators():
     def add_n_op(c):
         registry.add_operator(c, *[type_n for x in range(c.arity)])
 
-    # TODO: unary +, for better error msgs if nothing else
     add_n_op(UnaryNegativeExpr)
     add_n_op(UnaryPositiveExpr)
     add_n_op(BinaryLExpr)
@@ -20,13 +19,28 @@ def setup_operators():
     add_n_op(BinaryDivExpr)
     add_n_op(BinaryTimesExpr)
     add_n_op(BinaryExpExpr)
+    # in order to ensure that constant numerics actually have a sign, we apply
+    # simplify to any expressions involving both numeric types. Without this,
+    # te("-1") etc would parse as UnaryNegativeExpr(MetaTerm(1)), which confuses
+    # things like tuple indexing. With this, it'll parse just as MetaTerm(-1).
+    def unary_presimplify(e):
+        return e.simplify_all()
+    registry.set_custom_transform(UnaryPositiveExpr, unary_presimplify)
+    registry.set_custom_transform(UnaryNegativeExpr, unary_presimplify)
 
-@op("-", type_n, type_n)
+
+@op("-", type_n, type_n, python_only=False)
 def UnaryNegativeExpr(self, x):
+    if isinstance(x, TypedExpr):
+        if isinstance(x, UnaryNegativeExpr):
+            return x[0].copy()
+        else:
+            return self
     return -x
 
-@op("+", type_n, type_n)
+@op("+", type_n, type_n, python_only=False)
 def UnaryPositiveExpr(self, x):
+    # this is essentially a noop
     return +x
 
 @op("<", type_n, type_t)

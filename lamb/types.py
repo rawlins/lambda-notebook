@@ -14,7 +14,7 @@ random_len_cap = 5
 
 
 class OntoSet(object):
-    def __init__(self, finite=False, values=None):
+    def __init__(self, finite=True, values=None):
         self.finite = finite
         if values is None:
             values = set()
@@ -33,25 +33,67 @@ class OntoSet(object):
     def infcheck(self, x):
         """Does `x` meet the criteria for being a member of a set if infinite?"""
         raise NotImplementedError(
-            "No membership checker for abstract infinite set")
+            "Can't check membership for an abstract infinite set")
+
+    def random(self):
+        if self.finite:
+            # XX this may not be seed stable if the list is constructed every time
+            return random.choice(list(self.domain))
+        else:
+            raise NotImplementedError("Can't pick randomly from an abstract infinite set")
+
+
+class BooleanSet(OntoSet):
+    def __init__(self):
+        super().__init__(True, [False,True])
+
+    def check(self,x):
+        # bool is implemented as a subclass of int, and therefore 0 and 1 are
+        # equivalent (both hashing, and via ==) to False and True. Checking
+        # for set membership in {False,True} includes 0/1 in the domain.
+        # This perhaps could be useful if we have a way of normalizing the
+        # term names, but for now, instead of using the superclass `in`
+        # check, exclude 0/1 from the domain by checking class directly.
+        return isinstance(x, bool)
+
 
 class SimpleInfiniteSet(OntoSet):
-    """Contains all strings prefaced with one char prefix."""
+    """Arbitrary domain type modeling a (countable) non-finite set. Elements are
+    strings consisting of a prefix followed by a natural number."""
     def __init__(self,prefix):
         OntoSet.__init__(self, False, set())
-        self.prefix = prefix[0]
+        self.prefix = prefix
+        self.symbol_re = re.compile(fr'_?({prefix}[0-9]+)')
         # TODO better error checking
 
     def infcheck(self,x):
-        return (len(x) > 0 and x[0]==prefix)
+        return isinstance(x, str) and re.match(self.symbol_re, x)
 
-class SimpleIntegerSet(OntoSet):
-    """pretend infinite set for integers, does not implement full infinity"""
+    def random(self, limit=None):
+        if limit is None:
+            # python 3 has no maxint, this is semi-arbitrary
+            limit = 2 ** 16 - 1
+        return f"_{self.prefix}{random.randint(0,limit)}"
+
+def is_numeric(x):
+    # bools are Number instances, exclude them here
+    return isinstance(x, Number) and not isinstance(x, bool)
+
+
+class SimpleNumericSet(OntoSet):
+    """Class backed by python `Number`s"""
     def __init__(self):
         OntoSet.__init__(self, False, set())
 
-    def infcheck(self,x):
-        return isinstance(x,int)
+    def infcheck(self, x):
+        return is_numeric(x)
+
+    def random(self, limit=None):
+        # this will only return ints...is that a problem?
+        if limit is None:
+            # python 3 has no maxint, this is semi-arbitrary
+            limit = 2 ** 16 - 1
+        return random.randint(-limit,limit)
 
 
 def is_type(x):
@@ -64,6 +106,7 @@ class TypeConstructor(object):
         self.unify_source = None
         self.generic = False
         self.init_type_vars()
+        self.domain = set()
 
     def __len__(self):
         return 0
@@ -126,8 +169,6 @@ class TypeConstructor(object):
             accum.update(part.type_vars)
         self.type_vars = accum
 
-
-
     def sub_type_vars(self, assignment, trans_closure=False):
         """Substitute type variables in `self` given the mapping in
         `assignment`.
@@ -147,10 +188,6 @@ class TypeConstructor(object):
             return self.copy_local(*l)
         else:
             return self
-
-
-
-
 
     def unify(self, other, unify_control_fun, data):
         """General function for type unification.  Not intended to be called
@@ -178,6 +215,15 @@ class BasicType(TypeConstructor):
     values: an object implementing the OntoSet interface representing the set
     that this type characterizes.
     """
+
+    # some convenient defaults for domain type prefixes, these can be
+    # overridden.
+    default_prefixes = {
+        's': 'w',
+        'e': 'c',
+        'v': 'e'
+        }
+
     def __init__(self, symbol, values=None, name=None):
         super().__init__()
         self.symbol = symbol
@@ -186,7 +232,9 @@ class BasicType(TypeConstructor):
         else:
             self.name = name
         if values is None:
-            self.domain = SimpleInfiniteSet("c" + symbol)
+            # by default: use an infinite domain set backed by strings
+            domain_symbol = self.default_prefixes.get(symbol, symbol)
+            self.domain = SimpleInfiniteSet(domain_symbol)
         else:
             self.domain = values
         # pre-escape because of the use of "?" for undetermined type
@@ -1138,10 +1186,35 @@ class TypeSystem(object):
             for a in nonatomics:
                 self.add_nonatomic(a)
 
+    def get_domain_prefixes(self):
+        prefixes = {}
+        for a in self.atomics:
+            try:
+                prefixes[a.domain.prefix] = a
+            except AttributeError:
+                pass
+        return prefixes
+
     def add_atomic(self, atomic):
         if not atomic in self.atomics:
+            try:
+                # basic check to ensure non-overlapping type domains for
+                # domains that use strings
+                prefixes = self.get_domain_prefixes()
+                if atomic.domain.prefix in prefixes.keys():
+                    raise ValueError(f"Domain prefix `{atomic.domain.prefix} already used in type `{prefixes[atomic.domain.prefix]}`")
+            except AttributeError:
+                pass
             self._parse_cache[atomic.regex] = atomic
             self.atomics.add(atomic)
+
+    def get_element_type(self, element):
+        # Dead simple. Assumption: no overlapping types
+        # TODO: some form of subtyping might be interesting
+        for t in self.atomics:
+            if element in t.domain:
+                return t
+        return None
 
     def remove_atomic(self, atomic):
         if atomic in self.atomics:
@@ -1800,8 +1873,8 @@ def reset():
     global basic_system, poly_system
 
     type_e = BasicType("e", SimpleInfiniteSet("c"))
-    type_t = BasicType("t", OntoSet(False, [0,1]))
-    type_n = BasicType("n", SimpleIntegerSet())
+    type_t = BasicType("t", BooleanSet())
+    type_n = BasicType("n", SimpleNumericSet())
     type_property = FunType(type_e, type_t)
     type_transitive = FunType(type_e, type_property)
     basic_system = TypeSystem(atomics={type_e, type_t, type_n},

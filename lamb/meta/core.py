@@ -152,12 +152,16 @@ def default_variable_type(s):
 def default_type(s):
     if isinstance(s, TypedExpr):
         return s.type
-    elif isinstance(s, Number):
+    elif isinstance(s, bool):
+        return type_t
+    elif types.is_numeric(s):
         return type_n
     elif isinstance(s, str):
         t = utils.num_or_str(s)
-        if isinstance(t, Number):
+        if types.is_numeric(s):
             return type_n
+        elif isinstance(s, bool):
+            return type_t
         elif is_var_symbol(t):
             return default_variable_type(s)
         else:
@@ -278,11 +282,12 @@ class OperatorRegistry(object):
         self.clear()
 
     def clear(self):
-        self.ops = dict()
-        self.arities = dict()
-        self.binding_ops = dict()
-        self.canonicalize_binding_ops = dict()
+        self.ops = {}
+        self.arities = {}
+        self.binding_ops = {}
+        self.canonicalize_binding_ops = {}
         self.unparsed_binding_ops = set()
+        self.custom_transforms = {}
 
     def add_operator(self, _cls, *targs):
         desc = self.OpDesc(_cls, *targs)
@@ -297,6 +302,19 @@ class OperatorRegistry(object):
 
     def get_descs(self, op):
         return list(self.ops[op].keys())
+
+    def set_custom_transform(self, _cls, fun):
+        # try to avoid using this...
+        if fun is None:
+            del self.custom_transforms[_cls]
+        else:
+            self.custom_transforms[_cls] = fun
+
+    def apply_custom_transforms(self, _cls, e):
+        if _cls in self.custom_transforms:
+            return self.custom_transforms[_cls](e)
+        else:
+            return e
 
     def expr_factory(self, op, *args):
         """Given some operator/relation symbol with arguments, construct an
@@ -329,7 +347,7 @@ class OperatorRegistry(object):
                 "Ambiguous %d-ary operator symbol `%s` for args `%s`"
                     % (len(args), op, repr(args)))
 
-        return matches[0].cls(*args)
+        return self.apply_custom_transforms(matches[0].cls, matches[0].cls(*args))
 
     def add_binding_op(self, op):
         """Register an operator to be parsed."""
@@ -1017,7 +1035,8 @@ class TypedExpr(object):
     @classmethod
     def find_term_locations(cls, s, i=0):
         """Find locations in a string `s` that are term names."""
-        term_re = re.compile(r'([a-zA-Z0-9]+)(_)?')
+        # TODO: code dup with parse_term
+        term_re = re.compile(r'(_?' + parsing.term_symbols_re + '+)(_)?')
         unfiltered_result = parsing.find_pattern_locations(term_re, s, i=i,
                                                                     end=None)
         result = list()
@@ -1074,7 +1093,8 @@ class TypedExpr(object):
         `assignment`, check type compatibility immediately."""
 
         ts = get_type_system()
-        term_name, next = parsing.consume_pattern(s, i, r'([a-zA-Z0-9]+)(_)?',
+        term_re = r'(_?' + parsing.term_symbols_re + '+)(_)?'
+        term_name, next = parsing.consume_pattern(s, i, term_re,
                                                             return_match=True)
         if not term_name:
             if return_obj:
@@ -1109,27 +1129,36 @@ class TypedExpr(object):
         if isinstance(typ, str):
             ts = get_type_system()
             typ = ts.type_parser(typ)
-        if (isinstance(s, TypedTerm)):
+
+        if isinstance(s, MetaTerm):
+            # MetaTerms are immutable under all operations that call this, so
+            # return without copying. (The only thing that may change across
+            # instances with the same value is `derivation`.)
+            s.check_type_domain(typ=typ)
+            return s
+        elif isinstance(s, TypedTerm):
             # todo: handle conversion to custom
             result = s.copy()
             if typ is not None:
                 result = result.try_adjust_type(typ, assignment=assignment)
             return result
-        elif (isinstance(s, str)):
-            if typ is None and not preparsed:
+        else:
+            if isinstance(s, str) and typ is None and not preparsed:
                 v, typ = cls.try_parse_typed_term(s, assignment=assignment, strict=True)
             else:
                 v = s
             v = utils.num_or_str(v)
             if typ is not None:
-                type_vars = typ.bound_type_vars()
+                type_vars = typ.bound_type_vars() # ??
+
+            if not isinstance(v, str) or v.startswith("_"):
+                return MetaTerm(v, typ=typ)
+
             global _constants_use_custom
             if _constants_use_custom and not is_var_symbol(v):
                 return CustomTerm(v, typ=typ, assignment=assignment)
             else:
                 return TypedTerm(v, typ=typ, assignment=assignment)
-        else:
-            raise NotImplementedError
 
     @classmethod
     def factory(cls, *args, assignment=None):
@@ -1164,13 +1193,16 @@ class TypedExpr(object):
             # that needs parsed.
             # in the first two cases, return a unary TypedExpr
             s = args[0]
-            if s is True or s is False or isinstance(s, Number):
-                return from_python(s)
+            if s in type_t.domain: # generalize using get_element_type?
+                return from_python(s, type_t)
+            elif s in type_n.domain:
+                return from_python(s, type_n)
             elif isinstance(s, str):
                 #return cls.parse_expr_string(s, assignment)
                 return cls.parse(s, assignment)
             else:
-                raise NotImplementedError
+                # XX improve error messaging here?
+                raise NotImplementedError # did you run a notebook with reload_lamb() out of order?
         else:
             # Argument length > 1.  
             # This code path is for constructing complex TypedExprs where
@@ -1893,9 +1925,23 @@ class Tuple(TypedExpr):
             type_accum.append(a_i.type)
         super().__init__("Tuple", *new_args)
         self.type = types.TupleType(*type_accum)
+        self.common_type() # ensure that there is a usable common type
 
     def copy(self):
         return Tuple(self.args)
+
+    def common_type(self):
+        elem_types = list(set(self.type))
+        if len(elem_types) == 0:
+            return None # could probably be better handled
+        elif len(elem_types) == 1:
+            ret, = elem_types
+            return ret
+        else:
+            # this will crash if variable types are used; in principle this
+            # could be allowed by concluding a variable type rather than a
+            # disjunctive type
+            return types.DisjunctiveType(*elem_types)
 
     def copy_local(self, *args, type_check=True):
         return Tuple(args, typ=self.type)
@@ -1935,7 +1981,7 @@ class Tuple(TypedExpr):
         else:
             r = range(max_tuple_len+1)[1:]
         length = random.choice(r)
-        signature = [get_type_system().random_type(max_type_depth, 0.5)
+        signature = [get_type_system().random_type(max_type_depth, 0.5, allow_variables=False)
                                                         for i in range(length)]
         args = [ctrl(typ=t) for t in signature]
         return Tuple(args)
@@ -1990,12 +2036,18 @@ class TypedTerm(TypedExpr):
             self._type_env = env
 
         self.suppress_type = False
-        if isinstance(self.op, Number): # this isn't very elegant...
-            if self.type != type_n:
-                raise TypeMismatch(self.op, self.type,
-                                            error="Numeric must have type n")
-            self.type_guessed = False
-            self.suppress_type = True # suppress types for numbers
+        if not isinstance(self, MetaTerm):
+            if not isinstance(self.op, str):
+                # note: don't use `s` parameter, because the resulting error
+                # message is confusing for this specific case
+                raise parsing.ParseError(
+                    f"`TypedTerm` must have string operator name, got `{repr(self.op)}` (did you mean `MetaTerm`?)")
+
+            if self.op.startswith("_"):
+                raise parsing.ParseError(
+                    "Invalid term name with `_` prefix for `TypedTerm` (did you mean `MetaTerm`?)",
+                    s=repr(self.op))
+
         self.args = list()
         self.latex_op_str = latex_op_str
         if update_a:
@@ -2106,6 +2158,7 @@ class TypedTerm(TypedExpr):
         return self.latex_str()
 
     random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
+    atomics = {type_t, type_e, type_n}
 
     @classmethod
     def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(),
@@ -2129,18 +2182,147 @@ class TypedTerm(TypedExpr):
             if try_used and len(used_typed) > 0:
                 varname = (random.choice(list(used_typed))).op
         if varname is None:
-            if typ in cls.random_term_base.keys():
-                base = cls.random_term_base[typ]
+            if not is_var and typ in cls.atomics and random.choice([True, False]):
+                # when possible, on a coinflip choose type domain element
+                # instead of a regular term constant
+                varname = typ.domain.random()
             else:
-                base = "f"
-            if not is_var:
-                base = base.upper()
-            varname = alpha_variant(base, blockset | {n.op for n in usedset})
+                if typ in cls.random_term_base.keys():
+                    base = cls.random_term_base[typ]
+                else:
+                    base = "f"
+                if not is_var:
+                    base = base.upper()
+                varname = alpha_variant(base, blockset | {n.op for n in usedset})
         
         return TypedExpr.term_factory(varname, typ)
 
 
 TypedExpr.add_local('TypedTerm', TypedTerm)
+
+
+class MetaTerm(TypedTerm):
+    """Term class for storing direct references to underlying objects in the type domain."""
+    def __init__(self, name, typ=None):
+        # enforce a prefixing `_` on the internal representation. This isn't
+        # necessary relative to the type domain code, but it keeps MetaTerms
+        # from comparing as equal to TypedTerms with the same name.
+        # TODO: error messages are a bit confusing with an implicit `_`
+        if isinstance(name, str) and not name.startswith("_"):
+            name = "_" + name
+        # though super sets this, for various error cases on the type check it
+        # is useful to set it in advance and then rely on it in the type check
+        self.op = name
+        super().__init__(name, typ=self.check_type_domain(typ=typ), type_check=False)
+
+        # cosmetics: hide the type subscript in rich reprs for t/n
+        if self.type == type_t or self.type == type_n:
+            self.suppress_type = True
+
+        # not set by superclass with type_check=False
+        self._type_env = self.calc_type_env()
+
+    def check_type_domain(self, typ=None):
+        element_type = get_type_system().get_element_type(self.op)
+        if typ is not None and element_type != typ:
+            raise TypeMismatch(typ, element_type,
+                        error=f"Invalid element reference for this type domain in term: `{self.op_repr()}`")
+        if element_type is None:
+            # this case may have the string overridden by the parser
+            raise parsing.ParseError(
+                        f"Unknown type domain element reference in term: `{self.op_repr()}`")
+        return element_type
+
+    def constant(self):
+        # this isn't strictly needed but it's nice to be explicit
+        return True
+
+    def copy(self):
+        return self.copy_local()
+
+    def copy_local(self, type_check=True):
+        r = MetaTerm(self.op, typ=self.type)
+        r.latex_op_str = self.latex_op_str
+        return r
+
+    def under_assignment(self, assignment):
+        # ensure that these terms are completely inert to assignments
+        return self
+
+    def __bool__(self):
+        # TODO: currently `0` converts to False, but perhaps it shouldn't,
+        # given that it doesn't compare equal to False, and MetaTerm(0, type_t)
+        # gives a TypeMismatch.
+        return bool(self.op)
+
+    def __eq__(self, other):
+        if other in self.type.domain:
+            # compare as equal to domain elements. Note that this is *not*
+            # reflected in __hash__...
+            # while this will generally behave symmetrically if the type domain
+            # is constructed from python basic types, symmetric behavior can't
+            # be assumed in general. If the type domain involves objects that
+            # implement __eq__, and you want symmetry, you will have to special
+            # case the comparison to a MetaTerm.
+            return self.op == other
+        else:
+            return super().__eq__(other)
+
+    def __hash__(self):
+        # overrode __eq__, so also need to override __hash__
+        return super().__hash__()
+
+    def op_repr(self, force_str=True):
+        if isinstance(self.op, str) or not force_str:
+            return self.op
+        else:
+            # currently, this works fine for type_t and type_n -- but, how
+            # to generalize? Should possibly put repr code on the type domain
+            # itself?
+            return repr(self.op)
+
+    def calc_type_env(self, recalculate=False):
+        # currently, MetaTerms are not represented at all in the type
+        # environment. They definitely need to be absent from var_mapping, but
+        # should they be present in some form?
+        return TypeEnv()
+
+    def type_env(self, constants=False, target=None, free_only=True):
+        return set()
+
+    def free_terms(self, var_only=False):
+        return set()
+
+    def __repr__(self):
+        return f"{self.op_repr()}_{repr(self.type)}"
+
+    def latex_str(self, show_types=True, assignment=None, **kwargs):
+        # TODO: similar to __repr__, possibly this code should be on the
+        # type domain itself
+        # if just using `op` as the name, we use textsf, but setting
+        # an arbitrary latex name is allowed
+        if self.latex_op_str is None:
+            n = self.op
+            if isinstance(n, str):
+                n = n[1:] # trim the prefixing `_` for rich reprs
+            # render the variable name as sans serif
+            op_str = f"\\textsf{{{n}}}"
+        else:
+            op_str = f"{self.latex_op_str}"
+        if not show_types or not self.should_show_type(assignment=assignment):
+            return ensuremath(op_str)
+        else:
+            # does this need to be in a \text? frontend compat in general...
+            return ensuremath(f"{{{op_str}}}_{{{self.type.latex_str()}}}")
+
+    @classmethod
+    def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(),
+                            prob_used=0.8, prob_var=0.5, max_type_depth=1):
+        raise NotImplementedError()
+
+
+TypedExpr.add_local('MetaTerm', MetaTerm)
+
 
 class CustomTerm(TypedTerm):
     """A subclass of TypedTerm used for custom displays of term names.
@@ -2570,28 +2752,29 @@ class SyncatOpExpr(TypedExpr):
         # this will fail if type_t is wrong for the class, so override
         return cls(*[ctrl(typ=type_t) for a in range(cls.arity)])
 
+
 def to_python(te):
-    from .boolean import true_term, false_term
-    if te.type == type_n and isinstance(te.op, Number):
+    if te.op in te.type.domain:
         return te.op
-    elif te == true_term:
-        return True
-    elif te == false_term:
-        return False
     else:
         return te
 
-def from_python(p):
+
+def from_python(p, typ=None):
     # generalize me
     from .boolean import true_term, false_term
-    if p is True:
+    # normalize True and False to the singleton instances, in order to make
+    # display customization simpler
+    # use `is` instead of `==` because 0/1 compare equal to False/True
+    if p is True and (typ is None or typ == type_t):
         return true_term
-    elif p is False:
+    elif p is False and (typ is None or typ == type_t):
         return false_term
-    elif isinstance(p, Number):
-        return TypedTerm(p, type_n)
     else:
-        raise NotImplementedError
+        # this will raise if there is no known type domain for python objects
+        # of p's type
+        return MetaTerm(p, typ=typ)
+
 
 # decorator for wrapping simplify functions, see examples below.
 # TODO: this could be generalized a further...
@@ -2625,7 +2808,11 @@ def op(op, arg_type, ret_type,
                 parts = [to_python(a.copy()) for a in self.args]
                 if python_only and any([isinstance(a, TypedExpr) for a in parts]):
                     return self
-                return derived(te(func(self, *parts)), self, desc=deriv_desc)
+                result = func(self, *parts)
+                if result is self:
+                    return self
+                # XX is `te` really the right thing to call here?
+                return derived(te(result), self, desc=deriv_desc)
 
             @classmethod
             def random(cls, ctrl):
@@ -2650,18 +2837,19 @@ class BinaryGenericEqExpr(SyncatOpExpr):
     """Type-generic equality.  This places no constraints on the type of `arg1`
     and `arg2` save that they be equal."""
     def __init__(self, arg1, arg2):
-        t = ts_unify_with(arg1, arg2,
+        self.argtype = ts_unify_with(arg1, arg2,
                                 error="Equality requires compatible types")
-        arg1 = self.ensure_typed_expr(arg1, t)
+        arg1 = self.ensure_typed_expr(arg1, self.argtype)
         # maybe raise the exception directly?
-        arg2 = self.ensure_typed_expr(arg2, t)
+        arg2 = self.ensure_typed_expr(arg2, self.argtype)
         # some problems with equality using '==', TODO recheck, but for now
         # just use "<=>" in the normalized form
         super().__init__(type_t, arg1, arg2, tcheck_args = False)
 
     def simplify(self):
-        if (isinstance(self.args[0].op, Number)
-                            and isinstance(self.args[1].op, Number)):
+        if (self.args[0].op in self.argtype.domain
+                            and self.args[1].op in self.argtype.domain):
+            # equality check on elements of the underlying ontological domain
             return derived(te(self.args[0].op == self.args[1].op),
                                                     self, desc="Equality")
         elif self.args[0] == self.args[1]:
@@ -2696,16 +2884,23 @@ class TupleIndex(SyncatOpExpr):
             raise types.TypeMismatch(arg1, arg2,
                     error="Tuple indexing expression with a non-tuple")
         arg2 = self.ensure_typed_expr(arg2, types.type_n)
-        if isinstance(arg2.op, Number): # TODO better way to determine whether
-                                        # arg2 is a constant of type type_n?
-            if arg2.op >= len(arg1.type):
+        if arg2.op in types.type_n.domain:
+            try:
+                # this effectively enforces an undeclared subtype of type_n
+                # based on the following exceptions
+                output_type = arg1.type[arg2.op]
+            except IndexError:
+                # XX this isn't really a type mismatch...
                 raise TypeMismatch(arg1, arg2,
                     error="Tuple indexing expression with out-of-range index")
-            output_type = arg1.type[arg2.op]
+            except TypeError:
+                # XX this isn't really a type mismatch...
+                raise TypeMismatch(arg1, arg2,
+                    error="Tuple indexing expression with invalid index")
         else:
-            output_type = types.VariableType("X") # TODO this is problematic
-            logger.warning(
-                "Using non-constant tuple index; not well-supported.")
+            # we don't know which element will be selected; get a potentially
+            # disjunctive type for elements
+            output_type = arg1.common_type()
         super().__init__(output_type, arg1, arg2, tcheck_args=False)
 
     def copy(self):
@@ -2716,7 +2911,7 @@ class TupleIndex(SyncatOpExpr):
 
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
                                                                         env):
-        if isinstance(self.args[1].op, Number):
+        if self.args[1].op in types.type_n.domain:
             ttype = list(self.args[0].type)
             ttype[self.args[1].op] = unified_type
             adjusted_tuple = self.args[0].try_adjust_type(
@@ -2742,7 +2937,7 @@ class TupleIndex(SyncatOpExpr):
 
     def reduce(self):
         if (isinstance(self.args[0], Tuple)
-                                    and isinstance(self.args[1].op, Number)):
+                                    and self.args[1].op in types.type_n.domain):
             result = self.args[0].tuple()[self.args[1].op].copy()
             return derived(result, self, "Resolution of index")
         else:
@@ -2751,7 +2946,7 @@ class TupleIndex(SyncatOpExpr):
 
     def reducible(self):
         if (isinstance(self.args[0], Tuple)
-                                    and isinstance(self.args[1].op, Number)):
+                                    and self.args[1].op in types.type_n.domain):
             return True
         # no support for non-constant indices at present, not even ones that
         # should be mathematically simplifiable
@@ -3750,7 +3945,11 @@ def derived(result, origin, desc=None, latex_desc=None, subexpression=None,
     """Convenience function to return a derived TypedExpr while adding a
     derivational step. Always return result, adds or updates its derivational
     history as a side effect."""
-    if isinstance(result, TypedTerm) and result.derivation is None:
+    # TODO: this looks wrong if a single expr is used in branching derivational
+    # history
+    if isinstance(result, MetaTerm) and result.derivation is None:
+        result = result.copy()
+    elif isinstance(result, TypedTerm) and result.derivation is None:
         try:
             # need to manually copy the typeenv??  TODO: double check...
             tenv = result._type_env

@@ -199,7 +199,7 @@ def ltx_print(*args):
         s += "<br />"
     return show(s)
 
-# from AIMA utils
+# based on AIMA utils
 def num_or_str(x, allow_float=False):
     """The argument is a string; convert to a number if possible, or strip it.
     >>> num_or_str('42')
@@ -207,16 +207,29 @@ def num_or_str(x, allow_float=False):
     >>> num_or_str(' 42x ')
     '42x'
     """
-    if isinstance(x, Number): return x
+    if isinstance(x, str):
+        x = x.strip()
+
+    # TODO: less hacky approach to `_` for parsing purposes...
+    if isinstance(x, Number): # includes bool
+        return x
+    elif x == 'True' or x == '_True':
+        return True
+    elif x == 'False' or x == '_False':
+        return False
+
     try:
-        return int(x)
+        if x.startswith("_"):
+            return int(x[1:])
+        else:
+            return int(x)
     except ValueError:
         if allow_float:
             try:
                 return float(x)
             except ValueError:
                 pass
-        return str(x).strip()
+        return str(x)
 
 def dict_latex_repr(d):
     r = list()

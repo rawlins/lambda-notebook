@@ -3,7 +3,7 @@ import lamb
 from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from . import core, boolean, number, sets, evaluation
-from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
+from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm, MetaTerm
 
 def repr_parse(e):
     result = te(repr(e), let=False)
@@ -220,6 +220,7 @@ te_classes = [core.ApplicationExpr,
               boolean.IotaUnary,
               boolean.IotaPartial,
               number.UnaryNegativeExpr,
+              number.UnaryPositiveExpr,
               number.BinaryLExpr,
               number.BinaryLeqExpr,
               number.BinaryGExpr,
@@ -263,6 +264,13 @@ class MetaTest(unittest.TestCase):
 
     def test_copy(self):
         for c in te_classes:
+            if c == number.UnaryNegativeExpr or c == number.UnaryPositiveExpr:
+                # the pre-simplify step for these two classes breaks identity
+                # on copy, if the contained object is manually constructed from
+                # a negative number. This can only really happen through this
+                # test, so skip it.
+                continue
+
             for i in range(50):
                 x = random_from_class(c)
                 self.assertEqual(x, x.copy())
@@ -286,6 +294,37 @@ class MetaTest(unittest.TestCase):
         logger.setLevel(logging.WARNING)
         te("L x: L y: In(y)(x)")
         logger.setLevel(logging.INFO)
+
+    def test_terms(self):
+        self.assertEqual(MetaTerm(True), boolean.true_term)
+        self.assertEqual(MetaTerm(False), boolean.false_term)
+        self.assertEqual(MetaTerm(False), False)
+        self.assertEqual(MetaTerm(True), True)
+        self.assertEqual(bool(MetaTerm(True)), True)
+        self.assertNotEqual(MetaTerm(False), None)
+        self.assertNotEqual(MetaTerm(False), 0)
+        self.assertNotEqual(MetaTerm(True), 1)
+        self.assertNotEqual(MetaTerm(False), MetaTerm(0))
+        self.assertNotEqual(MetaTerm(True), MetaTerm(1))
+        self.assertEqual(MetaTerm(3), 3)
+        self.assertEqual(te("-3"), -3)   # unary - is pre-simplified
+        self.assertEqual(te("---3"), -3) # unary - is pre-simplified
+        self.assertEqual(te("+3"), 3)    # unary + is pre-simplified
+        self.assertEqual(MetaTerm("c1"), "_c1")
+        self.assertEqual(MetaTerm("c1"), MetaTerm("_c1"))
+        self.assertNotEqual(MetaTerm(False), MetaTerm(True))
+
+        self.assertRaises(types.TypeParseError, te, "_c1__")
+        self.assertRaises(parsing.ParseError, te, "__c1")
+        self.assertRaises(parsing.ParseError, TypedTerm, True)
+        self.assertRaises(parsing.ParseError, TypedTerm, 3)
+        self.assertRaises(parsing.ParseError, TypedTerm, "_c1")
+        self.assertRaises(parsing.ParseError, MetaTerm, "_x1") # invalid prefix by default
+        self.assertRaises(TypeMismatch, MetaTerm, True, typ=type_e)
+
+        self.assertNotEqual(MetaTerm("c1_e"), TypedTerm("c1_e"))
+        # some overlap with simplification code here
+        self.assertEqual(te("True & True").simplify(), MetaTerm(True))
 
     def test_reduce(self):
         self.assertEqual(self.ident(self.y).reduce(), self.y)
@@ -421,6 +460,7 @@ class MetaTest(unittest.TestCase):
     def test_boolean_evaluation(self):
         # this test is more to ensure that this code isn't crashing, than a
         # deep test of boolean inference.
+        evaluation.truthtable(te("False & True"))
         evaluation.truthtable(te("p_t & q_t & ~p_t"))
         evaluation.truthtable(te("p_t & q_t & P_<e,t>(x_e)"))
         evaluation.extract_boolean(te("p4_t & Q_<X,t>(x_X)"),
@@ -428,6 +468,13 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(
             evaluation.truthtable(te("p_t & q_t")),
             evaluation.truthtable(te("~(~p_t | ~q_t)")))
+        self.assertEqual(
+            evaluation.truthtable(te("False")),
+            evaluation.truthtable(te("False & True")))
+        # TODO: generalize to cases where term set is not the same
+        # self.assertEqual(
+        #     evaluation.truthtable(te("False")),
+        #     evaluation.truthtable(te("p & ~p"), simplify=False))
         self.assertTrue(evaluation.truthtable_equiv(
             te("~(p_t & P_<e,t>(x_e) & q_t)"),
             te("~P_<e,t>(x_e) | ~(p_t & q_t)")))

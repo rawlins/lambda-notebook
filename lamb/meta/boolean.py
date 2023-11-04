@@ -1,6 +1,6 @@
 import lamb
 from lamb import types
-from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr, BindingOp, Partial, LFun
+from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr, BindingOp, Partial, LFun, MetaTerm
 from lamb.types import type_t
 
 global true_term, false_term
@@ -23,16 +23,8 @@ def setup_operators():
     registry.add_binding_op(IotaUnary)
     registry.add_binding_op(IotaPartial)
 
-
-# for whatever reason, monkey patching __bool__ doesn't work.
-# TODO: is this a good idea?
-class FalseTypedTerm(TypedTerm):
-    def __bool__(self):
-        # override TypedExpr.__bool__: it returns True for everything else.
-        return False
-
-true_term = TypedTerm("True", type_t)
-false_term = FalseTypedTerm("False", type_t)
+true_term = MetaTerm(True)
+false_term = MetaTerm(False)
 
 # simplify principle: implement simplification that can be handled by reasoning
 # about constants, otherwise leave for the future. The goal of this code is
