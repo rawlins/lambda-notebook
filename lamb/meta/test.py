@@ -296,6 +296,9 @@ class MetaTest(unittest.TestCase):
         logger.setLevel(logging.INFO)
 
     def test_terms(self):
+        # basic comparison. These look simple here, but are a bit tricky
+        # because python 0/1 compare as equal to python False/True; the latter
+        # are really a subtype of int and therefore numeric.
         self.assertEqual(MetaTerm(True), boolean.true_term)
         self.assertEqual(MetaTerm(False), boolean.false_term)
         self.assertEqual(MetaTerm(False), False)
@@ -306,17 +309,35 @@ class MetaTest(unittest.TestCase):
         self.assertNotEqual(MetaTerm(True), 1)
         self.assertNotEqual(MetaTerm(False), MetaTerm(0))
         self.assertNotEqual(MetaTerm(True), MetaTerm(1))
+        # default types for numeric/bool references
         for i in [0,1]:
             self.assertEqual(te(f"{i}_n"), te(f"{i}"))
             self.assertNotEqual(te(f"{i}_t"), te(f"{i}"))
         for i in [False,True]:
             self.assertNotEqual(te(f"{i}_n"), te(f"{i}"))
             self.assertEqual(te(f"{i}_t"), te(f"{i}"))
+        # type coercion in parsing for numeric/bool references:
         self.assertEqual(te("0_t"), te("False"))
         self.assertEqual(te("1_t"), te("True"))
         self.assertEqual(te("2_t"), te("True"))
         self.assertEqual(te("False_n"), te("0"))
         self.assertEqual(te("True_n"), te("1"))
+        # once constructed, completely distinct types (some overlap with above
+        # tests, but here we also check parsing):
+        self.assertNotEqual(te("False_n"), te("0_t"))
+        self.assertNotEqual(te("True_n"), te("1_t"))
+        self.assertNotEqual(te("False_t"), te("0_n"))
+        self.assertNotEqual(te("True_t"), te("1_n"))
+        # no coercion for other types:
+        self.assertRaises(TypeMismatch, te, "True_e")
+        self.assertRaises(TypeMismatch, te, "1_e")
+        self.assertRaises(TypeMismatch, te, "_c1_t")
+        self.assertRaises(TypeMismatch, te, "_c1_n")
+        # no coercion on direct constructor calls:
+        for i in [0,1]:
+            self.assertRaises(TypeMismatch, MetaTerm, i, typ=type_t)
+        for i in [False,True]:
+            self.assertRaises(TypeMismatch, MetaTerm, i, typ=type_n)
 
         self.assertEqual(MetaTerm(3), 3)
         self.assertEqual(te("-3"), -3)   # unary - is pre-simplified
@@ -326,16 +347,20 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(MetaTerm("c1"), MetaTerm("_c1"))
         self.assertNotEqual(MetaTerm(False), MetaTerm(True))
 
-        self.assertRaises(types.TypeParseError, te, "_c1__")
-        self.assertRaises(parsing.ParseError, te, "__c1")
-        self.assertRaises(parsing.ParseError, TypedTerm, True)
-        self.assertRaises(parsing.ParseError, TypedTerm, 3)
-        self.assertRaises(parsing.ParseError, TypedTerm, "_c1")
-        self.assertRaises(parsing.ParseError, MetaTerm, "_x1") # invalid prefix by default
-        self.assertRaises(TypeMismatch, MetaTerm, True, typ=type_e)
+        self.assertRaises(types.TypeParseError, te, "_c1__")     # wrong for various reasons, but the error is a type error
+        self.assertRaises(parsing.ParseError, te, "__c1")        # extra _ at beginning
+        self.assertRaises(parsing.ParseError, TypedTerm, True)   # no domain element references in TypedTerms
+        self.assertRaises(parsing.ParseError, TypedTerm, 3)      # no domain element references in TypedTerms
+        self.assertRaises(parsing.ParseError, TypedTerm, "_c1")  # no _ TypedTerms
+        self.assertRaises(parsing.ParseError, MetaTerm, "_c1_e") # invalid string format
+        self.assertRaises(parsing.ParseError, MetaTerm, "_x1")   # x is an invalid prefix by default
 
-        self.assertNotEqual(MetaTerm("c1_e"), TypedTerm("c1_e"))
-        # some overlap with simplification code here
+        self.assertNotEqual(MetaTerm("c1", typ=type_e), te("c1_e"))
+        self.assertNotEqual(MetaTerm("c1", typ=type_e), TypedTerm("c1", typ=type_e))
+        # the following TypedTerm can't be constructed via the parser
+        self.assertNotEqual(MetaTerm(True, typ=type_t), TypedTerm("True", typ=type_t))
+
+        # simplify produces a MetaTerm. some overlap with simplification code here
         self.assertEqual(te("True & True").simplify(), MetaTerm(True))
 
     def test_reduce(self):

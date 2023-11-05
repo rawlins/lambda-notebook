@@ -63,7 +63,7 @@ class SimpleInfiniteSet(OntoSet):
     def __init__(self,prefix):
         OntoSet.__init__(self, False, set())
         self.prefix = prefix
-        self.symbol_re = re.compile(fr'_?({prefix}[0-9]+)')
+        self.symbol_re = re.compile(fr'_?({prefix}[0-9]+)$')
         # TODO better error checking
 
     def infcheck(self,x):
