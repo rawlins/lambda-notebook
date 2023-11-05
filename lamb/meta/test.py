@@ -306,6 +306,18 @@ class MetaTest(unittest.TestCase):
         self.assertNotEqual(MetaTerm(True), 1)
         self.assertNotEqual(MetaTerm(False), MetaTerm(0))
         self.assertNotEqual(MetaTerm(True), MetaTerm(1))
+        for i in [0,1]:
+            self.assertEqual(te(f"{i}_n"), te(f"{i}"))
+            self.assertNotEqual(te(f"{i}_t"), te(f"{i}"))
+        for i in [False,True]:
+            self.assertNotEqual(te(f"{i}_n"), te(f"{i}"))
+            self.assertEqual(te(f"{i}_t"), te(f"{i}"))
+        self.assertEqual(te("0_t"), te("False"))
+        self.assertEqual(te("1_t"), te("True"))
+        self.assertEqual(te("2_t"), te("True"))
+        self.assertEqual(te("False_n"), te("0"))
+        self.assertEqual(te("True_n"), te("1"))
+
         self.assertEqual(MetaTerm(3), 3)
         self.assertEqual(te("-3"), -3)   # unary - is pre-simplified
         self.assertEqual(te("---3"), -3) # unary - is pre-simplified

@@ -1152,6 +1152,17 @@ class TypedExpr(object):
                 type_vars = typ.bound_type_vars() # ??
 
             if not isinstance(v, str) or v.startswith("_"):
+                # casting behavior when parsing: pythonic conversions between
+                # type t and n in both directions. For now this is *only* in
+                # parsing, so (for example) is not visited by try_adjust_type.
+                if v == 0 and not isinstance(v, bool) and typ == type_t:
+                    v = False
+                elif types.is_numeric(v) and not isinstance(v, bool) and typ == type_t:
+                    v = True
+                elif v == 0 and isinstance(v, bool) and typ == type_n:
+                    v = 0
+                elif v == 1 and isinstance(v, bool) and typ == type_n:
+                    v = 1
                 return MetaTerm(v, typ=typ)
 
             global _constants_use_custom
