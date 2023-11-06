@@ -62,7 +62,11 @@ class ParseError(Exception):
         if self.s is None:
             return m + aux
         elif self.i is None:
-            return f"{m}, in string `{self.s}`{aux}"
+            from lamb import meta
+            s_desc = (isinstance(self.s, str) and 'string'
+                or (isinstance(self.s, meta.TypedExpr) and 'TypedExpr'
+                    or 'object'))
+            return f"{m}, in {s_desc} `{self.s}`{aux}"
         else:
             return utils.error_pos_str(self.s, self.i, prefix=m,
                                     plain=True, multiline=True)
