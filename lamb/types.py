@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
-import sys, re, random
+import sys, re, random, collections.abc, math
 from numbers import Number
 from lamb import utils, parsing
 from lamb.utils import *
@@ -13,13 +13,15 @@ Maybe = 2
 random_len_cap = 5
 
 
-class DomainSet(object):
+# in principle, one might want to inherit from abc.collections.Set. However,
+# because this can represent an infinite set, sometimes the collection has
+# no length, which is required for most stronger types in collections.abc.
+class DomainSet(collections.abc.Container):
     def __init__(self, finite=True, values=None):
         self.finite = finite
         if values is None:
             values = set()
-        else:
-            self.domain = set(values)
+        self.domain = set(values)
 
     def check(self,x):
         if self.finite:
@@ -29,6 +31,29 @@ class DomainSet(object):
 
     def __contains__(self, x):
         return self.check(x)
+
+    def __len__(self):
+        # can't do something like return math.inf for this case, because it's
+        # not an int:
+        # https://docs.python.org/3/reference/datamodel.html#object.__len__
+        if not self.finite:
+            raise ValueError("Non-finite `DomainSet`s do not have a length.")
+        return len(self.domain)
+
+    def cardinality(self):
+        if self.finite:
+            return len(self)
+        else:
+            # no support for different infinite cardinalities, but in practice,
+            # this basically means countably infinite.
+            return math.inf
+
+    def __iter__(self):
+        if self.finite:
+            return iter(self.domain)
+        else:
+            raise NotImplementedError(
+                "Can't iterate over an abstract infinite set")
 
     def infcheck(self, x):
         """Does `x` meet the criteria for being a member of a set if infinite?"""
@@ -63,11 +88,21 @@ class SimpleInfiniteSet(DomainSet):
     def __init__(self,prefix):
         super().__init__(False, set())
         self.prefix = prefix
-        self.symbol_re = re.compile(fr'_?({prefix}[0-9]+)$')
+        # this disallows sequences like 001; an alternative would be to
+        # normalize them...
+        self.symbol_re = re.compile(fr'_?({prefix}(?:0|[1-9][0-9]*))$')
         # TODO better error checking
 
     def infcheck(self,x):
         return isinstance(x, str) and re.match(self.symbol_re, x)
+
+    def __iter__(self):
+        i = 0
+        while True:
+            # we use the `_` for convenience, to ensure that the strings
+            # will instantiate correctly via `te`
+            yield f"_{self.prefix}{i}"
+            i += 1
 
     def random(self, limit=None):
         if limit is None:
@@ -80,6 +115,13 @@ def is_numeric(x):
     return isinstance(x, Number) and not isinstance(x, bool)
 
 
+# TODO: this class is quite hedgy about what specific numbers we're talking
+# about...maybe should fix on ints?
+# * iterator and random are ints only
+# * parser does not accept floats
+# * MetaTerm constructor will take floats
+# * infcheck is any numeric (non-bool)
+# * no handling for aleph 0 vs 1...
 class SimpleNumericSet(DomainSet):
     """Class backed by python `Number`s"""
     def __init__(self):
@@ -87,6 +129,15 @@ class SimpleNumericSet(DomainSet):
 
     def infcheck(self, x):
         return is_numeric(x)
+
+    def __iter__(self):
+        # iterate over ints only....
+        i = 0
+        yield i
+        while True:
+            i += 1
+            yield i
+            yield -i
 
     def random(self, limit=None):
         # this will only return ints...is that a problem?
