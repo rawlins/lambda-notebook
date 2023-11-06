@@ -208,6 +208,7 @@ te_classes = [core.ApplicationExpr,
               core.TypedTerm,
               core.Partial,
               core.Disjunctive,
+              core.MetaTerm,
               boolean.UnaryNegExpr,
               boolean.BinaryAndExpr,
               boolean.BinaryOrExpr,
@@ -259,8 +260,19 @@ class MetaTest(unittest.TestCase):
 
     def test_class_random(self):
         for c in te_classes:
-            for i in range(50):
-                random_from_class(c)
+            for i in range(100):
+                x = random_from_class(c)
+                # verify some things about terms
+                # XX partial metaterms? I think they may be possible...
+                self.assertTrue(x.meta() == (isinstance(x, core.MetaTerm)))
+                if c != core.Tuple and c != sets.ListedSet:
+                    # XX 0 length tuple/set doesn't count as a term, but perhaps
+                    # they should? even as a metaterm of some kind?
+                    if c == core.Partial:
+                        l = len(x.body)
+                    else:
+                        l = len(x)
+                    self.assertTrue(x.term() == (not l), f"{x}")
 
     def test_copy(self):
         for c in te_classes:
@@ -296,6 +308,13 @@ class MetaTest(unittest.TestCase):
         logger.setLevel(logging.INFO)
 
     def test_terms(self):
+        self.assertTrue(te("x_e").term())
+        self.assertTrue(te("X_e").term())
+        self.assertTrue(te("_c1_e").term())
+        self.assertTrue(te("True").term())
+        self.assertTrue(te("10").term())
+        # term() is verified in random objects
+
         # basic comparison. These look simple here, but are a bit tricky
         # because python 0/1 compare as equal to python False/True; the latter
         # are really a subtype of int and therefore numeric.

@@ -1144,6 +1144,8 @@ class TypedExpr(object):
             return result
         else:
             if isinstance(s, str) and typ is None and not preparsed:
+                # in principle, if typ is supplied, could try parsing and
+                # confirm the type?
                 v, typ = cls.try_parse_typed_term(s, assignment=assignment, strict=True)
             else:
                 v = s
@@ -1485,7 +1487,10 @@ class TypedExpr(object):
         return varname
 
     def term(self):
-        return (isinstance(self.op, str) and len(self.args) == 0)
+        return False
+
+    def meta(self):
+        return False
 
     def functional(self):
         funtype = ts_unify(self.type, tp("<?,?>"))
@@ -1637,7 +1642,11 @@ class TypedExpr(object):
         return self.latex_str()
 
     def __str__(self):
-        return "%s, type %s" % (self.__repr__(), self.type)
+        if self.term():
+            return self.__repr__()
+        else:
+            # should this just return repr unconditionally?
+            return "%s, type %s" % (self.__repr__(), self.type)
 
     def __eq__(self, other):
         """x and y are equal iff their ops and args are equal.
@@ -2248,6 +2257,9 @@ class MetaTerm(TypedTerm):
         # this isn't strictly needed but it's nice to be explicit
         return True
 
+    def meta(self):
+        return True
+
     def copy(self):
         return self.copy_local()
 
@@ -2329,7 +2341,15 @@ class MetaTerm(TypedTerm):
     @classmethod
     def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(),
                             prob_used=0.8, prob_var=0.5, max_type_depth=1):
-        raise NotImplementedError()
+        # MetaTerm can also be instantiated by TypedTerm.random, and that is
+        # the only way that is reachable recursively
+        if typ is None:
+            typ = random.choice(list(get_type_system().atomics))
+
+        if typ not in get_type_system().atomics:
+            raise TypeMismatch(typ, "Can't randomly instantiate MetaTerm at this type")
+
+        return TypedExpr.term_factory(typ.domain.random(), typ)
 
 
 TypedExpr.add_local('MetaTerm', MetaTerm)
