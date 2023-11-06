@@ -2880,7 +2880,7 @@ class BinaryGenericEqExpr(SyncatOpExpr):
     def simplify(self):
         if (self.args[0].op in self.argtype.domain
                             and self.args[1].op in self.argtype.domain):
-            # equality check on elements of the underlying ontological domain
+            # equality check on elements of the underlying type domain
             return derived(te(self.args[0].op == self.args[1].op),
                                                     self, desc="Equality")
         elif self.args[0] == self.args[1]:

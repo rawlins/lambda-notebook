@@ -13,7 +13,7 @@ Maybe = 2
 random_len_cap = 5
 
 
-class OntoSet(object):
+class DomainSet(object):
     def __init__(self, finite=True, values=None):
         self.finite = finite
         if values is None:
@@ -43,7 +43,7 @@ class OntoSet(object):
             raise NotImplementedError("Can't pick randomly from an abstract infinite set")
 
 
-class BooleanSet(OntoSet):
+class BooleanSet(DomainSet):
     def __init__(self):
         super().__init__(True, [False,True])
 
@@ -57,11 +57,11 @@ class BooleanSet(OntoSet):
         return isinstance(x, bool)
 
 
-class SimpleInfiniteSet(OntoSet):
+class SimpleInfiniteSet(DomainSet):
     """Arbitrary domain type modeling a (countable) non-finite set. Elements are
     strings consisting of a prefix followed by a natural number."""
     def __init__(self,prefix):
-        OntoSet.__init__(self, False, set())
+        super().__init__(False, set())
         self.prefix = prefix
         self.symbol_re = re.compile(fr'_?({prefix}[0-9]+)$')
         # TODO better error checking
@@ -80,10 +80,10 @@ def is_numeric(x):
     return isinstance(x, Number) and not isinstance(x, bool)
 
 
-class SimpleNumericSet(OntoSet):
+class SimpleNumericSet(DomainSet):
     """Class backed by python `Number`s"""
     def __init__(self):
-        OntoSet.__init__(self, False, set())
+        super().__init__(False, set())
 
     def infcheck(self, x):
         return is_numeric(x)
@@ -212,7 +212,7 @@ class BasicType(TypeConstructor):
     functional(): must return False.
 
     Extras:
-    values: an object implementing the OntoSet interface representing the set
+    values: an object implementing the DomainSet interface representing the set
     that this type characterizes.
     """
 
