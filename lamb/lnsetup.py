@@ -243,8 +243,12 @@ def launch_lambda_notebook(args, lab=False, nb_path=None, lib_dir=None,
             print("Failed to start jupyterlab, falling back on notebook.")
             app = None
     if app is None:
-        from notebook import notebookapp
-        app = notebookapp.NotebookApp(config=c)
+        try:
+            # old naming scheme
+            from notebook import notebookapp
+            app = notebookapp.NotebookApp(config=c)
+        except ImportError:
+            app = notebook.app.JupyterNotebookApp(config=c)
 
     app.initialize(args[1:])
      

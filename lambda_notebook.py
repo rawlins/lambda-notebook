@@ -5,8 +5,7 @@ import sys, os, signal, argparse
 # refactored into lamb.setup
 
 try:
-	import IPython
-	from notebook import notebookapp
+	import IPython, notebook
 	import lamb
 except ImportError:
 	print("You don't seem to have IPython/Jupyter installed, or the dependencies of ")

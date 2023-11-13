@@ -7,7 +7,6 @@ import sys, os, signal, argparse
 
 try:
 	import IPython
-	from notebook import notebookapp
 	import lamb
 except ImportError:
 	print("You don't seem to have IPython/Jupyter installed, or the dependencies of ")
