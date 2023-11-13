@@ -1052,7 +1052,7 @@ class DisjunctiveType(TypeConstructor):
     
     def latex_str(self):
         # wrap in curly braces to ensure the brackets don't get swallowed
-        return ensuremath("{\\left[%s\\right]}" % "\mid{}".join(
+        return ensuremath("{\\left[%s\\right]}" % "\\mid{}".join(
             [self.type_list[i].latex_str()
                                     for i in range(len(self.type_list))]))
     

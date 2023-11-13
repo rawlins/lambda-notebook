@@ -403,7 +403,7 @@ class AssignmentController(object):
                         out_l.append("%s" % (a[s.op]))
                 else:
                     if latex:
-                        out_l.append(ensuremath("%s_\{%s\} = %s" %
+                        out_l.append(ensuremath("%s_\\{%s\\} = %s" %
                                 (s.op,
                                  a[s.op].type.latex_str(),
                                  a[s.op].latex_str())))
