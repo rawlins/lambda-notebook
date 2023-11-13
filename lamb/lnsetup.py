@@ -207,58 +207,6 @@ def launch_lambda_console(args, lib_dir=None):
     app.initialize(argv=args[1:])
     app.start()
 
-def launch_lambda_notebook(args, lab=False, nb_path=None, lib_dir=None,
-                                package_nb_path=None):
-    # originally based on branded notebook recipe here:
-    #   https://gist.github.com/timo/1497850
-    # that recipe is for a much earlier version of IPython, so the method is
-    # quite a bit different now
-
-    # ensure that the lambda-notebook kernelspec is installed
-    install_kernelspec(lib_dir)
-
-    c = Config()
-
-    if nb_path is None:
-        # TODO this needs to be fixed for windows...
-        nb_path = os.path.expanduser("~/Documents/lambda_notebook/")
-        if nb_path[0] == "~":
-            raise Error("Unable to locate home directory")
-        #TODO: need something more general here
-    if not os.path.exists(nb_path):
-        try:
-            install_notebooks(nb_path, package_nb_path, force=False)
-        except shutil.Error as err:
-            print(err)
-        #os.makedirs(nb_path)
-
-    c.NotebookApp.notebook_dir = nb_path
-
-    app = None
-    if lab:
-        try:
-            from jupyterlab import labapp
-            app = labapp.LabApp(config = c)
-        except:
-            print("Failed to start jupyterlab, falling back on notebook.")
-            app = None
-    if app is None:
-        try:
-            # old naming scheme
-            from notebook import notebookapp
-            app = notebookapp.NotebookApp(config=c)
-        except ImportError:
-            app = notebook.app.JupyterNotebookApp(config=c)
-
-    app.initialize(args[1:])
-     
-    try:
-        app.start()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        pass
-
 def version_str():
     s = "Lambda notebook version " + lamb.__version__
     if not lamb.__release__:

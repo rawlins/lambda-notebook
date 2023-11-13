@@ -19,26 +19,32 @@ See [https://github.com/rawlins/lambda-notebook/wiki/Installation](https://githu
 
 Basically,
 * current release: install from PyPI. (`pip install lambda-notebook`.)
-* current development version: download the repository and ensure you have Jupyter installed (probably via anaconda). Run `./install_lambda_kernel.py`.
+* current development version: download the repository and ensure you have Jupyter installed (probably via anaconda). Run `./install_lambda_kernel.py` from the repository root to
+install the kernel.
 
 ## Getting started
 
-To run the notebook relative to the repository file structure:
-  * On a mac, double click `lambda_notebook.command`.
-  * Or, from a shell, run `lambda_notebook.py`.  On windows you may need to explicitly call something like `python3 lambda_notebook.py`.
-  * To user a notebook directory other than the default `notebooks`, you can call something like `./lambda_notebook.py --notebook-dir=~/Documents/notebooks/`. I recommend not keeping your working notebooks in the repository copy.
-  * Once the lambda-notebook kernel is installed, you can open lambda notebook files from any instance of Jupyter Notebook.
+Once you have installed the package, you can then open open lambda notebook
+files by using the newly installed kernel from any jupyter lab (or notebook)
+instance. The kernel for regular installs is named `Lambda notebook (Python 3)`,
+and it can be selected as a new kernel from the launcher, or via the
+`Change Kernel...` menu item in the `Kernel` menu.
 
-This will start a server in the terminal and open your web browser to the notebook directory.  Then, look through the various notebooks to see examples of what can be done.  I recommend starting (for now) with:
+Alternatively, with the `lamb` module installed in the python path, you can
+run `import lamb.auto`, which is fully equivalent to loading a notebook with
+the kernel.
+
+I recommend starting with some of the notebook files in this repository.
+
   * Lambda Notebook Intro (start here).ipynb
   * Lambda Notebook Demo.ipynb
   * look through the various fragments and tutorials
 
-To stop the server from a terminal, hit Ctrl-C twice in the terminal window.  (To stop it from the 0.5 app, hit "Cancel".)
-
 ### Upgrading
 
-In most instances, you can upgrade by simply downloading a new repository version and running the lambda notebook from within there (or, minimally, running `install_lambda_kernel.py` from the new repository). Your old notebooks will typically work -- the notebook format is forward compatible, and I try to avoid metalanguage regressions, but because of the alpha state, the API may change. (There may be metalanguage changes before beta, though.)
+If you are working from the repository, and have installed the kernel from the
+repository, you have effectively an "editable install", and the kernel will
+use the repository version directly.
 
 ### A note on the lambda notebook UI
 
@@ -48,15 +54,17 @@ In most instances, you can upgrade by simply downloading a new repository versio
 
 ## Code overview
 
-There are three main parts to the code, structured into `meta.py` ("meta" for metalanguage), `types.py`, and `lang.py`.
-  * `meta.py` and `types.py` together provide a typed logical metalanguage somewhat comparable to `nltk.sem`.  
+There are three main parts to the code, structured into `meta` and submodules ("meta" for metalanguage),
+`types.py`, and `lang.py`.
+  * `meta` and `types.py` together provide a typed logical metalanguage somewhat comparable to `nltk.sem`.  
   * `lang.py` provides machinery for doing composition on an object language.
 
-Two additional files, magics.py and parsing.py provide support for using cell magics in the notebook to directly type expressions in the metalanguage.  See the notebooks for demos of what this looks like; better documentation coming soon!  
-
+Two additional files, `magics.py` and `parsing.py` provide support for using
+cell magics in the notebook to directly type expressions in the metalanguage.
+See the notebooks for demos and documentation.
 
 ## NLTK
 
-The file tree_mini.py provides nltk.tree, modified to work with the lambda notebook.  The long-term plan is to depend directly on nltk, but this isn't there yet.
+The file tree_mini.py provides nltk.tree, modified to work with the lambda notebook.
 
 See [here](https://github.com/nltk/nltk/blob/develop/LICENSE.txt) for NLTK license information (Apache license).
