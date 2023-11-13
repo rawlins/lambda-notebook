@@ -41,7 +41,7 @@ def UnaryNegativeExpr(self, x):
 @op("+", type_n, type_n, python_only=False)
 def UnaryPositiveExpr(self, x):
     # this is essentially a noop
-    return +x
+    return x
 
 @op("<", type_n, type_t)
 def BinaryLExpr(self, x, y):
