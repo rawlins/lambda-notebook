@@ -219,15 +219,15 @@ def num_or_str(x, allow_float=False):
         return False
 
     try:
-        if x.startswith("_"):
+        if isinstance(x, str) and x.startswith("_"):
             return int(x[1:])
         else:
             return int(x)
-    except ValueError:
+    except (ValueError, TypeError):
         if allow_float:
             try:
                 return float(x)
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
         return str(x)
 

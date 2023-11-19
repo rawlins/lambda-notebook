@@ -2,7 +2,7 @@ import random
 import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr
-from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm
+from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, MetaTerm
 from .boolean import BinaryOrExpr
 from lamb.types import type_t, SetType
 
@@ -120,8 +120,7 @@ class ListedSet(TypedExpr):
         # ensure that we build a condition set from a variable that is not free
         # in any of the members
         varname = self.find_safe_variable(starting="x")
-        conditions = [BinaryGenericEqExpr(
-                                            TypedTerm(varname, a.type), a)
+        conditions = [BinaryGenericEqExpr(TypedTerm(varname, a.type), a)
                                                             for a in self.args]
         return ConditionSet(self.type.content_type,
                             BinaryOrExpr.join(*conditions),
@@ -220,9 +219,14 @@ class SetContains(SyncatOpExpr):
             step.derivation = derivation # suppress the intermediate parts of
                                          # this derivation, if any
             return derived(step, self, "∈ reduction")
+        elif self.args[0].meta() and self.args[1].meta():
+            # TODO: this should be code on the set object, not here
+            result = MetaTerm(self.args[0].op in self.args[1].op)
+            return derived(result, self, "∈ reduction")
         else:
             # leave ListedSets as-is for now.  TODO could expand this using
             # disjunction.
+            # TODO: this really needs something...
             return self
 
     def reducible(self):

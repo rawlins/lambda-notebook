@@ -382,6 +382,28 @@ class MetaTest(unittest.TestCase):
         # simplify produces a MetaTerm. some overlap with simplification code here
         self.assertEqual(te("True & True").simplify(), MetaTerm(True))
 
+    def test_complex_terms(self):
+        t1 = tp("<e,t>")
+        content1 = {'_c1': te("True_t"), '_c2': True, '_c3': False}
+        self.assertEqual(MetaTerm(content1), MetaTerm(content1, typ=t1))
+        content2 = {'_c1', '_c2'}
+        self.assertEqual(MetaTerm(content2, setfun=True), MetaTerm(content2, typ=t1))
+        for e in ['_c1', '_c2', '_c3']:
+            self.assertEqual(MetaTerm(content1, typ=t1)(MetaTerm(e)).reduce(), e in content2)
+            self.assertEqual(MetaTerm(content2, typ=t1)(MetaTerm(e)).reduce(), e in content2)
+        # currently: raises OutOfDomain only on reduce call
+        self.assertRaises(core.OutOfDomain, MetaTerm(content1, typ=t1)(MetaTerm('_c4')).reduce)
+        self.assertEqual(MetaTerm(content2, typ=t1)(MetaTerm('_c4')).reduce(), False)
+
+        t2 = tp("<(e,e),t>")
+        content3 = {('_c1', '_c1'): te("True_t"), ('_c1', '_c2'): True}
+        self.assertEqual(MetaTerm(content3), MetaTerm(content3, typ=t2))
+        content4 = {('_c1', '_c1'), ('_c1', '_c2')}
+        self.assertEqual(MetaTerm(content4, setfun=True), MetaTerm(content4, typ=t2))
+
+        self.assertRaises(TypeMismatch, core.MetaTerm, {False, '_c1'})
+        self.assertRaises(parsing.ParseError, core.MetaTerm, {'_x1', '_c1'})
+
     def test_reduce(self):
         self.assertEqual(self.ident(self.y).reduce(), self.y)
 

@@ -1,4 +1,5 @@
 import sys, re, logging, random, functools, inspect
+import collections
 from numbers import Number
 
 import lamb
@@ -115,6 +116,7 @@ def let_wrapper(s):
     result.let = True
     return result
 
+
 def te(s, let=True, assignment=None):
     """Convenience wrapper for `lang.TypedExpr.factory`."""
     result = TypedExpr.factory(s, assignment=assignment)
@@ -122,11 +124,22 @@ def te(s, let=True, assignment=None):
         result = let_wrapper(result)
     return result
 
-def term(s, typ=None, assignment=None):
+
+def term(s, typ=None, assignment=None, meta=False):
     """Convenience wrapper for building terms.
     `s`: the term's name.
     `typ`: the term's type, if specified."""
-    return TypedTerm.term_factory(s, typ=typ, assignment=assignment)
+    r = TypedTerm.term_factory(s, typ=typ, assignment=assignment)
+    if meta:
+        # return only if r is a valid MetaTerm
+        if r is None and isinstance(s, TypedExpr) and not s.meta():
+            raise parsing.ParseError(f"Failed to infer a type domain element from expression", s=s)
+        elif r is None:
+            raise types.TypeMismatch(s, typ, f"Failed to infer a type domain element at correct type")
+        elif not r.meta():
+            raise parsing.ParseError(f"Failed to infer a type domain element", s=s)
+    return r
+
 
 def typed_expr(s):
     # class method replaces this.  Call this instead of factory, which has a 
@@ -894,16 +907,12 @@ class TypedExpr(object):
             # other exceptions just get raised directly -- what comes up in
             # practice?
         _parser_assignment = None
-        from .sets import ListedSet
-        if isinstance(result, tuple):
-            return Tuple(result)
-        elif isinstance(result, set):
-            return ListedSet(result)
-        elif isinstance(result, dict) and len(result) == 0:
-            # hack: empty dict is treated as empty set, so that "{}" makes sense
-            return ListedSet(set())
-        elif isinstance(result, TypedExpr):
+        if isinstance(result, TypedExpr):
             return result
+        c = from_python_container(result)
+        # XX is the container check needed here? code dup with factory
+        if c is not None:
+            return c
         else:
             logger.warning("parse_flattened returning non-TypedExpr")
             return result
@@ -1134,7 +1143,8 @@ class TypedExpr(object):
             # MetaTerms are immutable under all operations that call this, so
             # return without copying. (The only thing that may change across
             # instances with the same value is `derivation`.)
-            s.check_type_domain(typ=typ)
+            if typ is not None:
+                s.check_type_domain(typ=typ)
             return s
         elif isinstance(s, TypedTerm):
             # todo: handle conversion to custom
@@ -1180,7 +1190,8 @@ class TypedExpr(object):
         Special cases:
           * single arg, is a TypedExpr: will return a copy of that arg.  (See
             ensure_typed_expr for alternate semantics.)
-          * single arg, is a number: will return a TypedTerm using that number.
+          * single arg, is a number/bool: will return a MetaTerm using that number.
+          * single arg, is a valid `_` expression for a domain element: MetaTerm
           * single arg, is a variable/constant name: will return a TypedTerm
             using that name.  (Happens in parser magic.)
           * single arg, complex expression: will parse it using python syntax.
@@ -1214,6 +1225,9 @@ class TypedExpr(object):
                 #return cls.parse_expr_string(s, assignment)
                 return cls.parse(s, assignment)
             else:
+                c = from_python_container(s)
+                if c is not None:
+                    return c
                 # XX improve error messaging here?
                 raise NotImplementedError # did you run a notebook with reload_lamb() out of order?
         else:
@@ -1896,8 +1910,10 @@ class ApplicationExpr(TypedExpr):
         return (fun, arg, fun.type[1], history)
 
     def reducible(self):
-        if isinstance(self.args[0], LFun) or isinstance(self.args[0],
-                                                                Disjunctive):
+        if (isinstance(self.args[0], LFun)
+                        or isinstance(self.args[0], Disjunctive)
+                        or self.args[0].type.functional()
+                            and self.args[0].meta() and self.args[1].meta()):
             return True
         return False
 
@@ -1927,6 +1943,20 @@ class ApplicationExpr(TypedExpr):
         return ApplicationExpr(fun, arg)
 
 
+def common_tuple_type(t):
+    elem_types = list(set(t.type))
+    if len(elem_types) == 0:
+        return None # could probably be better handled
+    elif len(elem_types) == 1:
+        ret, = elem_types
+        return ret
+    else:
+        # this will crash if variable types are used; in principle this
+        # could be allowed by concluding a variable type rather than a
+        # disjunctive type
+        return types.DisjunctiveType(*elem_types)
+
+
 class Tuple(TypedExpr):
     """TypedExpr wrapper on a tuple.
 
@@ -1945,23 +1975,10 @@ class Tuple(TypedExpr):
             type_accum.append(a_i.type)
         super().__init__("Tuple", *new_args)
         self.type = types.TupleType(*type_accum)
-        self.common_type() # ensure that there is a usable common type
+        common_tuple_type(self) # ensure that there is a usable common type
 
     def copy(self):
         return Tuple(self.args)
-
-    def common_type(self):
-        elem_types = list(set(self.type))
-        if len(elem_types) == 0:
-            return None # could probably be better handled
-        elif len(elem_types) == 1:
-            ret, = elem_types
-            return ret
-        else:
-            # this will crash if variable types are used; in principle this
-            # could be allowed by concluding a variable type rather than a
-            # disjunctive type
-            return types.DisjunctiveType(*elem_types)
 
     def copy_local(self, *args, type_check=True):
         return Tuple(args, typ=self.type)
@@ -2136,9 +2153,9 @@ class TypedTerm(TypedExpr):
                 return False
         if self.suppress_type:
             return False
-        if suppress_constant_type and self.constant():
+        if suppress_constant_type and self.constant() and not self.meta():
             return False
-        if suppress_constant_predicate_type:
+        if suppress_constant_predicate_type and not self.meta():
             if (self.constant() and self.type.functional()
                             and not isinstance(self.type, types.VariableType)):
                 if ((self.type.left == types.type_e
@@ -2221,19 +2238,45 @@ class TypedTerm(TypedExpr):
 TypedExpr.add_local('TypedTerm', TypedTerm)
 
 
+class OutOfDomain(Exception):
+    def __init__(self, f, a):
+        self.f = f
+        self.a = a
+
+    def __str__(self):
+        return f"`{self.a}` missing from function domain (`{repr(self.f.op)}`)"
+
+    def __repr__(self):
+        return self.__str__()
+
+
 class MetaTerm(TypedTerm):
-    """Term class for storing direct references to underlying objects in the type domain."""
-    def __init__(self, name, typ=None):
+    """Term class for storing direct references to underlying objects in a type domain."""
+    def __init__(self, name, typ=None, setfun=False):
+        type_verified = False
+        if isinstance(name, MetaTerm):
+            # essentially, copy `name`
+            if typ is None:
+                typ = name.type
+                type_verified = True
+            name = name.op
+
         # enforce a prefixing `_` on the internal representation. This isn't
         # necessary relative to the type domain code, but it keeps MetaTerms
         # from comparing as equal to TypedTerms with the same name.
         # TODO: error messages are a bit confusing with an implicit `_`
         if isinstance(name, str) and not name.startswith("_"):
             name = "_" + name
+
         # though super sets this, for various error cases on the type check it
         # is useful to set it in advance and then rely on it in the type check
         self.op = name
-        super().__init__(name, typ=self.check_type_domain(typ=typ), type_check=False)
+        self.type = None
+
+        if not type_verified:
+            typ = self.check_type_domain(typ=typ, setfun=setfun)
+
+        super().__init__(name, typ=typ, type_check=False)
 
         # cosmetics: hide the type subscript in rich reprs for t/n
         if self.type == type_t or self.type == type_n:
@@ -2242,16 +2285,54 @@ class MetaTerm(TypedTerm):
         # not set by superclass with type_check=False
         self._type_env = self.calc_type_env()
 
-    def check_type_domain(self, typ=None):
-        element_type = get_type_system().get_element_type(self.op)
-        if typ is not None and element_type != typ:
-            raise TypeMismatch(typ, element_type,
-                        error=f"Invalid element reference for this type domain in term: `{self.op_repr()}`")
-        if element_type is None:
-            # this case may have the string overridden by the parser
-            raise parsing.ParseError(
-                        f"Unknown type domain element reference in term: `{self.op_repr()}`")
-        return element_type
+    def check_type_domain(self, typ=None, setfun=False):
+        if typ is None:
+            # try to infer the type from self.op
+            typ = get_type_system().get_element_type(self.op, setfun=setfun)
+            if typ is None:
+                raise parsing.ParseError(
+                            f"Unknown type domain element: `{self.op_repr()}`")
+            return typ
+        else:
+            if self.op not in typ.domain:
+                if typ.find_type_vars():
+                    # it's helpful to have a specific error for this case
+                    raise TypeMismatch(value, typ,
+                        error=f"Can't instantiate domain elements with variable types")
+                else:
+                    raise TypeMismatch(self.op, typ,
+                        error=f"Invalid element reference for type domain of `{typ}` in term: `{self.op_repr()}`")
+            if isinstance(typ, types.DisjunctiveType):
+                # always fully resolve a disjunctive type if it is provided to
+                # this function
+                dtyp = typ.resolve_element_type(self.op)
+                if dtyp is None:
+                    # shouldn't be possible...
+                    raise TypeMismatch(self.op, typ,
+                        error="failed to fully resolve disjunctive type in MetaTerm??")
+                typ = dtyp
+            # XX it might be possible to handle a type variable here by
+            # resolving it as in the `None` case?
+            return typ
+
+    def apply(self, arg):
+        if not self.type.functional() or not get_type_system().eq_check(self.type.left, arg.type):
+            raise TypeMismatch(self, arg, error="Function-argument application: mismatched argument type to MetaTerm")
+        elif not arg.meta():
+            return self(arg)
+        elif isinstance(self.op, collections.abc.Set):
+            # this will raise if somehow self.type.right is not t
+            return MetaTerm(arg in self.op or arg.op in self.op, typ=self.type.right)
+        elif isinstance(self.op, collections.abc.Mapping):
+            # XX is there a better way to handle this?
+            if arg in self.op:
+                return MetaTerm(self.op[arg], typ=self.type.right)
+            elif arg.op in self.op:
+                return MetaTerm(self.op[arg.op], typ=self.type.right)
+            else:
+                raise OutOfDomain(self, arg)
+        else:
+            raise ValueError(f"Unknown MetaTerm value `{self.op}`!")
 
     def constant(self):
         # this isn't strictly needed but it's nice to be explicit
@@ -2280,29 +2361,37 @@ class MetaTerm(TypedTerm):
 
     def __eq__(self, other):
         if other in self.type.domain:
-            # compare as equal to domain elements. Note that this is *not*
-            # reflected in __hash__...
+            # compare as equal to domain elements.
             # while this will generally behave symmetrically if the type domain
             # is constructed from python basic types, symmetric behavior can't
             # be assumed in general. If the type domain involves objects that
             # implement __eq__, and you want symmetry, you will have to special
             # case the comparison to a MetaTerm.
             return self.op == other
+        elif isinstance(other, TypedExpr):
+            # note: without the type check, 0 vs False and 1 vs True compare equal,
+            # because `bool` is a subtype of `int`
+            return other.meta() and self.type == other.type and self.op == other.op
         else:
-            return super().__eq__(other)
+            # neither a TypedExpr no a python object in the type domain
+            return False
 
     def __hash__(self):
-        # overrode __eq__, so also need to override __hash__
-        return super().__hash__()
-
-    def op_repr(self, force_str=True):
-        if isinstance(self.op, str) or not force_str:
-            return self.op
+        # overrode __eq__, so also need to override __hash__. We hash with
+        # the operator, since dict comparison relies on this.
+        if self.op.__hash__:
+            return self.op.__hash__()
         else:
-            # currently, this works fine for type_t and type_n -- but, how
-            # to generalize? Should possibly put repr code on the type domain
-            # itself?
-            return repr(self.op)
+            # this will probably raise. Certain python types we allow in `op`,
+            # namely dict and set, aren't hashable.
+            # TODO: convert to frozenset, and some sort of frozendict implementation?
+            return hash(self.op)
+
+    def op_repr(self, rich=False):
+        if self.type is None:
+            # error in constructor, just need something here
+            return str(self.op)
+        return self.type.domain.element_repr(self.op, rich=rich)
 
     def calc_type_env(self, recalculate=False):
         # currently, MetaTerms are not represented at all in the type
@@ -2325,9 +2414,7 @@ class MetaTerm(TypedTerm):
         # if just using `op` as the name, we use textsf, but setting
         # an arbitrary latex name is allowed
         if self.latex_op_str is None:
-            n = self.op
-            if isinstance(n, str):
-                n = n[1:] # trim the prefixing `_` for rich reprs
+            n = self.op_repr(rich=True)
             # render the variable name as sans serif
             op_str = f"\\textsf{{{n}}}"
         else:
@@ -2807,6 +2894,22 @@ def from_python(p, typ=None):
         return MetaTerm(p, typ=typ)
 
 
+def from_python_container(p):
+    from .sets import ListedSet
+    # can this use collections.abc types?
+    if isinstance(p, tuple):
+        # should an empty tuple force a MetaTerm?
+        return Tuple(p)
+    elif isinstance(p, set):
+        return ListedSet(p)
+    elif isinstance(p, dict) and len(p) == 0:
+        # hack: empty dict is treated as empty set, so that "{}" makes sense
+        # XX should this return a MetaTerm? Right now, ListedSet(set()) produces
+        # a set at type {X}
+        return ListedSet(set())
+    return None
+
+
 # decorator for wrapping simplify functions, see examples below.
 # TODO: this could be generalized a further...
 def op(op, arg_type, ret_type,
@@ -2931,8 +3034,8 @@ class TupleIndex(SyncatOpExpr):
                     error="Tuple indexing expression with invalid index")
         else:
             # we don't know which element will be selected; get a potentially
-            # disjunctive type for elements
-            output_type = arg1.common_type()
+            # disjunctive type for the whole expression
+            output_type = common_tuple_type(arg1)
         super().__init__(output_type, arg1, arg2, tcheck_args=False)
 
     def copy(self):
@@ -2968,17 +3071,22 @@ class TupleIndex(SyncatOpExpr):
                                         self.args[1].latex_str(**kwargs)))
 
     def reduce(self):
-        if (isinstance(self.args[0], Tuple)
-                                    and self.args[1].op in types.type_n.domain):
-            result = self.args[0].tuple()[self.args[1].op].copy()
-            return derived(result, self, "Resolution of index")
-        else:
-            return self
-
+        if self.args[1] in types.type_n.domain:
+            # args[1] is a numeric MetaTerm
+            if isinstance(self.args[0], Tuple):
+                result = self.args[0].tuple()[self.args[1].op].copy()
+                return derived(result, self, "Resolution of index")
+            elif self.args[0].meta():
+                # XX this code should be on the tuple object somehow
+                result = term(self.args[0].op[self.args[1].op])
+                return derived(result, self, "Resolution of index")
+            # else fallthrough: non-meta term of a tuple type
+        # else fallthrough: index that is not a metaterm
+        return self
 
     def reducible(self):
-        if (isinstance(self.args[0], Tuple)
-                                    and self.args[1].op in types.type_n.domain):
+        if (self.args[1] in types.type_n.domain
+                and (isinstance(self.args[0], Tuple) or self.args[0].meta())):
             return True
         # no support for non-constant indices at present, not even ones that
         # should be mathematically simplifiable

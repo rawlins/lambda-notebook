@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
-import sys, re, random, collections.abc, math
+import sys, re, random, collections.abc, math, functools
 from numbers import Number
 from lamb import utils, parsing
 from lamb.utils import *
@@ -13,21 +13,42 @@ Maybe = 2
 random_len_cap = 5
 
 
+def demeta(x):
+    # the import here needs to be very narrow, to avoid circular import issues
+    from lamb.meta.core import MetaTerm
+    if isinstance(x, MetaTerm):
+        return x.op
+    else:
+        return x
+
+
+def curlybraces(x, rich=False):
+    if rich:
+        # assume `rich` == embedded in latex
+        return f"\\{{{x}\\}}"
+    else:
+        return f"{{{x}}}"
+
+
 # in principle, one might want to inherit from abc.collections.Set. However,
 # because this can represent an infinite set, sometimes the collection has
 # no length, which is required for most stronger types in collections.abc.
 class DomainSet(collections.abc.Container):
-    def __init__(self, finite=True, values=None):
+    type = None # class variable
+    def __init__(self, finite=True, values=None, typ=None):
         self.finite = finite
         if values is None:
             values = set()
         self.domain = set(values)
+        if typ is not None:
+            # override class value at the instance level
+            self.type = typ
 
     def check(self,x):
         if self.finite:
-            return (x in self.domain)
+            return (demeta(x) in self.domain)
         else:
-            return self.infcheck(x)
+            return self.infcheck(demeta(x))
 
     def __contains__(self, x):
         return self.check(x)
@@ -60,6 +81,15 @@ class DomainSet(collections.abc.Container):
         raise NotImplementedError(
             "Can't check membership for an abstract infinite set")
 
+    def element_repr(self, x, rich=False):
+        x = demeta(x)
+        if not isinstance(x, str):
+            x = repr(x)
+
+        if rich and x.startswith("_"):
+            x = x[1:]
+        return x
+
     def random(self):
         if self.finite:
             # XX this may not be seed stable if the list is constructed every time
@@ -67,10 +97,20 @@ class DomainSet(collections.abc.Container):
         else:
             raise NotImplementedError("Can't pick randomly from an abstract infinite set")
 
+    @classmethod
+    def element_to_type(cls, x, ctrl=None):
+        # this can be used for singleton classes, as long as they have `type`
+        # set.
+        if cls.type is not None and cls.type.domain.check(x):
+            return cls.type
+        else:
+            return None
+
 
 class BooleanSet(DomainSet):
     def __init__(self):
-        super().__init__(True, [False,True])
+        # to prevent circularity, BooleanSet.type is set in reset()
+        super().__init__(finite=True, values=[False,True])
 
     def check(self,x):
         # bool is implemented as a subclass of int, and therefore 0 and 1 are
@@ -79,14 +119,17 @@ class BooleanSet(DomainSet):
         # This perhaps could be useful if we have a way of normalizing the
         # term names, but for now, instead of using the superclass `in`
         # check, exclude 0/1 from the domain by checking class directly.
-        return isinstance(x, bool)
+        return isinstance(demeta(x), bool)
+
+    def __repr__(self):
+        return f"BooleanSet()"
 
 
 class SimpleInfiniteSet(DomainSet):
     """Arbitrary domain type modeling a (countable) non-finite set. Elements are
     strings consisting of a prefix followed by a natural number."""
-    def __init__(self,prefix):
-        super().__init__(False, set())
+    def __init__(self, prefix, typ=None):
+        super().__init__(finite=False, typ=typ)
         self.prefix = prefix
         # this disallows sequences like 001; an alternative would be to
         # normalize them...
@@ -110,6 +153,16 @@ class SimpleInfiniteSet(DomainSet):
             limit = 2 ** 16 - 1
         return f"_{self.prefix}{random.randint(0,limit)}"
 
+    def __repr__(self):
+        return f"SimpleInfiniteSet('{self.prefix}'')"
+
+    @classmethod
+    def element_to_type(cls, x, ctrl):
+        # should be handled by the type system
+        raise NotImplementedError(
+            "Can't check membership for abstract infinite domain set")
+
+
 def is_numeric(x):
     # bools are Number instances, exclude them here
     return isinstance(x, Number) and not isinstance(x, bool)
@@ -125,7 +178,8 @@ def is_numeric(x):
 class SimpleNumericSet(DomainSet):
     """Class backed by python `Number`s"""
     def __init__(self):
-        super().__init__(False, set())
+        # to prevent circularity, SimpleNumericSet.type is set in reset()
+        super().__init__(finite=False)
 
     def infcheck(self, x):
         return is_numeric(x)
@@ -146,18 +200,52 @@ class SimpleNumericSet(DomainSet):
             limit = 2 ** 16 - 1
         return random.randint(-limit,limit)
 
+    def __repr__(self):
+        return f"SimpleNumericSet()"
+
 
 def is_type(x):
     return isinstance(x, TypeConstructor)
 
 
+# domain set handling for complex types, e,g, <(e,e),t> etc. that can't be
+# pre-constructed (there is a non-finite set of these).
+class ComplexDomainSet(SimpleInfiniteSet):
+    def __init__(self, prefix, typ):
+        super().__init__(prefix, typ=typ)
+
+    def __iter__(self):
+        raise NotImplementedError(
+            "Can't iterate over a complex domain set")
+
+    def infcheck(self, x):
+        """Does `x` meet the criteria for being a member of a set if infinite?"""
+        raise NotImplementedError(
+            "Can't check membership for an abstract complex domain set")
+
+    def element_repr(self, x, rich=False):
+        preprefix = (not rich) and "_" or ""
+        return f"{preprefix}{self.prefix}[anon]"
+
+    @classmethod
+    def element_to_type(cls, x, ctrl=None):
+        raise NotImplementedError(
+            "Can't check membership for abstract complex domain sets")
+
+
 class TypeConstructor(object):
-    def __init__(self):
+    domain_class = None
+    def __init__(self, domain=None):
         self.symbol = None
         self.unify_source = None
         self.generic = False
         self.init_type_vars()
-        self.domain = set()
+        if domain is None:
+            if self.domain_class is None:
+                domain = set()
+            else:
+                domain = self.domain_class(typ=self)
+        self.domain = domain
 
     def __len__(self):
         return 0
@@ -285,9 +373,11 @@ class BasicType(TypeConstructor):
         if values is None:
             # by default: use an infinite domain set backed by strings
             domain_symbol = self.default_prefixes.get(symbol, symbol)
-            self.domain = SimpleInfiniteSet(domain_symbol)
+            self.domain = SimpleInfiniteSet(domain_symbol, typ=self)
         else:
             self.domain = values
+            if isinstance(self.domain, SimpleInfiniteSet):
+                self.domain.type = self
         # pre-escape because of the use of "?" for undetermined type
         self.regex = re.compile(re.escape(self.symbol))
 
@@ -335,6 +425,77 @@ class BasicType(TypeConstructor):
             return (None, data)
 
 
+class FunDomainSet(ComplexDomainSet):
+    def __init__(self, typ):
+        super().__init__("Fun", typ)
+
+    def infcheck(self, x):
+        # XX variable types
+        if self.type.right == type_t and isinstance(x, collections.abc.Set):
+            # special case shorthand: when we are dealing with a characteristic
+            # function, allow a set to be used.
+            # XX this is very convenient, but does mean that python sets are
+            # treated as multi-typed...
+            return all(e in self.type.left.domain for e in x)
+        elif isinstance(x, collections.abc.Mapping):
+            if not all(e in self.type.left.domain for e in x):
+                return False
+            return all(x[k] in self.type.right.domain for k in x)
+        else:
+            # XX allow some sort of actual python function here
+            return False
+
+    def __repr__(self):
+        return f"FunDomainSet({self.type})"
+
+    def element_repr(self, x, rich=False):
+        if isinstance(x, collections.abc.Set):
+            return f"Fun[{SetType(self.type.left).domain.element_repr(x, rich=rich)}]"
+        elif isinstance(x, collections.abc.Mapping):
+            pairs = [(self.type.left.domain.element_repr(k, rich=rich),
+                      self.type.right.domain.element_repr(x[k], rich=rich)) for k in x]
+            mapping = curlybraces(",".join(f"{pair[0]}:{pair[1]}" for pair in pairs), rich=rich)
+            return f"Fun[{mapping}]"
+        else:
+            # not currently used
+            return super().element_repr(x, rich=rich)
+
+    @classmethod
+    def element_to_type(cls, x, ctrl):
+        if isinstance(x, collections.abc.Mapping):
+            # at this point we should have a coherent mapping describing a
+            # function, so any failures on recursion should raise
+            left = [ctrl(k) for k in x]
+            if len(left):
+                for i in range(len(left)):
+                    if left[i] is None:
+                        # assumption: stable key order
+                        bad_elem = [k for k in x][i]
+                        raise parsing.ParseError(f"Unknown type domain element in function domain: `{repr(bad_elem)}`")
+                if not left.count(left[0]) == len(left):
+                    for t in left[1:]:
+                        if t != left[0]:
+                            raise TypeMismatch(left[0], t,
+                                error=f"Inconsistent domain types in function domain: `{repr(x)}`")
+            right = [ctrl(x[k]) for k in x]
+            if len(right):
+                for i in range(len(right)):
+                    if right[i] is None:
+                        # assumption: stable key order
+                        bad_elem = [x[k] for k in x][i]
+                        raise parsing.ParseError(f"Unknown type domain element in function range: `{repr(bad_elem)}`")
+                if not right.count(right[0]) == len(right):
+                    for t in right[1:]:
+                        if t != right[0]:
+                            raise TypeMismatch(right[0], t,
+                                error=f"Inconsistent domain types in function range: `{repr(x)}`")
+            # note: a python dict allows writing {} notation dicts with duplicate
+            # keys, but later values overwrite earlier ones. There's no way to
+            # "type check" this, which may be a bit unexpected from a
+            # mathematical perspective.
+            return FunType(left[0], right[0])
+        # currently: does not act on sets
+        return None
 
 
 class FunType(TypeConstructor):
@@ -345,6 +506,7 @@ class FunType(TypeConstructor):
     left: the input/left type of functions in the set.
     right: the output/right type of functions in the set.
     """
+    domain_class = FunDomainSet
     def __init__(self, left, right):
         self.left = left
         self.right = right
@@ -424,12 +586,51 @@ class FunType(TypeConstructor):
         return FunType(random_ctrl_fun(), random_ctrl_fun())
 
 
+class SetDomainSet(ComplexDomainSet):
+    def __init__(self, typ):
+        super().__init__("Set", typ)
+
+    def infcheck(self, x):
+        if isinstance(x, collections.abc.Set):
+            return all(e in self.type[0].domain for e in x)
+        else:
+            return False
+
+    def __repr__(self):
+        return f"SetDomainSet({self.type})"
+
+    def element_repr(self, x, rich=False):
+        elements = list(x)
+        return curlybraces(
+            f"{','.join(self.type[0].domain.element_repr(elements[i], rich=rich) for i in range(len(elements)))}",
+            rich=rich)
+
+    @classmethod
+    def element_to_type(cls, x, ctrl):
+        if isinstance(x, collections.abc.Set):
+            list_x = list(x)
+            types = [ctrl(k) for k in list_x]
+            if len(types):
+                # at this point, we are trying to construct a set, so raise
+                # on recursive failures
+                for i in range(len(types)):
+                    if types[i] is None:
+                        raise parsing.ParseError(f"Unknown type domain element in set: `{repr(list_x[i])}`")
+                if not types.count(types[0]) == len(types):
+                    for t in types[1:]:
+                        if t != types[0]:
+                            raise TypeMismatch(types[0], t,
+                                error=f"Inconsistent domain types in set: `{repr(x)}`")
+            return SetType(types[0])
+        return None
+
 
 class SetType(TypeConstructor):
+    domain_class = SetDomainSet
     """Type for sets.  See `lang.ConditionSet` and `lang.ListedSet`."""
     def __init__(self, ctype):
         self.content_type = ctype
-        TypeConstructor.__init__(self)
+        super().__init__()
 
     def __len__(self):
         return 1
@@ -489,13 +690,43 @@ class SetType(TypeConstructor):
         return SetType(random_ctrl_fun())
 
 
+class TupleDomainSet(ComplexDomainSet):
+    def __init__(self, typ):
+        super().__init__("Tuple", typ)
+
+    def infcheck(self, x):
+        if isinstance(x, collections.abc.Sequence) and not isinstance(x, str):
+            if len(self.type) != len(x):
+                return False
+            return all(x[i] in self.type[i].domain for i in range(len(self.type)))
+        else:
+            return False
+
+    def element_repr(self, x, rich=False):
+        return f"({','.join(self.type[i].domain.element_repr(x[i], rich=rich) for i in range(len(x)))})"
+
+    def __repr__(self):
+        return f"TupleDomainSet({self.type})"
+
+    @classmethod
+    def element_to_type(cls, x, ctrl):
+        if isinstance(x, collections.abc.Sequence) and not isinstance(x, str):
+            types = [ctrl(k) for k in x]
+            for i in range(len(types)):
+                if types[i] is None:
+                    raise parsing.ParseError(f"Unknown type domain element in tuple: `{repr(x[i])}`")
+            return TupleType(*types)
+        return None
+
+
 class TupleType(TypeConstructor):
+    domain_class = TupleDomainSet
     """Type for tuples.  See `lang.Tuple`."""
     def __init__(self, *signature):
         #if len(signature) == 0:
         #    raise ValueError("Tuple type can't be 0 length")
         self.signature = tuple(signature)
-        TypeConstructor.__init__(self)
+        super().__init__()
 
     def copy_local(self, *sig):
         return TupleType(*sig)
@@ -1001,11 +1232,41 @@ class UnknownType(VariableType):
     def fresh(cls):
         return UnknownType()
 
+
+# This is a slightly weird case in that there's no way to directly instantiate
+# an element of this set; rather, MetaTerm fully resolves any disjunctively
+# typed element to its actual type.
+class DisjunctiveDomainSet(ComplexDomainSet):
+    def __init__(self, typ):
+        super().__init__("Disjunctive", typ)
+
+    def infcheck(self, x):
+        for t in self.type:
+            if x in t.domain:
+                return True
+        return False
+
+    def __repr__(self):
+        return f"DisjunctiveDomainSet({self.type})"
+
+    def element_repr(self, x, rich=False):
+        # not very easy to call, but it's easy to implement
+        for t in self.type:
+            if x in t.domain:
+                return t.domain.element_repr(x, rich=rich)
+        raise ValueError(f"Invalid element of disjunctive type {self.type}: `{x}`")
+
+    @classmethod
+    def element_to_type(cls, x, ctrl):
+        # could just call `ctrl`, if loops are prevented?
+        return None
+
 class DisjunctiveType(TypeConstructor):
     """Disjunctive types.
 
     These types represent finite sets of non-polymorphic types.  (Accordingly,
     disjunctions of variable types are disallowed.)"""
+    domain_class = DisjunctiveDomainSet
     def __init__(self, *type_list, raise_s=None, raise_i=None):
         disjuncts = set()
         for t in type_list:
@@ -1156,6 +1417,12 @@ class DisjunctiveType(TypeConstructor):
         else:
             return self.intersection_point(b, unify_fun, assignment)
 
+    def resolve_element_type(self, e):
+        # if `e` is not a type domain element, guaranteed to return None
+        for t in self.type:
+            if e in t.domain:
+                return t
+        return None
 
     def unify(self, b, unify_control_fun, assignment):
         return self.intersection(b, unify_control_fun, assignment)
@@ -1259,12 +1526,25 @@ class TypeSystem(object):
             self._parse_cache[atomic.regex] = atomic
             self.atomics.add(atomic)
 
-    def get_element_type(self, element):
+    def get_element_type(self, element, setfun=False):
         # Dead simple. Assumption: no overlapping types
         # TODO: some form of subtyping might be interesting
         for t in self.atomics:
             if element in t.domain:
                 return t
+        for t in self.nonatomics:
+            if t.domain_class is not None:
+                e_type = t.domain_class.element_to_type(element,
+                    ctrl=functools.partial(self.get_element_type, setfun=setfun))
+                if e_type is not None:
+                    if isinstance(e_type, SetType) and setfun:
+                        # convert a set into its characteristic function
+                        e_type = FunType(e_type.content_type, type_t)
+                        if not element in e_type.domain:
+                            # should be impossible...
+                            raise ValueError("Set is absent from corresponding characteristic function domain??")
+                    return e_type
+
         return None
 
     def remove_atomic(self, atomic):
@@ -1923,9 +2203,11 @@ def reset():
     global type_e, type_t, type_n, type_property, type_transitive
     global basic_system, poly_system
 
-    type_e = BasicType("e", SimpleInfiniteSet("c"))
+    type_e = BasicType("e")
     type_t = BasicType("t", BooleanSet())
+    BooleanSet.type = type_t
     type_n = BasicType("n", SimpleNumericSet())
+    SimpleNumericSet.type = type_n
     type_property = FunType(type_e, type_t)
     type_transitive = FunType(type_e, type_property)
     basic_system = TypeSystem(atomics={type_e, type_t, type_n},
