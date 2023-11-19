@@ -621,7 +621,15 @@ class SetDomainSet(ComplexDomainSet):
                         if t != types[0]:
                             raise TypeMismatch(types[0], t,
                                 error=f"Inconsistent domain types in set: `{repr(x)}`")
-            return SetType(types[0])
+                return SetType(types[0])
+            else:
+                # The empty set needs a concrete (non-variable) type here. This
+                # is somewhat awkward (since in some cases it's not possible
+                # to give it a type annotation very easily), but since we can't
+                # infer the intended type, error out here.
+                # (weirdly, parsing currently doesn't error if `{?}` is explicitly
+                # provided...)
+                raise parsing.ParseError(f"Can't infer a domain for the empty set: provide an explicit type")
         return None
 
 

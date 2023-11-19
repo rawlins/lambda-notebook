@@ -65,10 +65,9 @@ class ListedSet(TypedExpr):
         s = set(iterable) # remove duplicates, flatten order
         args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
         args = sorted(args, key=repr) # for a canonical ordering
+        # `typ` here is the content type.
         if len(args) == 0 and typ is None:
-            # note: UnknownType might be more appropriate here, but it leads
-            # copy equality test failures
-            typ = types.VariableType("X") # could be a set of anything
+            typ = types.UnknownType() # could be a set of anything
         elif typ is None:
             # inherit the type from the first argument
             typ = args[0].type
@@ -94,10 +93,11 @@ class ListedSet(TypedExpr):
             # need to do this all at once rather than  member-by-member.
 
     def copy(self):
-        return ListedSet(self.args)
+        return self.copy_local(*self.args)
 
     def copy_local(self, *args, type_check=True):
-        return ListedSet(args)
+        # to handle the empty set correctly here, explicit typing is necessary
+        return ListedSet(args, typ=self.type[0])
 
     def term(self):
         return False
@@ -158,13 +158,24 @@ class ListedSet(TypedExpr):
             result = new_result
         return result
 
-
     def __repr__(self):
-        return repr(set(self.args))
+        if not len(self.args):
+            # `{}` parses as the empty set in the metalanguage, but repr(set())
+            # gives `set()`.
+            # XX currently a type for a set doesn't parse, so we never emit one.
+            # However, this will prevent the empty set from having an accurate
+            # repr...
+            return "{}"
+        else:
+            return repr(set(self.args))
 
     def latex_str(self, **kwargs):
         inner = ", ".join([a.latex_str(**kwargs) for a in self.args])
-        return utils.ensuremath("\\{" + inner + "\\}")
+        if not len(self.args):
+            # show an explicit type for the empty set
+            return utils.ensuremath(f"\\{{{inner}\\}}_{{{self.type.latex_str()}}}")
+        else:
+            return utils.ensuremath(f"\\{{{inner}\\}}")
 
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
                                                                         env):
@@ -184,7 +195,11 @@ class ListedSet(TypedExpr):
             r = range(max_members+1)[1:]
         length = random.choice(r)
         members = [ctrl(typ=typ) for i in range(length)]
-        return ListedSet(members)
+        if not length and random.choice([True, False]):
+            # untyped (`{?}`) empty set
+            return ListedSet(members)
+        else:
+            return ListedSet(members, typ=typ)
 
 
 class SetContains(SyncatOpExpr):

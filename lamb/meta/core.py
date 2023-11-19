@@ -469,7 +469,7 @@ class TypeEnv(object):
         ts = get_type_system()
         try:
             result = ts.unify_details(t1, t2, assignment=self.type_mapping)
-        except types.OccursCheckError as e:
+        except types.OccursCheckFailure as e:
             # are there contexts where this should be raised?
             return None
 
