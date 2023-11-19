@@ -1,6 +1,7 @@
 import lamb
 from lamb import types
-from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr, BindingOp, Partial, LFun, MetaTerm
+from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr, BindingOp, Partial, LFun
+from .meta import MetaTerm
 from lamb.types import type_t
 
 global true_term, false_term

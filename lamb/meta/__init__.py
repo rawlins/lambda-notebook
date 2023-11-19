@@ -1,4 +1,4 @@
-__all__ = ['core', 'boolean', 'evaluation', 'number', 'sets']
+__all__ = ['core', 'boolean', 'meta', 'number', 'sets']
 
 # -*- coding: utf-8 -*-
 from numbers import Number
@@ -18,7 +18,7 @@ from lamb.meta.core import geach_combinator, fun_compose, unify
 
 from lamb.meta.boolean import true_term, false_term
 
-from lamb.meta.evaluation import truthtable, truthtable_equiv
+from lamb.meta.meta import truthtable, truthtable_equiv
 
 ###############
 #

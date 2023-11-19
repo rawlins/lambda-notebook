@@ -2,8 +2,9 @@ import logging, unittest, random
 import lamb
 from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
-from . import core, boolean, number, sets, evaluation
-from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm, MetaTerm
+from . import core, boolean, number, sets, meta
+from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
+from .meta import MetaTerm
 
 def repr_parse(e):
     result = te(repr(e), let=False)
@@ -208,7 +209,7 @@ te_classes = [core.ApplicationExpr,
               core.TypedTerm,
               core.Partial,
               core.Disjunctive,
-              core.MetaTerm,
+              meta.MetaTerm,
               boolean.UnaryNegExpr,
               boolean.BinaryAndExpr,
               boolean.BinaryOrExpr,
@@ -264,7 +265,7 @@ class MetaTest(unittest.TestCase):
                 x = random_from_class(c)
                 # verify some things about terms
                 # XX partial metaterms? I think they may be possible...
-                self.assertTrue(x.meta() == (isinstance(x, core.MetaTerm)))
+                self.assertTrue(x.meta() == (isinstance(x, MetaTerm)))
                 if c != core.Tuple and c != sets.ListedSet:
                     # XX 0 length tuple/set doesn't count as a term, but perhaps
                     # they should? even as a metaterm of some kind?
@@ -392,7 +393,7 @@ class MetaTest(unittest.TestCase):
             self.assertEqual(MetaTerm(content1, typ=t1)(MetaTerm(e)).reduce(), e in content2)
             self.assertEqual(MetaTerm(content2, typ=t1)(MetaTerm(e)).reduce(), e in content2)
         # currently: raises OutOfDomain only on reduce call
-        self.assertRaises(core.OutOfDomain, MetaTerm(content1, typ=t1)(MetaTerm('_c4')).reduce)
+        self.assertRaises(meta.OutOfDomain, MetaTerm(content1, typ=t1)(MetaTerm('_c4')).reduce)
         self.assertEqual(MetaTerm(content2, typ=t1)(MetaTerm('_c4')).reduce(), False)
 
         t2 = tp("<(e,e),t>")
@@ -401,8 +402,8 @@ class MetaTest(unittest.TestCase):
         content4 = {('_c1', '_c1'), ('_c1', '_c2')}
         self.assertEqual(MetaTerm(content4, setfun=True), MetaTerm(content4, typ=t2))
 
-        self.assertRaises(TypeMismatch, core.MetaTerm, {False, '_c1'})
-        self.assertRaises(parsing.ParseError, core.MetaTerm, {'_x1', '_c1'})
+        self.assertRaises(TypeMismatch, MetaTerm, {False, '_c1'})
+        self.assertRaises(parsing.ParseError, MetaTerm, {'_x1', '_c1'})
 
     def test_reduce(self):
         self.assertEqual(self.ident(self.y).reduce(), self.y)
@@ -538,22 +539,22 @@ class MetaTest(unittest.TestCase):
     def test_boolean_evaluation(self):
         # this test is more to ensure that this code isn't crashing, than a
         # deep test of boolean inference.
-        evaluation.truthtable(te("False & True"))
-        evaluation.truthtable(te("p_t & q_t & ~p_t"))
-        evaluation.truthtable(te("p_t & q_t & P_<e,t>(x_e)"))
-        evaluation.extract_boolean(te("p4_t & Q_<X,t>(x_X)"),
+        meta.truthtable(te("False & True"))
+        meta.truthtable(te("p_t & q_t & ~p_t"))
+        meta.truthtable(te("p_t & q_t & P_<e,t>(x_e)"))
+        meta.extract_boolean(te("p4_t & Q_<X,t>(x_X)"),
                                     te("p2_t & Q_<Y,t>(x_Y) | p4_t & ~P_<e,t>(x_e)"))
         self.assertEqual(
-            evaluation.truthtable(te("p_t & q_t")),
-            evaluation.truthtable(te("~(~p_t | ~q_t)")))
+            meta.truthtable(te("p_t & q_t")),
+            meta.truthtable(te("~(~p_t | ~q_t)")))
         self.assertEqual(
-            evaluation.truthtable(te("False")),
-            evaluation.truthtable(te("False & True")))
+            meta.truthtable(te("False")),
+            meta.truthtable(te("False & True")))
         # TODO: generalize to cases where term set is not the same
         # self.assertEqual(
-        #     evaluation.truthtable(te("False")),
-        #     evaluation.truthtable(te("p & ~p"), simplify=False))
-        self.assertTrue(evaluation.truthtable_equiv(
+        #     meta.truthtable(te("False")),
+        #     meta.truthtable(te("p & ~p"), simplify=False))
+        self.assertTrue(meta.truthtable_equiv(
             te("~(p_t & P_<e,t>(x_e) & q_t)"),
             te("~P_<e,t>(x_e) | ~(p_t & q_t)")))
 

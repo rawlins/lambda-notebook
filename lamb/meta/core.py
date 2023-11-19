@@ -1139,6 +1139,7 @@ class TypedExpr(object):
             ts = get_type_system()
             typ = ts.type_parser(typ)
 
+        from .meta import MetaTerm
         if isinstance(s, MetaTerm):
             # MetaTerms are immutable under all operations that call this, so
             # return without copying. (The only thing that may change across
@@ -2073,6 +2074,7 @@ class TypedTerm(TypedExpr):
             self._type_env = env
 
         self.suppress_type = False
+        from .meta import MetaTerm
         if not isinstance(self, MetaTerm):
             if not isinstance(self.op, str):
                 # note: don't use `s` parameter, because the resulting error
@@ -2236,210 +2238,6 @@ class TypedTerm(TypedExpr):
 
 
 TypedExpr.add_local('TypedTerm', TypedTerm)
-
-
-class OutOfDomain(Exception):
-    def __init__(self, f, a):
-        self.f = f
-        self.a = a
-
-    def __str__(self):
-        return f"`{self.a}` missing from function domain (`{repr(self.f.op)}`)"
-
-    def __repr__(self):
-        return self.__str__()
-
-
-class MetaTerm(TypedTerm):
-    """Term class for storing direct references to underlying objects in a type domain."""
-    def __init__(self, name, typ=None, setfun=False):
-        type_verified = False
-        if isinstance(name, MetaTerm):
-            # essentially, copy `name`
-            if typ is None:
-                typ = name.type
-                type_verified = True
-            name = name.op
-
-        # enforce a prefixing `_` on the internal representation. This isn't
-        # necessary relative to the type domain code, but it keeps MetaTerms
-        # from comparing as equal to TypedTerms with the same name.
-        # TODO: error messages are a bit confusing with an implicit `_`
-        if isinstance(name, str) and not name.startswith("_"):
-            name = "_" + name
-
-        # though super sets this, for various error cases on the type check it
-        # is useful to set it in advance and then rely on it in the type check
-        self.op = name
-        self.type = None
-
-        if not type_verified:
-            typ = self.check_type_domain(typ=typ, setfun=setfun)
-
-        super().__init__(name, typ=typ, type_check=False)
-
-        # cosmetics: hide the type subscript in rich reprs for t/n
-        if self.type == type_t or self.type == type_n:
-            self.suppress_type = True
-
-        # not set by superclass with type_check=False
-        self._type_env = self.calc_type_env()
-
-    def check_type_domain(self, typ=None, setfun=False):
-        if typ is None:
-            # try to infer the type from self.op
-            typ = get_type_system().get_element_type(self.op, setfun=setfun)
-            if typ is None:
-                raise parsing.ParseError(
-                            f"Unknown type domain element: `{self.op_repr()}`")
-            return typ
-        else:
-            if self.op not in typ.domain:
-                if typ.find_type_vars():
-                    # it's helpful to have a specific error for this case
-                    raise TypeMismatch(value, typ,
-                        error=f"Can't instantiate domain elements with variable types")
-                else:
-                    raise TypeMismatch(self.op, typ,
-                        error=f"Invalid element reference for type domain of `{typ}` in term: `{self.op_repr()}`")
-            if isinstance(typ, types.DisjunctiveType):
-                # always fully resolve a disjunctive type if it is provided to
-                # this function
-                dtyp = typ.resolve_element_type(self.op)
-                if dtyp is None:
-                    # shouldn't be possible...
-                    raise TypeMismatch(self.op, typ,
-                        error="failed to fully resolve disjunctive type in MetaTerm??")
-                typ = dtyp
-            # XX it might be possible to handle a type variable here by
-            # resolving it as in the `None` case?
-            return typ
-
-    def apply(self, arg):
-        if not self.type.functional() or not get_type_system().eq_check(self.type.left, arg.type):
-            raise TypeMismatch(self, arg, error="Function-argument application: mismatched argument type to MetaTerm")
-        elif not arg.meta():
-            return self(arg)
-        elif isinstance(self.op, collections.abc.Set):
-            # this will raise if somehow self.type.right is not t
-            return MetaTerm(arg in self.op or arg.op in self.op, typ=self.type.right)
-        elif isinstance(self.op, collections.abc.Mapping):
-            # XX is there a better way to handle this?
-            if arg in self.op:
-                return MetaTerm(self.op[arg], typ=self.type.right)
-            elif arg.op in self.op:
-                return MetaTerm(self.op[arg.op], typ=self.type.right)
-            else:
-                raise OutOfDomain(self, arg)
-        else:
-            raise ValueError(f"Unknown MetaTerm value `{self.op}`!")
-
-    def constant(self):
-        # this isn't strictly needed but it's nice to be explicit
-        return True
-
-    def meta(self):
-        return True
-
-    def copy(self):
-        return self.copy_local()
-
-    def copy_local(self, type_check=True):
-        r = MetaTerm(self.op, typ=self.type)
-        r.latex_op_str = self.latex_op_str
-        return r
-
-    def under_assignment(self, assignment):
-        # ensure that these terms are completely inert to assignments
-        return self
-
-    def __bool__(self):
-        # TODO: currently `0` converts to False, but perhaps it shouldn't,
-        # given that it doesn't compare equal to False, and MetaTerm(0, type_t)
-        # gives a TypeMismatch.
-        return bool(self.op)
-
-    def __eq__(self, other):
-        if other in self.type.domain:
-            # compare as equal to domain elements.
-            # while this will generally behave symmetrically if the type domain
-            # is constructed from python basic types, symmetric behavior can't
-            # be assumed in general. If the type domain involves objects that
-            # implement __eq__, and you want symmetry, you will have to special
-            # case the comparison to a MetaTerm.
-            return self.op == other
-        elif isinstance(other, TypedExpr):
-            # note: without the type check, 0 vs False and 1 vs True compare equal,
-            # because `bool` is a subtype of `int`
-            return other.meta() and self.type == other.type and self.op == other.op
-        else:
-            # neither a TypedExpr no a python object in the type domain
-            return False
-
-    def __hash__(self):
-        # overrode __eq__, so also need to override __hash__. We hash with
-        # the operator, since dict comparison relies on this.
-        if self.op.__hash__:
-            return self.op.__hash__()
-        else:
-            # this will probably raise. Certain python types we allow in `op`,
-            # namely dict and set, aren't hashable.
-            # TODO: convert to frozenset, and some sort of frozendict implementation?
-            return hash(self.op)
-
-    def op_repr(self, rich=False):
-        if self.type is None:
-            # error in constructor, just need something here
-            return str(self.op)
-        return self.type.domain.element_repr(self.op, rich=rich)
-
-    def calc_type_env(self, recalculate=False):
-        # currently, MetaTerms are not represented at all in the type
-        # environment. They definitely need to be absent from var_mapping, but
-        # should they be present in some form?
-        return TypeEnv()
-
-    def type_env(self, constants=False, target=None, free_only=True):
-        return set()
-
-    def free_terms(self, var_only=False):
-        return set()
-
-    def __repr__(self):
-        return f"{self.op_repr()}_{repr(self.type)}"
-
-    def latex_str(self, show_types=True, assignment=None, **kwargs):
-        # TODO: similar to __repr__, possibly this code should be on the
-        # type domain itself
-        # if just using `op` as the name, we use textsf, but setting
-        # an arbitrary latex name is allowed
-        if self.latex_op_str is None:
-            n = self.op_repr(rich=True)
-            # render the variable name as sans serif
-            op_str = f"\\textsf{{{n}}}"
-        else:
-            op_str = f"{self.latex_op_str}"
-        if not show_types or not self.should_show_type(assignment=assignment):
-            return ensuremath(op_str)
-        else:
-            # does this need to be in a \text? frontend compat in general...
-            return ensuremath(f"{{{op_str}}}_{{{self.type.latex_str()}}}")
-
-    @classmethod
-    def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(),
-                            prob_used=0.8, prob_var=0.5, max_type_depth=1):
-        # MetaTerm can also be instantiated by TypedTerm.random, and that is
-        # the only way that is reachable recursively
-        if typ is None:
-            typ = random.choice(list(get_type_system().atomics))
-
-        if typ not in get_type_system().atomics:
-            raise TypeMismatch(typ, "Can't randomly instantiate MetaTerm at this type")
-
-        return TypedExpr.term_factory(typ.domain.random(), typ)
-
-
-TypedExpr.add_local('MetaTerm', MetaTerm)
 
 
 class CustomTerm(TypedTerm):
@@ -2891,6 +2689,7 @@ def from_python(p, typ=None):
     else:
         # this will raise if there is no known type domain for python objects
         # of p's type
+        from .meta import MetaTerm
         return MetaTerm(p, typ=typ)
 
 
@@ -4087,6 +3886,7 @@ def derived(result, origin, desc=None, latex_desc=None, subexpression=None,
     history as a side effect."""
     # TODO: this looks wrong if a single expr is used in branching derivational
     # history
+    from .meta import MetaTerm
     if isinstance(result, MetaTerm) and result.derivation is None:
         result = result.copy()
     elif isinstance(result, TypedTerm) and result.derivation is None:

@@ -15,7 +15,7 @@ random_len_cap = 5
 
 def demeta(x):
     # the import here needs to be very narrow, to avoid circular import issues
-    from lamb.meta.core import MetaTerm
+    from lamb.meta.meta import MetaTerm
     if isinstance(x, MetaTerm):
         return x.op
     else:
@@ -2143,14 +2143,14 @@ class TypeMismatch(Exception):
             if (t is None or t == "?"
                                 or isinstance(i, meta.TypedTerm)
                                 or isinstance(i, lang.Item)):
-                if latex:
+                if latex and getattr(i, 'latex_str', None):
                     return f"{i.latex_str()}"
                 else:
                     return f"`{repr(i)}`"
             else:
                 # assumption: type is shown as part of `i`, so it would be
                 # redundant to print it
-                if latex:
+                if latex and getattr(i, 'latex_str'):
                     return f"{i.latex_str()}/{t.latex_str()}"
                 else:
                     return f"`{repr(i)}/{repr(t)}`"
