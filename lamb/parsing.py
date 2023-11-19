@@ -536,7 +536,7 @@ def flatten_paren_struc(struc):
     return s.strip()
 
 global brackets, close_brackets
-brackets = {"(" : ")"}
+brackets = {"(" : ")", "{" : "}"}
 close_brackets = {brackets[y] : y for y in brackets.keys()}
 
 def parse_paren_str(s, i, type_sys=None):
@@ -547,7 +547,7 @@ def parse_paren_str(s, i, type_sys=None):
     lists have the same structure. Each distinct sub-element represents a
     parenthesized grouping.
 
-    Right now only pays attention to ().  TODO: check other bracketings?"""
+    Right now only pays attention to () and {}."""
     stack = list()
     (seq, i) = parse_paren_str_r(s, i, stack, type_sys=type_sys)
     if len(stack) != 0:

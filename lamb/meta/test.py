@@ -557,6 +557,12 @@ class MetaTest(unittest.TestCase):
             te("~(p_t & P_<e,t>(x_e) & q_t)"),
             te("~P_<e,t>(x_e) | ~(p_t & q_t)")))
 
+    def test_simplify(self):
+        # test a few non-boolean equality cases. (These also exercise set/tuple
+        # parsing cases that aren't otherwise tested here)
+        self.assertTrue(TypedExpr.factory("{x_e, y_e} <=> {x_e, y_e}").simplify())
+        self.assertTrue(TypedExpr.factory("(x_e, y_e) <=> (x_e, y_e)").simplify())
+
     # each of these generates 1000 random expressions with the specified depth,
     # and checks whether their repr parses as equal to the original expression
     def test_repr_parse_0(self): test_repr_parse_abstract(self, 0)
