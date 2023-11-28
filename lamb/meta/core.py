@@ -41,11 +41,36 @@ def setup_logger():
     logger.addHandler(errch)
     logger.addHandler(infoch)
 
+
 setup_logger()
+
+
+_base_default_sopts = dict(
+    reduce=False,
+    eliminate_sets=False)
+
+
+def reset_sopts():
+    global default_sopts
+    default_sopts = _base_default_sopts.copy()
+
+
+default_sopts = {}
+reset_sopts()
+
+
+def get_sopt(opt, sopts=None):
+    if sopts is None:
+        sopts = dict()
+    if opt not in default_sopts:
+        # could just raise?
+        logger.warning(f"Unknown simplify option `{opt}`")
+    return sopts.get(opt, default_sopts.get(opt, None))
 
 
 global _constants_use_custom, _type_system
 _constants_use_custom = False
+
 
 def constants_use_custom(v):
     """Set whether constants use custom display routines."""
@@ -253,6 +278,7 @@ class OperatorRegistry(object):
             self.name = _cls.canonical_name
             self.cls = _cls
             self.arity = len(targs)
+            # XX this should eventually just use the full type system
             self.targs = targs
 
         def __hash__(self):
@@ -266,6 +292,13 @@ class OperatorRegistry(object):
                 and self.arity == other.arity
                 and self.targs == other.targs)
 
+        def __str__(self):
+            return f"OpDesc({self.name}, {self.cls.__name__}, {self.arity})"
+
+        def __repr__(self):
+            # n.b. not a true repr
+            return str(self)
+
         def get_names(self):
             # maybe include unicode?
             return [self.name] + list(self.cls.secondary_names)
@@ -276,20 +309,35 @@ class OperatorRegistry(object):
                     return True
             return False
 
+        def check_types_viable(self, *types, strict_none=False):
+            # None generally means don't check this arg place; a custom
+            # check_viable function for the class usually does the work.
+            # If the relevant types are not in the current type system, this
+            # will fail.
+            if self.arity != len(types):
+                return False
+
+            for i in range(len(types)):
+                # in `strict_none` mode, supply None for an argument slot to
+                # match None, otherwise, mismatch
+                if (strict_none and self.targs[i] is None or types[i] is None
+                            and self.targs[i] != types[i]):
+                    return False
+
+                # otherwise, None in either the op or input slot skips
+                if types[i] is None or self.targs[i] is None:
+                    continue
+
+                if not ts_compatible(self.targs[i], types[i]):
+                    return False
+            return True
+
         def check_viable(self, *args):
             # if the class has a custom check_viable, defer entirely to that
             if callable(getattr(self.cls, "check_viable", None)):
                 return self.cls.check_viable(*args)
-            if self.arity != len(args):
-                return False
-            # None means don't check this arg place.
-            # If the relevant types are not in the current type system, this
-            # will fail.
-            for i in range(len(args)):
-                if (self.targs[i] is not None
-                            and not ts_compatible(self.targs[i], args[i].type)):
-                    return False
-            return True
+
+            return self.check_types_viable(*[a.type for a in args])
 
     def __init__(self):
         self.clear()
@@ -313,8 +361,12 @@ class OperatorRegistry(object):
             self.arities[desc.arity] = dict()
         self.arities[desc.arity][desc] = True
 
-    def get_descs(self, op):
-        return list(self.ops[op].keys())
+    def get_descs(self, op, *types):
+        all_matches = list(self.ops[op].keys())
+        if len(types): # can't handle 0-ary operators if such a thing ever exists
+            return [o for o in all_matches if o.check_types_viable(*types, strict_none=True)]
+        else:
+            return all_matches
 
     def set_custom_transform(self, _cls, fun):
         # try to avoid using this...
@@ -1494,10 +1546,12 @@ class TypedExpr(object):
             result.update(a.bound_variables())
         return result
 
-    def find_safe_variable(self, starting="x"):
+    def find_safe_variable(self, starting="x", avoid_bound=True):
         """Find an a safe alpha variant of the starting point (by default: 'x'),
         that is not used in the expression."""
-        blockset = self.free_variables() | self.bound_variables()
+        blockset = self.free_variables()
+        if avoid_bound:
+            blockset = blockset | self.bound_variables()
         varname = alpha_variant(starting, blockset)
         return varname
 
@@ -1514,21 +1568,27 @@ class TypedExpr(object):
     def atomic(self):
         return len(self.args) == 0
 
-    def simplify(self):
+    def simplify(self, **sopts):
         return self
 
-    def simplify_all(self):
+    def simplify_all(self, pre=False, **sopts):
         result = self
+        if get_sopt('reduce', sopts):
+            result = result.reduce_all()
+            # don't apply `reduce` recursively, it is already recursive
+            sopts['reduce'] = False
         dirty = False
+        if pre:
+            result = result.simplify(**sopts)
         for i in range(len(result.args)):
-            new_arg_i = result.args[i].simplify_all()
+            new_arg_i = result.args[i].simplify_all(**sopts)
             if new_arg_i is not result.args[i]:
                 dirty = True
                 result = derived(result.subst(i, new_arg_i), result,
                     desc=("Recursive simplification of argument %i"
                             % i),
                     subexpression=new_arg_i)
-        result = result.simplify()
+        result = result.simplify(**sopts)
         return result
 
     def reducible(self):
@@ -1716,7 +1776,8 @@ class TypedExpr(object):
     def __rshift__(self, other): return self.factory('>>', self, other)
     def __or__(self, other):     return self.factory('|',  self, other)
     def __xor__(self, other):    return self.factory('^',  self, other)
-    def __mod__(self, other):    return self.factory('<=>',  self, other)
+    def equivalent_to(self, other): return self.factory('<=>',  self, other)
+    def __mod__(self, other):    return self.equivalent_to(other)
 
     def __lt__(self, other):     return self.factory('<',  self, other)
     def __le__(self, other):     return self.factory('<=', self, other)
@@ -2641,7 +2702,7 @@ class SyncatOpExpr(TypedExpr):
                             [a.latex_str(**kwargs) for a in self.args])))
 
     @classmethod
-    def join(cls, *l):
+    def join(cls, *l, empty=None):
         """Joins an arbitrary number of arguments using the binary operator.
         Note that currently association is left to right. Requires a subclass
         that defines a two-parameter __init__ function.  (I.e. will potentially
@@ -2652,8 +2713,10 @@ class SyncatOpExpr(TypedExpr):
         """
         if cls.arity != 2:
             raise ValueError("Can't join with a %d-ary operator", cls.arity)
+        if empty is None:
+            empty = from_python(True)
         if len(l) == 0:
-            return from_python(True)
+            return empty
         if len(l) == 1:
             return l[0]
         else:
@@ -2694,18 +2757,30 @@ def from_python(p, typ=None):
 
 
 def from_python_container(p):
-    from .sets import ListedSet
+    from .sets import sset
     # can this use collections.abc types?
     if isinstance(p, tuple):
         # should an empty tuple force a MetaTerm?
         return Tuple(p)
     elif isinstance(p, set):
-        return ListedSet(p)
+        return sset(p)
     elif isinstance(p, dict) and len(p) == 0:
         # hack: empty dict is treated as empty set, so that "{}" makes sense
-        # XX should this return a MetaTerm? Right now, ListedSet(set()) produces
-        # a set at type {X}
-        return ListedSet(set())
+        return sset(set())
+    return None
+
+
+def to_python_container(e):
+    from .sets import ListedSet
+    if isinstance(e, ListedSet):
+        return e.set()
+    elif isinstance(e, Tuple):
+        return e.tuple()
+    elif e.meta() and (
+                isinstance(e.type, types.SetType)
+                or isinstance(e.type, types.FunType)
+                or isinstance(e.type, types.TupleType)):
+        return e.op
     return None
 
 
@@ -2737,7 +2812,7 @@ def op(op, arg_type, ret_type,
                 self.operator_style = True
                 super().__init__(ret_type, *args, tcheck_args=False)
 
-            def simplify(self):
+            def simplify(self, **sopts):
                 parts = [to_python(a.copy()) for a in self.args]
                 if python_only and any([isinstance(a, TypedExpr) for a in parts]):
                     return self
@@ -2779,7 +2854,7 @@ class BinaryGenericEqExpr(SyncatOpExpr):
         # just use "<=>" in the normalized form
         super().__init__(type_t, arg1, arg2, tcheck_args = False)
 
-    def simplify(self):
+    def simplify(self, **sopts):
         if (self.args[0].op in self.argtype.domain
                             and self.args[1].op in self.argtype.domain):
             # equality check on elements of the underlying type domain
@@ -2805,7 +2880,9 @@ class BinaryGenericEqExpr(SyncatOpExpr):
         principal_type = ts_unify(args[0].type, args[1].type)
         # leave type t to the simply-typed biconditional operator
         # TODO: it should be possible to handle this in a more generalized way
-        return principal_type is not None and principal_type != type_t
+        return (principal_type is not None
+            and principal_type != type_t
+            and not isinstance(principal_type, types.SetType))
 
 
 class TupleIndex(SyncatOpExpr):

@@ -1,16 +1,48 @@
 import random
 import lamb
 from lamb import types, utils
-from .core import derived, registry, get_type_system, BindingOp, TypedExpr
-from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm
+from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
+from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
 from .meta import MetaTerm
-from .boolean import BinaryOrExpr
+from .boolean import BinaryOrExpr, BinaryAndExpr, ForallUnary, ExistsUnary, false_term, true_term
 from lamb.types import type_t, SetType
+
 
 def setup_operators():
     # type {X}
     registry.add_operator(SetContains, None, None)
+    registry.add_operator(SetUnion, None, None)
+    registry.add_operator(SetIntersection, None, None)
+    registry.add_operator(SetDifference, None, None)
+    registry.add_operator(SetEquivalence, None, None)
+    registry.add_operator(SetSubset, None, None)
+    registry.add_operator(SetProperSubset, None, None)
+    registry.add_operator(SetSupset, None, None)
+    registry.add_operator(SetProperSupset, None, None)
     registry.add_binding_op(ConditionSet)
+
+
+def safevar(e, typ=None):
+    # a set-specific set of heuristics for finding a good usable/safe variable.
+    varname = "x"
+    if isinstance(e, ConditionSet):
+        varname = e[0].op
+        typ = e.type.content_type
+    elif isinstance(e, BinarySetOp):
+        # e's type isn't guaranteed to give the set type, but we can get it
+        # from the operands for all subclasses
+        typ = e[0].type.content_type
+        if isinstance(e[0], ConditionSet):
+            varname = e[0][0].op
+        elif isinstance(e[1], ConditionSet):
+            varname = e[1][0].op
+    elif isinstance(e.type, SetType):
+        typ = e.type.content_type
+
+    if typ is None:
+        typ = e.type # is this actually useful?
+    return TypedTerm(e.find_safe_variable(starting=varname, avoid_bound=False), typ=typ)
+
 
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
@@ -29,9 +61,6 @@ class ConditionSet(BindingOp):
                 type_check=type_check)
         self.type = SetType(self.vartype)
 
-    def structural_singleton(self):
-        pass
-
     def term(self):
         return False
 
@@ -47,6 +76,14 @@ class ConditionSet(BindingOp):
         """Return a LFun based on the condition used to describe the set."""
         return LFun(self.vartype, self.body, self.varname)
 
+    def simplify(self, **sopts):
+        if self[1] == false_term:
+            return emptyset(self.type)
+        # the true_term case has no simpler version. (Should there be a
+        # MetaTerm value for this case for each type?)
+
+        return self
+
     def try_adjust_type_local(self, unified_type, derivation_reason,
                                                             assignment, env):
         inner_type = unified_type.content_type
@@ -55,16 +92,70 @@ class ConditionSet(BindingOp):
         new_condition = char.apply(sub_var)
         return self.copy_local(sub_var, new_condition)
 
+
 class ListedSet(TypedExpr):
-    """A listed set is a set that simply lists members."""
+    """A ListedSet is a set that simply lists members. The elements can be
+    any typed expression, as long as the types are consistent with the whole
+    set type. This class allows duplicate expressions, but they have the
+    semantics of a regular set -- no multiple membership. Correspondingly, a
+    `simplify()` call will remove duplicate members. Note that the constructor
+    does *not* do this (though the standard way of creating a set in the
+    metalanguage parsing code will have this effect).
+
+    `ListedSet`s are actually very weird objects. The reason is that they
+    describe sets over some underlying type domain, but via metalanguage
+    objects whose resolution in the type domain is potentially undetermined.
+    If every element is a MetaTerm, then their behavior will be like you
+    expect. But for any other case, it becomes stranger. Examples:
+
+    * What is the cardinality of `{X_e, Y_e}`? It is at least 1 and at most
+      2. The reason is that X and Y could be equal, or could be distinct, but
+      either way the set will have an element.
+    * Is `{X,Y} <=> {Z}`? If X == Y == Z, then yes, otherwise, no.
+    * Is `{X,Y} <=> {X,Y}`? Yes: positive syntactic identity does guarantee
+      equivalence.
+    * What is `{X, Y} ∩ {Z}`? It could be the empty set (if Z != X and Z != Y),
+      or it could be a singleton (if Z == X or Z == Y, where X == Y or X != Y).
+    * Pretty much the only intuitive operation is ∪.
+    * Is `{X,Y} ⊂ {Z}`? In this case, the answer must be no. If X and Y are
+      distinct, this is clear. But if X == Y, then either Z != X (in which case
+      there is no overlap at all) or X == Z (in which case the two sets are
+      equivalent).
+    * Is `{X} ⊂ {Y,Z}`? If X != Y and X == Z, or X != Z and X == Y, then the
+      answer is yes. But if X != Y and X != Z, or if X == Y == Z, then the
+      answer is no.
+    * Difference is a complete mess. What is {X,Y} - {Y}? Well, if X == Y, then
+      it's an empty set, otherwise, it's {X}. This means that you can't even
+      use syntactic difference safely. {X,Y} - {Y,Z} is even worse, etc.
+
+    General notes:
+
+    * The empty set is typed like other sets. So there is an empty set of type
+      {e}, of type {t}, etc. We use {?} as the type for an empty set constructed
+      without constraints.
+    * A ListedSet whose expression cardinality is 1 is guaranteed to be distinct
+      from one whose expression cardinality is 0. But in general, (non-)equality
+      for other expressions cardinalities is contingent on the values of the
+      expressions. Or in other words: expression cardinality 0/1 are equivalent
+      to actual set cardinality, but there are no guarantees for expression
+      cardinality > 1.
+    * As noted above, a set consisting only of MetaTerms has "normal" behavior
+      for naive set theory; expression cardinality = set cardinality, the
+      operations and relations can be computed directly on members, etc.
+    * One thing that is safe: conversion of a ListedSet into a ConditionSet
+      with a disjunction of equalities. But these formulae are often extremely
+      unwieldy.
+    """
     canonical_name = "ListedSet"
     op_name_uni="ListedSet"
     op_name_latex="ListedSet"
 
     def __init__(self, iterable, typ=None, assignment=None, type_check=True):
-        s = set(iterable) # remove duplicates, flatten order
-        args = [self.ensure_typed_expr(a,assignment=assignment) for a in s]
-        args = sorted(args, key=repr) # for a canonical ordering
+        # note! uniqueness is not enforced here.
+        # * Syntactic duplicates are removed on `simplify()`
+        # * the standard metalanguage parser filters out duplicates in advance
+        #   of constructing the ListedSet object.
+        args = [self.ensure_typed_expr(a,assignment=assignment) for a in iterable]
         # `typ` here is the content type.
         if len(args) == 0 and typ is None:
             typ = types.UnknownType() # could be a set of anything
@@ -81,23 +172,16 @@ class ListedSet(TypedExpr):
                 raise e
         super().__init__("Set", *args)
         self.type = SetType(typ)
-
-    def subst(self, i, s):
-        if len(self.args) < 2:
-            return super().subst(i, s)
-        else:
-            raise NotImplementedError(
-                "Beta reduction into a set of size>1 not currently supported.")
-            # TODO deal with this
-            # the problem is the same as usual -- set order isn't stable so we
-            # need to do this all at once rather than  member-by-member.
+        self.set_simplified = False
 
     def copy(self):
         return self.copy_local(*self.args)
 
     def copy_local(self, *args, type_check=True):
-        # to handle the empty set correctly here, explicit typing is necessary
-        return ListedSet(args, typ=self.type[0])
+        # explicit handling of empty sets in order to get the type right
+        if len(args) == 0:
+            return emptyset(self.type)
+        return ListedSet(args)
 
     def term(self):
         return False
@@ -107,56 +191,49 @@ class ListedSet(TypedExpr):
         return SetContains(i, self)
 
     def set(self):
-        """Return a python `set` version of the ListedSet.
-
-        Note that this isn't guaranteed to be defined for everythingthing with a
-        set type."""
+        """Return a python `set` of terms in the ListedSet. This of course uses
+        syntactic identity, so while every term will be unique via this
+        criteria, it is not guarantted to be the "true" set (unless it consists
+        only of `MetaTerm`s)."""
         return set(self.args)
 
-    def cardinality(self):
-        return len(self.args)
+    def sorted_set(self):
+        s = self.set()
+        return sorted(s, key=repr)
 
     def to_condition_set(self):
         """Convert to a condition set by disjoining members."""
-        # ensure that we build a condition set from a variable that is not free
-        # in any of the members
-        varname = self.find_safe_variable(starting="x")
-        conditions = [BinaryGenericEqExpr(TypedTerm(varname, a.type), a)
-                                                            for a in self.args]
-        return ConditionSet(self.type.content_type,
-                            BinaryOrExpr.join(*conditions),
-                            varname=varname)
+        s = self.simplify()
+        var = TypedTerm(s.find_safe_variable(starting="x"), self.type.content_type)
+        conditions = [(var % a) for a in s.args]
+        # n.b. an empty set gives a ConditionSet that simplifies back to the
+        # starting point
+        return ConditionSet(var, BinaryOrExpr.join(*conditions, empty=false_term))
 
-    def reduce_all(self):
-        """Special-cased reduce_all for listed sets.  There are two problems.
-        First, the reduction may actually result in a change in the size of the
-        set, something generally not true of reduction elsewhere.  Second,
-        because the constructor calls `set`, `copy` is not guaranteed to return
-        an object with a stable order.  Therefore we must batch the reductions
-        (where the TypedExpr version doesn't).
+    def to_characteristic(self):
+        s = self.simplify()
+        var = TypedTerm(s.find_safe_variable(starting="x"), typ=self.type.content_type)
+        # an alternative: go directly to self.to_condition_set().to_characteristic()
+        return LFun(var, (var << s))
 
-        Note that currently this produces non-ideal derivation sequences."""
-        dirty = False
-        accum = list()
-        result = self
-        for i in range(len(result.args)):
-            new_arg_i = result.args[i].reduce_all()
-            if new_arg_i is not result.args[i]:
-                dirty = True
-                reason = "Recursive reduction of set member %s" % (i+1)
-                # TODO: this isn't quite right but I can't see what else to do
-                # right now
-                result = derived(result, result, desc=reason,
-                                    subexpression=new_arg_i, allow_trivial=True)
-                accum.append(new_arg_i)
-            else:
-                accum.append(new_arg_i)
-        if dirty:
-            new_result = ListedSet(accum)
-            new_result = derived(new_result, result,
-                            desc="Construction of set from reduced set members")
-            result = new_result
+    def simplify(self, **sopts):
+        # eliminate any duplicates under syntactic identity when simplifying
+        if self.set_simplified or len(self.args) <= 1:
+            return self
+        args = set(self.args) # remove duplicates, flatten order
+        domain = self.type.content_type.domain
+        if isinstance(domain, types.DomainSet) and domain.finite and args > domain.domain:
+            # if every domain element is present in `args`, drop extraneous
+            # elements. E.g. `{True, False, p_t}` simplifies to just {True, False}.
+            args = args & domain.domain
+        args = sorted(args, key=repr) # for a canonical ordering
+        result = self.copy_local(*args)
+        result.set_simplified = True
         return result
+
+    def simplify_all(self, **sopts):
+        # run self.simplify() before the recursive step as well as after
+        return super().simplify_all(pre=True, **sopts)
 
     def __repr__(self):
         if not len(self.args):
@@ -179,6 +256,12 @@ class ListedSet(TypedExpr):
 
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
                                                                         env):
+        if len(self.args) == 0:
+            # handle empty sets directly.
+            # no actual type checking here -- this code shouldn't be reachable
+            # unless unify has already succeeded.
+            return emptyset(unified_type)
+
         inner_type = unified_type.content_type
         content = [a.try_adjust_type(inner_type,
                         derivation_reason=derivation_reason,
@@ -187,8 +270,9 @@ class ListedSet(TypedExpr):
         return result
 
     @classmethod
-    def random(self, ctrl, max_type_depth=1, max_members=6, allow_empty=True):
-        typ = get_type_system().random_type(max_type_depth, 0.5)
+    def random(self, ctrl, max_type_depth=1, max_members=6, typ=None, allow_empty=True):
+        if typ is None:
+            typ = get_type_system().random_type(max_type_depth, 0.5)
         if allow_empty:
             r = range(max_members+1)
         else:
@@ -199,7 +283,18 @@ class ListedSet(TypedExpr):
             # untyped (`{?}`) empty set
             return ListedSet(members)
         else:
-            return ListedSet(members, typ=typ)
+            return sset(members, typ=typ)
+
+
+def emptyset(settype=None):
+    """Convenience factory for empty sets"""
+    if settype is not None and isinstance(settype, SetType):
+        settype = settype.content_type
+    return ListedSet(set(), settype)
+
+
+def sset(iterable, typ=None, assignment=None):
+    return ListedSet(iterable, typ=typ, assignment=assignment).simplify()
 
 
 class SetContains(SyncatOpExpr):
@@ -211,6 +306,7 @@ class SetContains(SyncatOpExpr):
 
     arity = 2
     canonical_name = "<<"
+    op_name_uni = "∈"
     # ∈ should work but I was having trouble with it (long ago, recheck)
     op_name_latex = "\\in{}"
 
@@ -228,7 +324,7 @@ class SetContains(SyncatOpExpr):
     def copy_local(self, arg1, arg2, type_check=True):
         return SetContains(arg1, arg2)
 
-    def reduce(self):
+    def simplify(self, **sopts):
         if isinstance(self.args[1], ConditionSet):
             derivation = self.derivation
             step = (self.args[1].to_characteristic()(self.args[0])).reduce()
@@ -239,20 +335,371 @@ class SetContains(SyncatOpExpr):
             # TODO: this should be code on the set object, not here
             result = MetaTerm(self.args[0].op in self.args[1].op)
             return derived(result, self, "∈ reduction")
+        elif isinstance(self.args[1], ListedSet) and len(self.args[1]) == 0:
+            return derived(false_term, self, "∈ reduction (empty set)")
+        elif isinstance(self.args[1], ListedSet) and len(self.args[1]) == 1:
+            content, = self.args[1]
+            return derived(self.args[0] % content, self,
+                                            "∈ reduction (singleton set)")
+        elif isinstance(self.args[1], ListedSet) and get_sopt('eliminate_sets', sopts):
+            # tends to produce fairly long expressions
+            conditions = [(self.args[0] % a) for a in self.args[1]]
+            return BinaryOrExpr.join(*conditions).simplify_all(**sopts)
         else:
-            # leave ListedSets as-is for now.  TODO could expand this using
-            # disjunction.
-            # TODO: this really needs something...
+            # leave other ListedSets as-is for now.
             return self
 
-    def reducible(self):
-        if isinstance(self.args[1], ConditionSet):
-            return True
-        return False
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1, typ=None):
+        if typ is None:
+            typ = get_type_system().random_type(max_type_depth, 0.5)
+        return SetContains(ctrl(typ=typ), ctrl(typ=SetType(typ)))
+
+
+def check_set_types(arg1, arg2, op_name=None):
+    if not isinstance(arg1.type, SetType) or not isinstance(arg2.type, SetType):
+        if op_name:
+            # XX these errors are a bit odd
+            raise types.TypeMismatch(arg1, arg2, f"{op_name} requires set types")
+        else:
+            return None
+    ctype = get_type_system().unify(arg1.type.content_type, arg2.type.content_type)
+    if ctype is None:
+        if op_name:
+            raise types.TypeMismatch(arg1, arg2, f"{op_name} requires equivalent set types")
+        else:
+            return None
+
+    return SetType(ctype)
+
+
+class BinarySetOp(SyncatOpExpr):
+    arity = 2
+
+    def __init__(self, arg1, arg2, op_name, typ=None, type_check=True):
+        t = check_set_types(arg1, arg2, op_name=op_name)
+        arg1 = self.ensure_typed_expr(arg1, t)
+        arg2 = self.ensure_typed_expr(arg2, t)
+        if typ is None:
+            typ = t
+        super().__init__(typ, arg1, arg2, tcheck_args=False)
 
     @classmethod
-    def random(cls, ctrl, max_type_depth=1):
-        content_type = get_type_system().random_type(max_type_depth, 0.5)
-        return SetContains(ctrl(typ=content_type), ctrl(
-                                            typ=SetType(content_type)))
+    def check_viable(cls, *args):
+        if len(args) != 2:
+            return False
+        return check_set_types(args[0], args[1]) is not None
+
+    def copy(self):
+        return self.copy_local(*self.args)
+
+    def copy_local(self, *args, type_check=True):
+        # can this technique be pushed into TypedExpr?
+        return self.__class__(*args)
+
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1, typ=None):
+        if cls == BinarySetOp:
+            raise NotImplementedError("`random` called on abstract class `BinarySetOp`")
+        if typ is None:
+            typ = SetType(get_type_system().random_type(max_type_depth, 0.5))
+        # XX random ConditionSet
+        # s1 = ListedSet.random(ctrl, max_type_depth=max_type_depth, typ=typ)
+        # s2 = ListedSet.random(ctrl, max_type_depth=max_type_depth, typ=typ)
+        return cls(ctrl(typ=typ), ctrl(typ=typ))
+
+    def try_adjust_type_local(self, typ, reason, assignment, env):
+        if self.type == type_t:
+            return super().try_adjust_type_local(unified_type,
+                                            derivation_reason, assignment, env)
+        return self.copy_local(
+            self.args[0].try_adjust_type(typ, reason, assignment),
+            self.args[1].try_adjust_type(typ, reason, assignment))
+
+
+class SetUnion(BinarySetOp):
+    """Binary operation of set union."""
+
+    canonical_name = "|"
+    op_name_uni = "∪"
+    op_name_latex = "\\cup{}"
+
+    def __init__(self, arg1, arg2, type_check=True):
+        super().__init__(arg1, arg2, "Set union")
+
+
+    def simplify(self, **sopts):
+        s1 = to_python_container(self.args[0])
+        s2 = to_python_container(self.args[1])
+        if s1 is not None and s2 is not None:
+            if self.args[0].meta() and self.args[1].meta():
+                # only generate a metaterm if we started with two metaterms,
+                # independent of the content
+                return MetaTerm(s1 | s2)
+            else:
+                return sset(s1 | s2) # blessedly simple
+        elif s1 is not None and len(s1) == 0:
+            return self.args[1] # {} | X = X
+        elif s2 is not None and len(s2) == 0:
+            return self.args[0] # X | {} = X
+
+        # for everything except ConditionSets, this tends to make the formula
+        # more unwieldy
+        if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
+                or get_sopt('eliminate_sets', sopts)):
+            var = safevar(self)
+            return ConditionSet(var,
+                (var << self.args[0]) | (var << self.args[1])).simplify_all(**sopts)
+
+        return self
+
+    def simplify_all(self, **sopts):
+        # for set operations, we need to run self.simplify() before the
+        # recursive steps.
+        return super().simplify_all(pre=True, **sopts)
+
+
+class SetIntersection(BinarySetOp):
+    """Binary operation of set intersection."""
+
+    canonical_name = "&"
+    op_name_uni = "∩"
+    op_name_latex = "\\cap{}"
+
+    def __init__(self, arg1, arg2, type_check=True):
+        super().__init__(arg1, arg2, "Set intersection")
+
+    def simplify(self, **sopts):
+        s1 = to_python_container(self.args[0])
+        s2 = to_python_container(self.args[1])
+        if s1 is not None and s2 is not None:
+            if self.args[0].meta() and self.args[1].meta():
+                # only generate a metaterm if we started with two metaterms,
+                # independent of the content
+                return MetaTerm(s1 & s2, typ=self.type.content_type)
+
+            if s1 <= s2 or s2 <= s1:
+                # this case is also also safe: there's no way for expression
+                # resolution to expand sets that are in a subset relation.
+                # this covers empty set cases.
+                return sset(s1 & s2, typ=self.type.content_type)
+
+            # otherwise, we need to do some more complicated checks.
+            definite = set()
+            tbd = set()
+            for x in s1 | s2:
+                if x in s1 and x in s2:
+                    definite.add(x)
+                elif not x.meta():
+                    tbd.add(x)
+                # a MetaTerm that is not in both can be excluded at this point
+
+            definite_expr = sset(definite, typ=self.type.content_type)
+
+            if len(tbd) == 0:
+                # everything can be verified
+                return definite_expr
+
+            if not get_sopt('eliminate_sets', sopts):
+                # everything past here in this branch can get pretty unwieldy
+                return self
+
+            var = safevar(self)
+            if len(definite) == 0:
+                # disjoint, as far as what can be verified goes. That is,
+                # anything non-meta is in `tbd`. We can do very little with this
+                # case.
+                return ConditionSet(var, (var << self.args[0]) & (var << self.args[1]))
+
+            tbd = ConditionSet(var, (var << sset(tbd, typ=self.type.content_type)
+                                        & (var << sset(s1 - definite))
+                                        & (var << sset(s2 - definite))))
+            return (definite_expr | tbd).simplify_all(**sopts)
+
+        elif s1 is not None and len(s1) == 0:
+            return emptyset(self.type) # {} & X = {}
+        elif s2 is not None and len(s2) == 0:
+            return emptyset(self.type) # X & {} = {}
+
+        if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
+                or get_sopt('eliminate_sets', sopts)):
+            var = safevar(self)
+            return ConditionSet(var,
+                (var << self.args[0]) & (var << self.args[1])).simplify_all(**sopts)
+        return self
+
+    def simplify_all(self, **sopts):
+        # for set operations, we need to run self.simplify() before the
+        # recursive steps.
+        return super().simplify_all(pre=True, **sopts)
+
+
+class SetDifference(BinarySetOp):
+    """Binary operation of set difference."""
+
+    canonical_name = "-"
+    op_name_latex = "-"
+
+    def __init__(self, arg1, arg2, type_check=True):
+        super().__init__(arg1, arg2, "Set difference")
+
+    def simplify(self, **sopts):
+        s1 = to_python_container(self.args[0])
+        s2 = to_python_container(self.args[1])
+        if s1 is not None and s2 is not None:
+            if self.args[0].meta() and self.args[1].meta():
+                # only generate a metaterm if we started with two metaterms,
+                # independent of the content
+                return MetaTerm(s1 - s2, typ=self.type.content_type)
+
+            if s2 == s1:
+                return emptyset(self.type)
+            # XX implement something more here
+            # warning: cases like {X,Y} - {Y} are not safe to simplify under
+            # syntactic identity, since if X == Y, then {X} is actually wrong.
+
+        if s1 is not None and len(s1) == 0:
+            return emptyset(self.type) # {} - X = {}
+        elif s2 is not None and len(s2) == 0:
+            return self.args[0] # X - {} = X
+
+        if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
+                or get_sopt('eliminate_sets', sopts)):
+            var = safevar(self)
+            return ConditionSet(var, (var << self.args[0]) & (~(var << self.args[1]))).simplify_all(**sopts)
+        return self
+
+    def simplify_all(self, **sopts):
+        # for set operations, we need to run self.simplify() before the
+        # recursive steps.
+        return super().simplify_all(pre=True, **sopts)
+
+
+class SetEquivalence(BinarySetOp):
+    """Binary relation of set equivalence."""
+
+    canonical_name = "<=>"
+    op_name_latex = "="
+
+    def __init__(self, arg1, arg2, type_check=True):
+        super().__init__(arg1, arg2, "Set equivalence", typ=type_t)
+
+    def simplify(self, **sopts):
+        s1 = to_python_container(self.args[0])
+        s2 = to_python_container(self.args[1])
+        if s1 is not None and s2 is not None:
+            if len(s1) == 0 or len(s2) == 0:
+                # this case is relatively straightforward: we can go simply
+                # on the basis of expression cardinality
+                return MetaTerm(len(s1) == len(s2))
+            elif s1 == s2:
+                # special case syntactic equality, this one is safe
+                return true_term
+            elif len(s1) == 1 and len(s2) == 1:
+                # special case two singletons
+                e1, = s1
+                e2, = s2
+                return e1.equivalent_to(e2).simplify_all(**sopts)
+
+            # tally up all the potential mismatches
+            meta_left = {x for x in s1 - s2 if x.meta()}
+            tbd_left = s1 - s2 - meta_left
+            meta_right = {x for x in s2 - s1 if x.meta()}
+            tbd_right = s1 - s2 - meta_right
+            # there's possibly some more fine-grained checks that could be done
+            # for mixed meta/non-meta sets
+            if len(meta_left) > len(tbd_right):
+                # too many MetaTerms in the left for non-MetaTerms on the right
+                return false_term
+            if len(meta_right) > len(tbd_left):
+                # too many MetaTerms in the right for non-MetaTerms on the left
+                return false_term
+
+            if not get_sopt('eliminate_sets', sopts):
+                return self
+
+            var = safevar(self)
+            # two special cases where we can safely eliminate some elements of
+            # a subset from consideration
+            if s1 < s2:
+                return ForallUnary(var, ((var << self.args[0]).equivalent_to(var << sset(s2 - s1)))).simplify_all(**sopts)
+            elif s2 < s1:
+                return ForallUnary(var, ((var << self.args[1]).equivalent_to(var << sset(s1 - s2)))).simplify_all(**sopts)
+
+            # at this point, fallthrough to the general case. (Is there anything
+            # better that could be done?)
+
+        if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
+                or get_sopt('eliminate_sets', sopts)):
+            var = safevar(self)
+            return ForallUnary(var,
+                ((var << self.args[0]).equivalent_to(var << self.args[1]))).simplify_all(**sopts)
+        return self
+
+class SetSubset(BinarySetOp):
+    """Binary relation of (non-proper) subsethood."""
+
+    canonical_name = "<="
+    op_name_uni = "⊆"
+    op_name_latex = "\\subseteq{}"
+
+    def __init__(self, arg1, arg2, type_check=True):
+        super().__init__(arg1, arg2, "Subset", typ=type_t)
+
+    def simplify(self, **sopts):
+        test = (self.args[0].equivalent_to(self.args[0] & self.args[1]))
+        simplified = test.simplify_all(**sopts)
+        if simplified is test and not get_sopt('eliminate_sets', sopts):
+            return self
+        else:
+            return simplified
+
+
+class SetProperSubset(BinarySetOp):
+    """Binary relation of proper subsethood."""
+
+    canonical_name = "<"
+    op_name_uni = "⊂"
+    op_name_latex = "\\subset{}"
+
+    def __init__(self, arg1, arg2, type_check=True):
+        super().__init__(arg1, arg2, "Proper subset", typ=type_t)
+
+    def simplify(self, **sopts):
+        test = ((self.args[0] <= self.args[1]) & (~(self.args[0].equivalent_to(self.args[1])))).simplify_all(**sopts)
+        simplified = test.simplify_all(**sopts)
+        if simplified is test and not get_sopt('eliminate_sets', sopts):
+            return self
+        else:
+            return simplified
+
+
+class SetSupset(BinarySetOp):
+    """Binary relation of (non-proper) supersethood."""
+
+    canonical_name = ">="
+    op_name_uni = "⊇"
+    op_name_latex = "\\supseteq{}"
+
+    def __init__(self, arg1, arg2, type_check=True):
+        super().__init__(arg1, arg2, "Superset", typ=type_t)
+
+    def simplify(self, **sopts):
+        # always normalize to <=
+        return SetSubset(self.args[1], self.args[0]).simplify(**sopts)
+
+
+class SetProperSupset(BinarySetOp):
+    """Binary relation of proper supersethood."""
+
+    canonical_name = ">"
+    op_name_uni = "⊃"
+    op_name_latex = "\\supset{}"
+
+    def __init__(self, arg1, arg2, type_check=True):
+        super().__init__(arg1, arg2, "Proper superset", typ=type_t)
+
+    def simplify(self, **sopts):
+        # always normalize to <
+        return SetProperSubset(self.args[1], self.args[0]).simplify(**sopts)
 

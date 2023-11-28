@@ -1,10 +1,12 @@
-import logging, unittest, random
+import logging, unittest, random, enum
+import collections.abc
 import lamb
 from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from . import core, boolean, number, sets, meta
 from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
 from .meta import MetaTerm
+
 
 def repr_parse(e):
     result = te(repr(e), let=False)
@@ -34,9 +36,15 @@ def random_binding_expr(ctrl, max_type_depth=1):
 
 def random_lfun(typ, ctrl):
     global random_used_vars
-    typ = get_type_system().unify(typ, tp("<?,?>"))
-    input_type = typ.left
-    body_type = typ.right
+    ftyp = typ
+    if ftyp is not None:
+        ftyp = get_type_system().unify(typ, tp("<?,?>"))
+    # n.b.: unification here can get ? types, if `typ` is a variable. So use
+    # with care -- e.g. it can lead to repr_parse failures.
+    if ftyp is None:
+        raise ValueError(f"Need a functional type to generate random LFuns, got {typ}")
+    input_type = ftyp.left
+    body_type = ftyp.right
     variable = random_term(input_type, usedset=random_used_vars, prob_used=0.2,
                                                         prob_var=1.0)
     random_used_vars |= {variable}
@@ -44,14 +52,18 @@ def random_lfun(typ, ctrl):
 
 def random_lfun_force_bound(typ, ctrl):
     global random_used_vars
-    typ = get_type_system().unify(typ, tp("<?,?>"))
-    input_type = typ.left
-    body_type = typ.right
+    ftyp = typ
+    if ftyp is not None:
+        ftyp = get_type_system().unify(typ, tp("<?,?>"))
+    if ftyp is None:
+        raise ValueError(f"Need a functional type to generate random LFuns, got {typ}")
+    input_type = ftyp.left
+    body_type = ftyp.right
     variable = random_term(input_type, usedset=random_used_vars, prob_used=0.2,
                                                         prob_var=1.0)
     random_used_vars |= {variable}
     return LFun(variable, random_pred_combo_from_term(body_type, ctrl,
-                                                    usedset=random_used_vars))
+                                                    termset=random_used_vars))
 
 
 random_types = [type_t]
@@ -61,7 +73,7 @@ def random_tf_op_expr(ctrl_fun):
     op = random.choice(random_ops)
     while op not in core.registry.ops:
         op = random.choice(random_ops)
-    op = random.choice(core.registry.get_descs(op)) # probably size 1
+    op = random.choice(core.registry.get_descs(op, type_t, type_t)) # probably size 1
     if op.has_blank_types():
         raise NotImplementedError
     return op.cls(*[ctrl_fun(typ=t) for t in op.targs])
@@ -69,14 +81,22 @@ def random_tf_op_expr(ctrl_fun):
 
 # use this to try to get more reused bound variables (which tend to have odd
 # types when generated randomly)
-def random_pred_combo_from_term(output_type, ctrl, usedset):
+def random_pred_combo_from_term(output_type, ctrl, termset):
+    if len(termset) == 0:
+        raise ValueError("Can't generate an expression from a term without any terms!")
+    if output_type is None:
+        output_type = type_t
     ts = get_type_system()
-    term = (random.choice(list(usedset))).copy()
+    term = (random.choice(list(termset))).copy()
     pred_type = ts.unify_ar(term.type, output_type)
+    if pred_type is None:
+        raise ValueError(f"Incompatible predicate {term} for requested type {output_type}")
     pred = ctrl(typ=pred_type)
     return pred(term)
 
 def random_fa_combo(output_type, ctrl, max_type_depth=1):
+    if output_type is None:
+        output_type = type_t
     ts = get_type_system()
     input_type = ts.random_type(max_type_depth, 0.5, allow_variables=False)
     fun_type = types.FunType(input_type, output_type)
@@ -97,30 +117,71 @@ def random_from_class(cls, max_depth=1, used_vars=None):
     return cls.random(ctrl)
 
 
+random_set_ops = [sets.SetUnion, sets.SetIntersection, sets.SetDifference]
+random_set_rels = [sets.SetEquivalence, sets.SetSubset, sets.SetProperSubset,
+                   sets.SetSupset, sets.SetProperSupset, sets.SetContains]
+
+
+def random_set_expr(ctrl, typ=None):
+    if typ is not None and not isinstance(typ, types.SetType):
+        raise ValueError(f"Generating a random set operator expression requires a set type, got {typ}")
+    return random.choice(random_set_ops).random(ctrl, typ=typ)
+
+
+def random_set_rel(ctrl, typ=None):
+    if typ is not None and not isinstance(typ, types.SetType):
+        raise ValueError(f"Generating a random set relation expression requires a set type, got {typ}")
+    return random.choice(random_set_rels).random(ctrl, typ=typ)
+
+
 # ugh, need to find a way to do this not by side effect
 global random_used_vars
 random_used_vars = set()
 
-def random_expr(typ=None, depth=1, used_vars=None):
+class RType(enum.Enum):
+    FA_COMBO = 1
+    BOOLEAN_OP_EXPR = 2
+    BINDING_EXPR = 3
+    LFUN = 4
+    LFUN_BOUND = 5 # ensures that there is a bound variable
+    TERM_PRED_COMBO = 6
+    SET_RELATION = 7
+    SET_OP = 8
+
+def random_expr(typ=None, depth=1, max_type_depth=1, options=None, used_vars=None):
     """Generate a random expression of the specified type `typ`, with an AST of
-    specified `depth`. Leave used_vars as None for expected behavior.
+    specified `depth`, according to schemas optionally supplied by `options`
+    (which should use values from the enum `test.RType`).
 
     This won't generate absolutely everything, and I haven't tried to make this
     use some sensible distribution over expressions (whatever that would be).
-    If typ is None, it will draw from the random_types module level variable,
-    which is currently just [type_t].
 
-    An alternative approach would be to generate a random AST first, and fill
-    it in.
+    If `options` is None, use all schemas compatible with the provided type.
+    If both `typ` and `options` are `None`, uses all schemas compatible with
+    type `t`. Several options (LFUN and LFUN_BOUND) require, if specified
+    explicitly, a matching (functional) type and will error if this isn't
+    provided. Other options that allow type arguments do not require them, and
+    will default to `t` if none are provided.
+
+    The schema `TERM_PRED_COMBO` requires `used_vars` to provide a non-empty
+    TypedExpr variables, that it will attempt to use, and will error if this
+    isn't provided. (This is primarily intended to be used recursively.)
     """
+    # An alternative approach would be to generate a random AST first, and fill
+    # it in.
+
     global random_used_vars
+    initial_call = False
     if used_vars is None:
+        initial_call = True
         used_vars = set()
     random_used_vars = used_vars
-    if typ is None:
+    if typ is None and options is None:
         typ = random.choice(random_types)
+    if typ == types.SetType:
+        typ = types.SetType(get_type_system().random_type(max_type_depth, 0.5))
     if depth == 0:
-        term = random_term(typ, usedset=random_used_vars)
+        term = random_term(typ, usedset=random_used_vars, max_type_depth=max_type_depth)
         random_used_vars |= {term}
         return term
     else:
@@ -130,35 +191,57 @@ def random_expr(typ=None, depth=1, used_vars=None):
         #     options for now)
         #  3. if typ is type_t: binding expression of type_t
         #  4. if typ is functional: LFun of typ
+        #  5. if typ is a SetType: a set operation of that type
         # ignore sets for now (variables with set types can be generated as
         # part of option 1)
         # ignore iota for now
-        options = [1]
-        if typ == type_t:
-            options.append(2)
-            options.append(3)
-        if typ.functional():
-            options.append(4)
-            options.append(5)
-        if depth == 1 and len(random_used_vars) > 0:
-            options.extend([6,7,8,9]) # try to reuse vars a bit more
+        if options and not isinstance(options, collections.abc.Sequence):
+            options = [options]
+        if not options:
+            options = [RType.FA_COMBO]
+            if typ == type_t:
+                options.append(RType.BOOLEAN_OP_EXPR)
+                options.append(RType.BINDING_EXPR)
+                options.append(RType.SET_RELATION)
+            if typ.functional() and not isinstance(typ, types.VariableType):
+                # If `typ` is a variable type, these options can lead to ?
+                # types in formulas. This is useful in general, but exclude
+                # by default, so that it doesn't cause `repr_parse` failures.
+                options.append(RType.LFUN)
+                options.append(RType.LFUN_BOUND)
+            if isinstance(typ, types.SetType):
+                options.append(RType.SET_OP)
+            if depth == 1 and len(random_used_vars) > 0:
+                options.extend([RType.TERM_PRED_COMBO] * 4) # try to reuse vars a bit more
+
         choice = random.choice(options)
         def ctrl(**args):
             global random_used_vars
             return random_expr(depth=depth-1, used_vars=random_used_vars,
                                                                         **args)
-        if choice == 1:
-            return random_fa_combo(typ, ctrl)
-        elif choice == 2:
+        if choice == RType.FA_COMBO:
+            return random_fa_combo(typ, ctrl, max_type_depth=max_type_depth)
+        elif choice == RType.BOOLEAN_OP_EXPR:
+            if typ is not None and typ != type_t:
+                logger.warning(f"Ignoring requested non-t type {typ} for a boolean operator expression")
             return random_tf_op_expr(ctrl)
-        elif choice == 3:
-            return random_binding_expr(ctrl)
-        elif choice == 4:
+        elif choice == RType.BINDING_EXPR:
+            if typ is not None and typ != type_t:
+                logger.warning(f"Ignoring requested non-t type {typ} for a binding operator expression")
+            return random_binding_expr(ctrl, max_type_depth=max_type_depth)
+        elif choice == RType.LFUN:
             return random_lfun(typ, ctrl)
-        elif choice == 5:            
+        elif choice == RType.LFUN_BOUND:
             return random_lfun_force_bound(typ, ctrl)
-        elif choice >= 6:
+        elif choice == RType.TERM_PRED_COMBO:
             return random_pred_combo_from_term(typ, ctrl, random_used_vars)
+        elif choice == RType.SET_RELATION:
+            # defer type choice to the class
+            if typ is not None and typ != type_t:
+                logger.warning(f"Ignoring requested non-t type {typ} for a set relation expression")
+            return random_set_rel(ctrl)
+        elif choice == RType.SET_OP:
+            return random_set_expr(ctrl, typ=typ)
         else:
             raise NotImplementedError
 

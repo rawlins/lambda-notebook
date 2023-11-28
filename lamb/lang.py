@@ -1221,7 +1221,7 @@ class TreeComposite(Composite, Tree):
         """Replace contents with versions that have been reduced as much as
         possible."""
         if self.content is not None:
-            self.content = self.content.reduce_all().simplify_all()
+            self.content = self.content.simplify_all(reduce=True)
         return self
 
     def _repr_latex_(self):
@@ -1494,7 +1494,7 @@ class CompositionResult(Composable):
             if r.content is None:
                 continue
             old_c = r.content
-            new_c = r.content.reduce_all().simplify_all()
+            new_c = r.content.simplify_all(reduce=True)
             if new_c != old_c:
                 dirty = True
                 # TODO probably should copy
@@ -1702,7 +1702,7 @@ class Item(TreeComposite):
         """Replace contents with versions that have been reduced as much as
         possible."""
         if self.content is not None:
-            self.content = self.content.reduce_all().simplify_all()
+            self.content = self.content.simplify_all(reduce=True)
         return self
 
     def reduce(self):

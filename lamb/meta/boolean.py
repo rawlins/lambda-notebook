@@ -52,7 +52,7 @@ class BinaryAndExpr(SyncatOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
-    def simplify(self):
+    def simplify(self, **sopts):
         def d(x, desc="conjunction"):
             return derived(x, self, desc=desc)
         if self.args[0] == false_term or self.args[1] == false_term:
@@ -81,7 +81,7 @@ class BinaryOrExpr(SyncatOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
-    def simplify(self):
+    def simplify(self, **sopts):
         def d(x, desc="disjunction"):
             return derived(x, self, desc=desc)
         if self.args[0] == true_term or self.args[1] == true_term:
@@ -112,7 +112,7 @@ class BinaryArrowExpr(SyncatOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
-    def simplify(self):
+    def simplify(self, **sopts):
         def d(x):
             return derived(x, self, desc="material implication")
         if self.args[0] == false_term:
@@ -139,7 +139,7 @@ class BinaryBiarrowExpr(SyncatOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
-    def simplify(self):
+    def simplify(self, **sopts):
         def d(x):
             return derived(x, self, desc="biconditional")
         if self.args[0] == false_term:
@@ -164,6 +164,17 @@ class BinaryBiarrowExpr(SyncatOpExpr):
             # *heuristic* simplification rule: under syntactic equivalence,
             # simplify `p <-> p` to just `true`.
             return d(true_term)
+        elif isinstance(self.args[1], BinaryAndExpr) and self.args[0] == self.args[1][0]:
+            # Heuristic: `p <=> p & q` simplifies to `p >> q`. The next four
+            # are all variants of this. This was added to handle some cases
+            # in set simplification.
+            return d(self.args[0] >> self.args[1][1])
+        elif isinstance(self.args[1], BinaryAndExpr) and self.args[0] == self.args[1][1]:
+            return d(self.args[0] >> self.args[1][0])
+        elif isinstance(self.args[0], BinaryAndExpr) and self.args[1] == self.args[0][0]:
+            return d(args[1] >> args[0][1])
+        elif isinstance(self.args[0], BinaryAndExpr) and self.args[1] == self.args[0][1]:
+            return d(self.args[1] >> self.args[0][0])
         else:
             return self
 
@@ -177,7 +188,7 @@ class BinaryNeqExpr(SyncatOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
-    def simplify(self):
+    def simplify(self, **sopts):
         def d(x):
             return derived(x, self, desc="neq")
         if self.args[0] == false_term:
@@ -228,7 +239,7 @@ class ForallUnary(BindingOp):
     def copy_local(self, var, arg, type_check=True):
         return ForallUnary(var, arg, type_check=type_check)
 
-    def simplify(self):
+    def simplify(self, **sopts):
         # note: not valid if the domain of individuals is completely empty
         # (would return True). We are therefore assuming that this case is
         # ruled out a priori.
@@ -253,7 +264,7 @@ class ExistsUnary(BindingOp):
     def copy_local(self, var, arg, type_check=True):
         return ExistsUnary(var, arg, type_check=type_check)        
 
-    def simplify(self):
+    def simplify(self, **sopts):
         # note: not valid if the domain of individuals is completely empty
         # (would return False)
         if not self.varname in self.body.free_variables():

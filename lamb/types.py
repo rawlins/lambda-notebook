@@ -1164,13 +1164,13 @@ class VariableType(TypeConstructor):
             return False
     
     def __repr__(self):
-        if self.number > 3:
+        if self.number > 3 or self.symbol == "?":
             return self.symbol + str(self.number)
         else:
             return self.symbol + "'" * self.number
     
     def latex_str(self):
-        if self.number > 3:
+        if self.number > 3 or self.symbol == "?":
             return ensuremath(self.symbol + "_{" + str(self.number) + "}")
         else:
             return ensuremath(self.symbol + "'" * self.number)
@@ -1221,6 +1221,11 @@ class UnknownType(VariableType):
     def latex_str(self):
         return ensuremath("?")
     
+    def internal(self):
+        # n.b. the return value compares equal to `self`; this can be used to
+        # inspect the identifier
+        return VariableType("?", number=self.identifier)
+
     def copy_local(self):
         return UnknownType(force_num=self.identifier)
     
@@ -2085,7 +2090,7 @@ class PolyTypeSystem(TypeSystem):
         else:
             # choose a non-variable type and generate a random instantiation
             t_class = random.choice(
-                    list(self.nonatomics - {VariableType, DisjunctiveType}))
+                    list(self.nonatomics - {VariableType, DisjunctiveType, UnknownType}))
             return t_class.random(ctrl_fun)
 
 class TypeMismatch(Exception):
