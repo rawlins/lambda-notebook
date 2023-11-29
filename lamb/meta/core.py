@@ -3817,6 +3817,29 @@ class DerivationStep(object):
             self.origin = tuple(origin)
         self.trivial = trivial
 
+    def result_str(self, latex=False):
+        if latex:
+            return self.trivial and "..." or self.result.latex_str()
+        else:
+            return repr(self.result)
+
+    def desc_str(self, latex=False):
+        if latex:
+            return self.latex_desc
+        else:
+            return self.desc
+
+    def unpack_for_display(self, latex=False, all_recursion=False):
+        if (not all_recursion
+                and self.subexpression and self.subexpression.derivation
+                and len(self.subexpression.derivation) == 1):
+            _, subdesc, subsubexp = self.subexpression.derivation[0].unpack_for_display(latex=latex)
+            # this notation may be a bit opaque, is there a better option that
+            # is still compact?
+            subdesc = f"[{subdesc}]"
+            return (self.result_str(latex=latex), subdesc, subsubexp)
+        return (self.result_str(latex=latex), self.desc_str(latex=latex), self.subexpression)
+
     def origin_str(self, latex=False):
         if len(self.origin) == 1:
             if latex:
@@ -3867,7 +3890,7 @@ class Derivation(object):
     def __getitem__(self, i):
         return self.steps[i]
 
-    def steps_sequence(self, latex=False, ignore_trivial=False):
+    def steps_sequence(self, latex=False, ignore_trivial=False, all_recursion=False):
         l = list()
         if len(self.steps) > 0:
             l.append((self.steps[0].origin_str(latex), None, None))
@@ -3875,18 +3898,7 @@ class Derivation(object):
                 # assume that origin matches previous result.  Could check this.
                 if self.steps[i].trivial and ignore_trivial:
                     continue
-                if latex:
-                    if self.steps[i].trivial:
-                        l.append(("...", self.steps[i].latex_desc,
-                                                self.steps[i].subexpression))
-                    else:
-                        l.append((self.steps[i].result.latex_str(),
-                                  self.steps[i].latex_desc,
-                                  self.steps[i].subexpression))
-                else:
-                    l.append((repr(self.steps[i].result),
-                                   self.steps[i].desc,
-                                   self.steps[i].subexpression))
+                l.append(self.steps[i].unpack_for_display(latex=latex, all_recursion=all_recursion))
         return l
 
     def equality_display(self, content, style=None):
@@ -3896,21 +3908,22 @@ class Derivation(object):
         return n
 
     def build_display_tree(self, recurse=False, parent=None, reason=None,
-                                                                style=None):
+                                all_recursion=False, style=None):
         defaultstyle = {"align": "left"}
         style = display.merge_styles(style, defaultstyle)
         node_style = display.LRDerivationDisplay(**style)
-        l = self.steps_sequence(latex=True)
+        l = self.steps_sequence(latex=True, all_recursion=all_recursion)
         parts = list()
         for (expr, subreason, subexpression) in l:
             if reason == "":
                 reason = None
-            if subexpression and subexpression.derivation and (recurse):
+            if subexpression is not None and subexpression.derivation and (recurse):
                 parts.append(subexpression.derivation.build_display_tree(
                         recurse=recurse,
                         parent=expr,
                         reason=subreason,
-                        style=style))
+                        style=style,
+                        all_recursion=all_recursion))
             else:
                 parts.append(display.DisplayNode(content=expr,
                         explanation=subreason, parts=None, style=node_style))
@@ -3919,11 +3932,11 @@ class Derivation(object):
         return display.DisplayNode(content=parent, explanation=reason,
                                                 parts=parts, style=node_style)
 
-    def trace(self, recurse=True, style=None):
-        return self.build_display_tree(recurse=recurse, style=style)
+    def trace(self, recurse=True, style=None, all_recursion=False):
+        return self.build_display_tree(recurse=recurse, style=style, all_recursion=all_recursion)
 
-    def show(self, recurse=False, style=None):
-        return self.trace(recurse=recurse, style=style)
+    def show(self, recurse=False, style=None, all_recursion=False):
+        return self.trace(recurse=recurse, style=style, all_recursion=all_recursion)
 
     def _repr_html_(self):
         return self.build_display_tree(recurse=False)._repr_html_()

@@ -78,7 +78,7 @@ class ConditionSet(BindingOp):
 
     def simplify(self, **sopts):
         if self[1] == false_term:
-            return emptyset(self.type)
+            return derived(emptyset(self.type), self, "trivial set condition")
         # the true_term case has no simpler version. (Should there be a
         # MetaTerm value for this case for each type?)
 
@@ -330,21 +330,23 @@ class SetContains(SyncatOpExpr):
             step = (self.args[1].to_characteristic()(self.args[0])).reduce()
             step.derivation = derivation # suppress the intermediate parts of
                                          # this derivation, if any
-            return derived(step, self, "∈ reduction")
+            return derived(step, self, "∈ simplification")
         elif self.args[0].meta() and self.args[1].meta():
             # TODO: this should be code on the set object, not here
             result = MetaTerm(self.args[0].op in self.args[1].op)
-            return derived(result, self, "∈ reduction")
+            return derived(result, self, "∈ simplification")
         elif isinstance(self.args[1], ListedSet) and len(self.args[1]) == 0:
-            return derived(false_term, self, "∈ reduction (empty set)")
+            return derived(false_term, self, "∈ simplification (empty set)")
         elif isinstance(self.args[1], ListedSet) and len(self.args[1]) == 1:
             content, = self.args[1]
             return derived(self.args[0] % content, self,
-                                            "∈ reduction (singleton set)")
+                                            "∈ simplification (singleton set)")
         elif isinstance(self.args[1], ListedSet) and get_sopt('eliminate_sets', sopts):
             # tends to produce fairly long expressions
             conditions = [(self.args[0] % a) for a in self.args[1]]
-            return BinaryOrExpr.join(*conditions).simplify_all(**sopts)
+            return derived(BinaryOrExpr.join(*conditions).simplify_all(**sopts),
+                            self,
+                            "∈ simplification (set elimination)")
         else:
             # leave other ListedSets as-is for now.
             return self
@@ -435,21 +437,23 @@ class SetUnion(BinarySetOp):
             if self.args[0].meta() and self.args[1].meta():
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
-                return MetaTerm(s1 | s2)
+                return derived(MetaTerm(s1 | s2), self, "set union")
             else:
-                return sset(s1 | s2) # blessedly simple
+                return derived(sset(s1 | s2), self, "set union") # blessedly simple
         elif s1 is not None and len(s1) == 0:
-            return self.args[1] # {} | X = X
+            return derived(self.args[1], self, "set union") # {} | X = X
         elif s2 is not None and len(s2) == 0:
-            return self.args[0] # X | {} = X
+            return derived(self.args[0], self, "set union") # X | {} = X
 
         # for everything except ConditionSets, this tends to make the formula
         # more unwieldy
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
             var = safevar(self)
-            return ConditionSet(var,
-                (var << self.args[0]) | (var << self.args[1])).simplify_all(**sopts)
+            return derived(ConditionSet(var,
+                            (var << self.args[0]) | (var << self.args[1])),
+                            self,
+                            "set union (set elimination)").simplify_all(**sopts)
 
         return self
 
@@ -476,13 +480,19 @@ class SetIntersection(BinarySetOp):
             if self.args[0].meta() and self.args[1].meta():
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
-                return MetaTerm(s1 & s2, typ=self.type.content_type)
+                return derived(
+                    MetaTerm(s1 & s2, typ=self.type.content_type),
+                    self,
+                    "set intersection")
 
             if s1 <= s2 or s2 <= s1:
                 # this case is also also safe: there's no way for expression
                 # resolution to expand sets that are in a subset relation.
                 # this covers empty set cases.
-                return sset(s1 & s2, typ=self.type.content_type)
+                return derived(
+                    sset(s1 & s2, typ=self.type.content_type),
+                    self,
+                    "set intersection")
 
             # otherwise, we need to do some more complicated checks.
             definite = set()
@@ -498,7 +508,7 @@ class SetIntersection(BinarySetOp):
 
             if len(tbd) == 0:
                 # everything can be verified
-                return definite_expr
+                return derived(definite_expr, self, "set intersection")
 
             if not get_sopt('eliminate_sets', sopts):
                 # everything past here in this branch can get pretty unwieldy
@@ -509,23 +519,28 @@ class SetIntersection(BinarySetOp):
                 # disjoint, as far as what can be verified goes. That is,
                 # anything non-meta is in `tbd`. We can do very little with this
                 # case.
-                return ConditionSet(var, (var << self.args[0]) & (var << self.args[1]))
+                return derived(
+                    ConditionSet(var, (var << self.args[0]) & (var << self.args[1])),
+                    self,
+                    "set intersection (set elimination)")
 
             tbd = ConditionSet(var, (var << sset(tbd, typ=self.type.content_type)
                                         & (var << sset(s1 - definite))
                                         & (var << sset(s2 - definite))))
-            return (definite_expr | tbd).simplify_all(**sopts)
+            return derived((definite_expr | tbd), self, "set intersection (set elimination)").simplify_all(**sopts)
 
         elif s1 is not None and len(s1) == 0:
-            return emptyset(self.type) # {} & X = {}
+            return derived(emptyset(self.type), self, "set intersection") # {} & X = {}
         elif s2 is not None and len(s2) == 0:
-            return emptyset(self.type) # X & {} = {}
+            return derived(emptyset(self.type), self, "set intersection") # X & {} = {}
 
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
             var = safevar(self)
-            return ConditionSet(var,
-                (var << self.args[0]) & (var << self.args[1])).simplify_all(**sopts)
+            return derived(
+                ConditionSet(var, (var << self.args[0]) & (var << self.args[1])),
+                self,
+                "set intersection (set elimination)").simplify_all(**sopts)
         return self
 
     def simplify_all(self, **sopts):
@@ -550,23 +565,29 @@ class SetDifference(BinarySetOp):
             if self.args[0].meta() and self.args[1].meta():
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
-                return MetaTerm(s1 - s2, typ=self.type.content_type)
+                return derived(
+                    MetaTerm(s1 - s2, typ=self.type.content_type),
+                    self,
+                    "set difference")
 
             if s2 == s1:
-                return emptyset(self.type)
+                return derived(emptyset(self.type), self, "set difference")
             # XX implement something more here
             # warning: cases like {X,Y} - {Y} are not safe to simplify under
             # syntactic identity, since if X == Y, then {X} is actually wrong.
 
         if s1 is not None and len(s1) == 0:
-            return emptyset(self.type) # {} - X = {}
+            return derived(emptyset(self.type), self, "set difference") # {} - X = {}
         elif s2 is not None and len(s2) == 0:
-            return self.args[0] # X - {} = X
+            return derived(self.args[0], self, "set difference") # X - {} = X
 
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
             var = safevar(self)
-            return ConditionSet(var, (var << self.args[0]) & (~(var << self.args[1]))).simplify_all(**sopts)
+            return derived(
+                ConditionSet(var, (var << self.args[0]) & (~(var << self.args[1]))),
+                self,
+                "set difference (set elimination)")#.simplify_all(**sopts)
         return self
 
     def simplify_all(self, **sopts):
@@ -591,15 +612,18 @@ class SetEquivalence(BinarySetOp):
             if len(s1) == 0 or len(s2) == 0:
                 # this case is relatively straightforward: we can go simply
                 # on the basis of expression cardinality
-                return MetaTerm(len(s1) == len(s2))
+                return derived(MetaTerm(len(s1) == len(s2)), self, "set equivalence")
             elif s1 == s2:
                 # special case syntactic equality, this one is safe
-                return true_term
+                return derived(true_term, self, "set equivalence")
             elif len(s1) == 1 and len(s2) == 1:
                 # special case two singletons
                 e1, = s1
                 e2, = s2
-                return e1.equivalent_to(e2).simplify_all(**sopts)
+                return derived(
+                    e1.equivalent_to(e2),
+                    self,
+                    "set equivalence").simplify_all(**sopts)
 
             # tally up all the potential mismatches
             meta_left = {x for x in s1 - s2 if x.meta()}
@@ -610,10 +634,10 @@ class SetEquivalence(BinarySetOp):
             # for mixed meta/non-meta sets
             if len(meta_left) > len(tbd_right):
                 # too many MetaTerms in the left for non-MetaTerms on the right
-                return false_term
+                return derived(false_term, self, "set equivalence")
             if len(meta_right) > len(tbd_left):
                 # too many MetaTerms in the right for non-MetaTerms on the left
-                return false_term
+                return derived(false_term, self, "set equivalence")
 
             if not get_sopt('eliminate_sets', sopts):
                 return self
@@ -622,9 +646,15 @@ class SetEquivalence(BinarySetOp):
             # two special cases where we can safely eliminate some elements of
             # a subset from consideration
             if s1 < s2:
-                return ForallUnary(var, ((var << self.args[0]).equivalent_to(var << sset(s2 - s1)))).simplify_all(**sopts)
+                return derived(
+                    ForallUnary(var, ((var << self.args[0]).equivalent_to(var << sset(s2 - s1)))),
+                    self,
+                    "set equivalence (set elimination)").simplify_all(**sopts)
             elif s2 < s1:
-                return ForallUnary(var, ((var << self.args[1]).equivalent_to(var << sset(s1 - s2)))).simplify_all(**sopts)
+                return derived(
+                    ForallUnary(var, ((var << self.args[1]).equivalent_to(var << sset(s1 - s2)))),
+                    self,
+                    "set equivalence (set elimination)").simplify_all(**sopts)
 
             # at this point, fallthrough to the general case. (Is there anything
             # better that could be done?)
@@ -632,8 +662,9 @@ class SetEquivalence(BinarySetOp):
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
             var = safevar(self)
-            return ForallUnary(var,
-                ((var << self.args[0]).equivalent_to(var << self.args[1]))).simplify_all(**sopts)
+            return derived(ForallUnary(var, ((var << self.args[0]).equivalent_to(var << self.args[1]))),
+                self,
+                "set equivalence (set elimination)").simplify_all(**sopts)
         return self
 
 class SetSubset(BinarySetOp):
@@ -647,13 +678,17 @@ class SetSubset(BinarySetOp):
         super().__init__(arg1, arg2, "Subset", typ=type_t)
 
     def simplify(self, **sopts):
-        test = (self.args[0].equivalent_to(self.args[0] & self.args[1]))
+        old_derivation = self.derivation
+        test = derived(self.args[0].equivalent_to(self.args[0] & self.args[1]),
+            self, "subset (set elimination)")
         simplified = test.simplify_all(**sopts)
         if simplified is test and not get_sopt('eliminate_sets', sopts):
+            # if simplify didn't do anything to this expression, the result is
+            # probably not actually simpler than where we started
+            self.derived = old_derivation
             return self
         else:
             return simplified
-
 
 class SetProperSubset(BinarySetOp):
     """Binary relation of proper subsethood."""
@@ -666,9 +701,14 @@ class SetProperSubset(BinarySetOp):
         super().__init__(arg1, arg2, "Proper subset", typ=type_t)
 
     def simplify(self, **sopts):
-        test = ((self.args[0] <= self.args[1]) & (~(self.args[0].equivalent_to(self.args[1])))).simplify_all(**sopts)
+        old_derivation = self.derivation
+        test = derived(
+            ((self.args[0] <= self.args[1]) & (~(self.args[0].equivalent_to(self.args[1])))),
+            self,
+            "proper subset (set elimination)")
         simplified = test.simplify_all(**sopts)
         if simplified is test and not get_sopt('eliminate_sets', sopts):
+            self.derivation = old_derivation
             return self
         else:
             return simplified
@@ -686,7 +726,10 @@ class SetSupset(BinarySetOp):
 
     def simplify(self, **sopts):
         # always normalize to <=
-        return SetSubset(self.args[1], self.args[0]).simplify(**sopts)
+        return derived(
+            SetSubset(self.args[1], self.args[0]),
+            self,
+            "superset => subset").simplify(**sopts)
 
 
 class SetProperSupset(BinarySetOp):
@@ -701,5 +744,8 @@ class SetProperSupset(BinarySetOp):
 
     def simplify(self, **sopts):
         # always normalize to <
-        return SetProperSubset(self.args[1], self.args[0]).simplify(**sopts)
+        return derived(
+            SetProperSubset(self.args[1], self.args[0]),
+            self,
+            "superset => subset").simplify(**sopts)
 
