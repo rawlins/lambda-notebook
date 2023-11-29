@@ -1601,7 +1601,7 @@ class TypeSystem(object):
             return r
         except parsing.ParseError as e:
             # TODO: raise this directly?
-            raise TypeParseError(e.msg, s=e.s, i=e.i)
+            raise TypeParseError(e.msg, s=e.s, i=e.i).with_traceback(e.__traceback__) from None
 
     def parse(self, s, require_exact_type=False):
         return self.type_parser(s, require_exact_type=require_exact_type)

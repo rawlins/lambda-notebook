@@ -24,6 +24,18 @@ class ParseError(Exception):
         # set to False to indicate that a try_parse function did not find
         # preconditions for what it is supposed to consume
         self.met_preconditions = met_preconditions
+        self.has_note = False
+
+    def _try_add_note(self):
+        if self.has_note or self.i is None:
+            return
+        try:
+            self.add_note(utils.error_pos_str(self.s, self.i, prefix="  ",
+                                    plain=True, multiline=True))
+            self.has_note = True
+        except AttributeError:
+            # < python 3.11
+            pass
 
     def _aux_str(self, plain=True):
         if self.e is None:
@@ -54,10 +66,15 @@ class ParseError(Exception):
             sep = ": "
         return sep + e_str
 
-    def __str__(self):
+    def tostring(self, multiline=True, classname=True, allow_note=False):
         # include this in `prefix` so it is counted for positioning an error
         # marker
-        m = f"{self.__class__.__name__}: {self.msg}"
+        if allow_note:
+            self._try_add_note()
+        if classname:
+            m = f"{self.__class__.__name__}: {self.msg}"
+        else:
+            m = self.msg
         aux = self._aux_str()
         if self.s is None:
             return m + aux
@@ -68,8 +85,17 @@ class ParseError(Exception):
                     or 'object'))
             return f"{m}, in {s_desc} `{self.s}`{aux}"
         else:
+            if allow_note and self.has_note:
+                return m
             return utils.error_pos_str(self.s, self.i, prefix=m,
-                                    plain=True, multiline=True)
+                                    plain=True, multiline=multiline)
+
+    def __str__(self):
+        # used in stack trace. Therefore, we don't print the classname, and
+        # don't try multiline stuff directly, because the context isn't fully
+        # predictable. However, in python 3.11+, use the `add_note` mechanism
+        # to show multiline messaging.
+        return self.tostring(classname=False, allow_note=True, multiline=False)
 
     def _repr_markdown_(self):
         # it's convenient to use markdown here for backticks, but colab will
@@ -89,7 +115,10 @@ class ParseError(Exception):
         return f"<span style=\"color:red\">**{self.__class__.__name__}**</span>: {m}{aux}"
 
     def __repr__(self):
-        return self.__str__()
+        return self.tostring(multiline=False)
+
+    def _repr_pretty_(self, p, cycle):
+        return p.text(self.tostring())
 
 
 def consume_char(s, i, match, error=None):
@@ -163,7 +192,7 @@ def parse_error_wrap(msg, paren_struc=None, wrap_all=True, **kwargs):
         # flatten
         if paren_struc:
             kwargs['s'] = flatten_paren_struc(paren_struc)
-        raise ParseError(msg, **kwargs)
+        raise ParseError(msg, **kwargs).with_traceback(e.__traceback__) from None
     except ParseError as e:
         if not e.msg:
             e.msg = msg # this should essentially not trigger ever?
