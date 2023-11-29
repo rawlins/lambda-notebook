@@ -245,6 +245,8 @@ def parse_te(line, env=None, use_env=False):
     line = remove_comments(line)
     reduce, line = magic_opt("reduce", line)
     simplify, line = magic_opt("simplify", line)
+    if line[-1] == ";":
+        line = line[:-1]
 
     if env is None or not use_env:
         env = dict()
@@ -399,7 +401,7 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
 def remove_comments(s):
     """remove comments (prefaced by #) from a single line"""
     r = s.split("#")
-    return r[0]
+    return r[0].rstrip()
 
 def parse_line(s, env=None, transforms=None, ambiguity=False):
     if env is None:
