@@ -180,7 +180,7 @@ class CompositionFailure(Exception):
             return "%s (%s) on: %s" % (main_str, self.reason,
                 self.items_str(latex=latex))
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return self.description(latex=True)
 
     def _repr_html_(self):
@@ -398,7 +398,7 @@ class AssignmentController(object):
                     continue
                 if a[s.op].term() and s.op == a[s.op].op:
                     if latex:
-                        out_l.append(ensuremath("%s" % (a[s.op].latex_str())))
+                        out_l.append(ensuremath("%s" % (a[s.op].latex_str(suppress_parens=True))))
                     else:
                         out_l.append("%s" % (a[s.op]))
                 else:
@@ -406,7 +406,7 @@ class AssignmentController(object):
                         out_l.append(ensuremath("%s_\\{%s\\} = %s" %
                                 (s.op,
                                  a[s.op].type.latex_str(),
-                                 a[s.op].latex_str())))
+                                 a[s.op].latex_str(suppress_parens=True))))
                     else:
                         out_l.append("%s = %s" % (s.op, a[s.op]))
         if isinstance(a, Assignment):
@@ -544,7 +544,7 @@ class SingletonComposable(Composable):
     def step_tree(self):
         return self
 
-    def latex_str(self, i=None):
+    def latex_str(self, i=None, suppress_parens=True):
         if self.content is None:
             # separate rendering for vacuous indexed elements?
             return ensuremath(self.short_str_latex() + "\\text{ [vacuous]}")
@@ -556,7 +556,7 @@ class SingletonComposable(Composable):
             return self.content.latex_str()
         return (ensuremath(self.short_str(latex=True, i=i)
                 + " \\:=\\: "
-                + self.content.latex_str()))
+                + self.content.latex_str(suppress_parens=suppress_parens)))
 
     def show(self):
         # is using `latex` generally safe here?
@@ -808,7 +808,7 @@ class CompositionTree(Tree, Composable):
         elif isinstance(self.content, CompositionResult):
             return self.content.latex_str() # TODO more?
         elif len(self.content) == 1:
-            return self.content[0].latex_str()
+            return self.content[0].latex_str(suppress_parens=True)
         else:
             raise NotImplementedError()
 
@@ -1063,7 +1063,7 @@ class TreeComposite(Composite, Tree):
         if isinstance(self.content, Exception):
             if latex:
                 try:
-                    return self.content.latex_str()
+                    return self.content.latex_str(suppress_parens=True)
                 except:
                     return str(self.content)
             else:
@@ -1130,7 +1130,7 @@ class TreeComposite(Composite, Tree):
                                                     style=style)
             parts.append(part_i)
         if self.content is not None:
-            content_str = utils.ensuremath(self.content.latex_str())
+            content_str = utils.ensuremath(self.content.latex_str(suppress_parens=True))
         elif self.get_index() is not None:
             content_str = self.get_index_str()
         else:
@@ -1386,7 +1386,7 @@ class CompositionResult(Composable):
                     failed_precond.append(f)
                     continue
                 if latex:
-                    s += latex_indent() + f.content.latex_str()
+                    s += latex_indent() + f.content.latex_str(suppress_parens=True)
                 else:
                     s += "    " + str(f.content)
                 s += newline

@@ -2133,6 +2133,7 @@ class TypeMismatch(Exception):
         # this is hacky for now: if we are printing an error about a TypedExpr
         # we want the repr for markdown backticks, but for composition results
         # we want the latex code
+        # XX this isn't working right in the continuations notebook...
         if isinstance(i, meta.TypedExpr):
             latex = False
         if i is None:
@@ -2157,21 +2158,21 @@ class TypeMismatch(Exception):
                                 or isinstance(i, meta.TypedTerm)
                                 or isinstance(i, lang.Item)):
                 if latex and getattr(i, 'latex_str', None):
-                    return f"{i.latex_str()}"
+                    return f"{i.latex_str(suppress_parens=True)}"
                 else:
                     return f"`{repr(i)}`"
             else:
                 # assumption: type is shown as part of `i`, so it would be
                 # redundant to print it
                 if latex and getattr(i, 'latex_str'):
-                    return f"{i.latex_str()}/{t.latex_str()}"
+                    return f"{i.latex_str(suppress_parens=True)}/{t.latex_str()}"
                 else:
                     return f"`{repr(i)}/{repr(t)}`"
 
     def __str__(self):
         return self.description(latex=False)
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return self.description(latex=True)
 
     def description(self, latex=False):

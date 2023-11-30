@@ -3,6 +3,7 @@ import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
+from .core import Tuple
 from .meta import MetaTerm
 from .boolean import BinaryOrExpr, BinaryAndExpr, ForallUnary, ExistsUnary, false_term, true_term
 from lamb.types import type_t, SetType
@@ -64,10 +65,14 @@ class ConditionSet(BindingOp):
     def term(self):
         return False
 
-    def latex_str(self, parens=True, **kwargs):
-        return utils.ensuremath("\\{%s_{%s}\\:|\\: "
-                            % (self.varname, self.vartype.latex_str())
-                    + self.body.latex_str(**kwargs) + "\\}")
+    def latex_str(self, suppress_parens=False, **kwargs):
+        # XX this omits some assignment manipulation from superclass, is that
+        # correct?
+        suppress_sub = True
+        if isinstance(self.body, Tuple):
+            suppress_sub = False
+        body = self.body.latex_str(suppress_parens=suppress_sub, **kwargs)
+        return utils.ensuremath(f"\\{{{self[0].latex_str(**kwargs)} \\:|\\: {body}\\}}")
 
     def __lshift__(self, i):
         return SetContains(i, self)
@@ -246,7 +251,7 @@ class ListedSet(TypedExpr):
         else:
             return repr(set(self.args))
 
-    def latex_str(self, **kwargs):
+    def latex_str(self, suppress_parens=False, **kwargs):
         inner = ", ".join([a.latex_str(**kwargs) for a in self.args])
         if not len(self.args):
             # show an explicit type for the empty set

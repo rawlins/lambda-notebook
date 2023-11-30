@@ -260,9 +260,6 @@ class MiniOp(object):
     def short_str_latex(self):
         return self.latex_str()
 
-    def latex_str_long(self):
-        return latex_str(self)
-
     def _repr_latex_(self):
         return self.latex_str()
 
@@ -1696,25 +1693,26 @@ class TypedExpr(object):
         else:                     # Infix operator
             return '(%s)' % (' '+self.op+' ').join([repr(a) for a in self.args])
 
-    def latex_str(self, **kwargs):
+    def latex_str(self, suppress_parens=False, **kwargs):
         """Return a representation of the TypedExpr suitable for Jupyter
         Notebook display.
 
         In this case the output should be pure LaTeX."""
-        assert not isinstance(self.op, TypedExpr)
+
         if not self.args:
             return ensuremath(str(self.op))
         # past this point in the list of cases should only get hard-coded
         # operators
         elif len(self.args) == 1: # Prefix operator
-            return ensuremath(self.op + self.args[0].latex_str(**kwargs))
+            return ensuremath(f"{self.op}{self.args[0].latex_str(**kwargs)}")
         else:                     # Infix operator
-            return ensuremath('(%s)' %
-                (' ' + self.op + ' ').join(
-                                    [a.latex_str(**kwargs) for a in self.args]))
+            base = f" {self.op} ".join([a.latex_str(**kwargs) for a in self.args])
+            if not suppress_parens:
+                base = f"({base})"
+            return ensuremath(base)
 
     def _repr_latex_(self):
-        return self.latex_str()
+        return self.latex_str(suppress_parens=True)
 
     def __str__(self):
         if self.term():
@@ -1858,19 +1856,20 @@ class ApplicationExpr(TypedExpr):
         result.type_guessed = self.type_guessed
         return result
 
-    def latex_str(self, **kwargs):
+    def latex_str(self, suppress_parens=False, **kwargs):
+        # n.b. parens generated here never should be suppressed
         fun = self.args[0]
         arg = self.args[1]
-        if isinstance(arg, Tuple):
-            arg_str = arg.latex_str(**kwargs) # tuple already generates parens
-        else:
-            arg_str = "(%s)" % (arg.latex_str(**kwargs))
+        # suppress parens for Tuple args (among others)
+        arg_str = f"({arg.latex_str(suppress_parens=True, **kwargs)})"
         if isinstance(fun, CustomTerm):
             return ensuremath(fun.custom_appl_latex(arg_str))
-        elif isinstance(fun, LFun):
-            return ensuremath("{[%s]}%s" % (fun.latex_str(**kwargs), arg_str))
+        elif isinstance(fun, LFun): # or maybe: not fun.term()?
+            # we use [] for the parens, following the Heim & Kratzer convention.
+            # (Is this really a good idea?)
+            return ensuremath(f"{{[{fun.latex_str(suppress_parens=True, **kwargs)}]}}{arg_str}")
         else:
-            return ensuremath('%s%s' % (fun.latex_str(**kwargs), arg_str))
+            return ensuremath(f"{fun.latex_str(**kwargs)}{arg_str}")
 
     def __repr__(self):
         """Return a string representation of the TypedExpr.
@@ -2066,12 +2065,15 @@ class Tuple(TypedExpr):
     def __repr__(self):
         return "(" + ", ".join([repr(a) for a in self.args]) + ")"
 
-    def latex_str(self, parens=True, **kwargs):
+    def latex_str(self, suppress_parens=False, **kwargs):
         inner = ", ".join([a.latex_str(**kwargs) for a in self.args])
-        if parens:
-            return ensuremath("(" + inner + ")")
-        else:
-            return ensuremath(inner)
+        if not suppress_parens:
+            inner = f"({inner})"
+        return ensuremath(inner)
+
+    def _repr_latex_(self):
+        # override superclass behavior: always show outer parens for tuples
+        return self.latex_str(suppress_parens=False)
 
     @classmethod
     def random(cls, ctrl, max_type_depth=1, max_tuple_len=5, allow_empty=True):
@@ -2254,9 +2256,6 @@ class TypedTerm(TypedExpr):
         else:
             return ensuremath("{%s}_{%s}" % (op, self.type.latex_str()))
 
-    def _repr_latex_(self):
-        return self.latex_str()
-
     random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
     atomics = {type_t, type_e, type_n}
 
@@ -2436,7 +2435,7 @@ class Partial(TypedExpr):
                                                                 assignment, env)
         return self.copy_local(result[1], result[2])
         
-    def latex_str(self, **kwargs):
+    def latex_str(self, suppress_parens=False, **kwargs):
         if self.condition and self.condition != from_python(True):
             return ensuremath("\\left|\\begin{array}{l}%s\\\\%s\\end{array}\\right|"
                 % (self.body.latex_str(**kwargs),
@@ -2535,7 +2534,7 @@ class Disjunctive(TypedExpr):
     def __repr__(self):
         return "Disjunctive(%s)" % (",".join([repr(a) for a in self.args]))
     
-    def latex_str(self, disj_type=False, **kwargs):
+    def latex_str(self, disj_type=False, suppress_parens=False, **kwargs):
         if disj_type:
             return ensuremath("{Disjunctive}^{%s}(%s)" % (self.type.latex_str(),
                      ", ".join([a.latex_str(**kwargs) for a in self.args])))
@@ -2630,6 +2629,8 @@ class SyncatOpExpr(TypedExpr):
     secondary_names = set()
     op_name_uni = None
     op_name_latex = None
+    left_assoc = True # currently just cosmetic: suppresses parens for left recursion
+
     # should output type be a class variable?
 
     def __init__(self, typ, *args, tcheck_args=True):
@@ -2665,6 +2666,7 @@ class SyncatOpExpr(TypedExpr):
             if not self.operator_style:
                 p.text(")")
         else:
+            # XX left assoc parens?
             p.text("(")
             for a in self.args[0:-1]:
                 p.pretty(self.args[0])
@@ -2685,28 +2687,34 @@ class SyncatOpExpr(TypedExpr):
             op_text = " %s " % self.op
             return "(%s)" % (op_text.join([repr(a) for a in self.args]))
 
-    def latex_str_long(self):
-        return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
+    def _sub_latex_str(self, i, suppress_parens = False, **kwargs):
+        if (self.left_assoc
+                    and len(self.args) == 2 and i == 0
+                    and isinstance(self.args[i], self.__class__)):
+            suppress_parens = True
+        return self.args[i].latex_str(suppress_parens=suppress_parens, **kwargs)
 
-    def latex_str(self, **kwargs):
+    def latex_str(self, suppress_parens=False, **kwargs):
         if self.arity == 1:
             if (self.operator_style):
                 return ensuremath("%s %s" % (self.op_name_latex,
-                                            self.args[0].latex_str(**kwargs)))
+                    self._sub_latex_str(0, **kwargs)))
             else:
                 return ensuremath("%s(%s)" % (self.op_name_latex,
-                                            self.args[0].latex_str(**kwargs)))
+                    self._sub_latex_str(0, suppress_parens=True, **kwargs)))
         else:
-            op_text = " %s " % self.op_name_latex
-            return ensuremath("(%s)" % (op_text.join(
-                            [a.latex_str(**kwargs) for a in self.args])))
+            sub_parens = True
+            inner = f" {self.op_name_latex} ".join(
+                [self._sub_latex_str(i, **kwargs) for i in range(len(self.args))])
+                                # [a.latex_str(**kwargs) for a in self.args])
+            if not suppress_parens:
+                inner = f"({inner})"
+            return ensuremath(inner)
 
     @classmethod
-    def join(cls, *l, empty=None):
+    def join(cls, *l, empty=None, assoc_right=False):
         """Joins an arbitrary number of arguments using the binary operator.
-        Note that currently association is left to right. Requires a subclass
-        that defines a two-parameter __init__ function.  (I.e. will potentially
-        fail if called on the abstract class.)
+        Requires a subclass that defines a two-parameter __init__ function.
 
         Will also fail on operators that do not take the same type (i.e.
         SetContains).
@@ -2719,7 +2727,14 @@ class SyncatOpExpr(TypedExpr):
             return empty
         if len(l) == 1:
             return l[0]
+        elif assoc_right:
+            cur = l[-1]
+            for i in range(len(l) - 1, 0, -1):
+                cur = cls(l[i - 1], cur)
+            return cur
         else:
+            # left associativity is a bit more annoying, but it matches the
+            # default associativity of operators like & and | in python
             cur = l[0]
             for i in range(len(l) - 1):
                 cur = cls(cur, l[i+1]) # will raise an error if the subclass
@@ -2939,10 +2954,7 @@ class TupleIndex(SyncatOpExpr):
     def __repr__(self):
         return "(%s[%s])" % (repr(self.args[0]), repr(self.args[1]))
 
-    def latex_str_long(self):
-        return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
-
-    def latex_str(self, **kwargs):
+    def latex_str(self, suppress_parens=False, **kwargs):
         return ensuremath("(%s[%s])" % (self.args[0].latex_str(**kwargs),
                                         self.args[1].latex_str(**kwargs)))
 
@@ -3219,13 +3231,17 @@ class BindingOp(TypedExpr):
         return "%s %s : %s, Type: %s" % (self.op_name, self.varname,
                                             repr(self.body), self.type)
 
-    def latex_str_long(self):
-        return self.latex_str() + "\\\\ Type: %s" % self.type.latex_str()
-
-    def latex_str(self, assignment=None, **kwargs):
+    def latex_str(self, assignment=None, suppress_parens=False, **kwargs):
         assignment = self.scope_assignment(assignment=assignment)
-        return ensuremath("%s %s" % (self.latex_op_str(),  
-                        self.body.latex_str(assignment=assignment, **kwargs)))
+        suppress_sub = True
+        if isinstance(self.body, Tuple):
+            suppress_sub = False
+        body = self.body.latex_str(assignment=assignment,
+                                    suppress_parens=suppress_sub, **kwargs)
+        base = f"{self.latex_op_str()} {body}"
+        if not suppress_parens:
+            base = f"({base})"
+        return ensuremath(base)
 
     def __repr__(self):
         return "(%s %s: %s)" % (self.op_name, repr(self.var_instance),
@@ -3819,7 +3835,7 @@ class DerivationStep(object):
 
     def result_str(self, latex=False):
         if latex:
-            return self.trivial and "..." or self.result.latex_str()
+            return self.trivial and "..." or self.result.latex_str(suppress_parens=True)
         else:
             return repr(self.result)
 
@@ -3843,7 +3859,7 @@ class DerivationStep(object):
     def origin_str(self, latex=False):
         if len(self.origin) == 1:
             if latex:
-                return self.origin[0].latex_str()
+                return self.origin[0].latex_str(suppress_parens=True)
             else:
                 return repr(self.origin[0])
         else:
