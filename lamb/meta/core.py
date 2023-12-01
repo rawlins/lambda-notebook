@@ -2847,7 +2847,19 @@ def op(op, arg_type, ret_type,
         WrappedOp.op_name_uni = op_uni
         WrappedOp.op_name_latex = op_latex
 
+        # some metaprogramming to get nicer reprs for the class object. If we
+        # don't overwrite these, the repr will show something like:
+        # `lamb.meta.core.op.<locals>.op_decorator.<locals>.WrappedOp`,
+        # which is of course completely unhelpful. The builtin (C) repr for
+        # `type` uses specifically __module__ and __qualname__. Because `func`
+        # here is the decorated function, using its `__qualname__` gets the
+        # exact right reference to the class produced, e.g.
+        # `lamb.meta.boolean.UnaryNegExpr`. (An alternative here that might be
+        # clearer would be to use a metaclass; but as of py3.3 I don't think
+        # the python internals this is relying on are likely to change...)
         WrappedOp.__name__ = func.__name__
+        WrappedOp.__qualname__ = func.__qualname__
+        WrappedOp.__module__ = func.__module__
         return WrappedOp
     return op_decorator
 
