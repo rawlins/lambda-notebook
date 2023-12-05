@@ -63,6 +63,9 @@ def BinaryGeqExpr(self, x, y):
 def BinaryPlusExpr(self, x, y):
     return x + y
 
+BinaryPlusExpr.commutative = True
+BinaryPlusExpr.associative = True
+
 @op("-", type_n, type_n)
 def BinaryMinusExpr(self, x, y):
     return x - y
@@ -70,6 +73,9 @@ def BinaryMinusExpr(self, x, y):
 @op("*", type_n, type_n)
 def BinaryTimesExpr(self, x, y):
     return x * y
+
+BinaryTimesExpr.commutative = True
+BinaryTimesExpr.associative = True
 
 @op("/", type_n, type_n)
 def BinaryDivExpr(self, x, y):

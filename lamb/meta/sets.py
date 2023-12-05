@@ -53,6 +53,7 @@ class ConditionSet(BindingOp):
     canonical_name = "Set"
     op_name_uni="Set"
     op_name_latex="Set"
+    commutative = False # A bit meaningless, since Set x: Set y: can't occur
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None,
                                                             type_check=True):
@@ -175,7 +176,7 @@ class ListedSet(TypedExpr):
             except types.TypeMismatch as e:
                 e.error = "Set elements must have compatible types"
                 raise e
-        super().__init__("Set", *args)
+        super().__init__("ListedSet", *args)
         self.type = SetType(typ)
         self.set_simplified = False
 
@@ -213,7 +214,7 @@ class ListedSet(TypedExpr):
         conditions = [(var % a) for a in s.args]
         # n.b. an empty set gives a ConditionSet that simplifies back to the
         # starting point
-        return ConditionSet(var, BinaryOrExpr.join(*conditions, empty=false_term))
+        return ConditionSet(var, BinaryOrExpr.join(conditions, empty=false_term))
 
     def to_characteristic(self):
         s = self.simplify()
@@ -314,6 +315,7 @@ class SetContains(SyncatOpExpr):
     op_name_uni = "∈"
     # ∈ should work but I was having trouble with it (long ago, recheck)
     op_name_latex = "\\in{}"
+    commutative = False
 
     def __init__(self, arg1, arg2, type_check=True):
         # seems like the best way to do the mutual type checking here?
@@ -349,7 +351,7 @@ class SetContains(SyncatOpExpr):
         elif isinstance(self.args[1], ListedSet) and get_sopt('eliminate_sets', sopts):
             # tends to produce fairly long expressions
             conditions = [(self.args[0] % a) for a in self.args[1]]
-            return derived(BinaryOrExpr.join(*conditions).simplify_all(**sopts),
+            return derived(BinaryOrExpr.join(conditions).simplify_all(**sopts),
                             self,
                             "∈ simplification (set elimination)")
         else:
@@ -430,6 +432,8 @@ class SetUnion(BinarySetOp):
     canonical_name = "|"
     op_name_uni = "∪"
     op_name_latex = "\\cup{}"
+    commutative = True
+    associative = True
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set union")
@@ -474,6 +478,8 @@ class SetIntersection(BinarySetOp):
     canonical_name = "&"
     op_name_uni = "∩"
     op_name_latex = "\\cap{}"
+    commutative = True
+    associative = True
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set intersection")
@@ -559,6 +565,8 @@ class SetDifference(BinarySetOp):
 
     canonical_name = "-"
     op_name_latex = "-"
+    commutative = False
+    associative = False
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set difference")
@@ -606,6 +614,7 @@ class SetEquivalence(BinarySetOp):
 
     canonical_name = "<=>"
     op_name_latex = "="
+    commutative = True
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set equivalence", typ=type_t)
@@ -678,6 +687,7 @@ class SetSubset(BinarySetOp):
     canonical_name = "<="
     op_name_uni = "⊆"
     op_name_latex = "\\subseteq{}"
+    commutative = False
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Subset", typ=type_t)
@@ -701,6 +711,7 @@ class SetProperSubset(BinarySetOp):
     canonical_name = "<"
     op_name_uni = "⊂"
     op_name_latex = "\\subset{}"
+    commutative = False
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Proper subset", typ=type_t)
@@ -725,6 +736,7 @@ class SetSupset(BinarySetOp):
     canonical_name = ">="
     op_name_uni = "⊇"
     op_name_latex = "\\supseteq{}"
+    commutative = False
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Superset", typ=type_t)
@@ -743,6 +755,7 @@ class SetProperSupset(BinarySetOp):
     canonical_name = ">"
     op_name_uni = "⊃"
     op_name_latex = "\\supset{}"
+    commutative = True
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Proper superset", typ=type_t)

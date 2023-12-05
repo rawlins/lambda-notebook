@@ -1,6 +1,7 @@
 import lamb
 from lamb import types
-from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr, BindingOp, Partial, LFun
+from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
+from .core import BindingOp, Partial, LFun, get_sopt
 from .meta import MetaTerm
 from lamb.types import type_t
 
@@ -33,7 +34,7 @@ false_term = MetaTerm(False)
 
 # proof of concept for now: the rest of the logical operators do not quite
 # work as pure python
-@op("~", type_t, type_t, op_uni="¬", op_latex="\\neg{}", deriv_desc="negation", python_only=False)
+@op("~", type_t, type_t, op_uni="¬", op_latex="\\neg{}", deriv_desc="double negation", python_only=False)
 def UnaryNegExpr(self, x):
     if isinstance(x, TypedExpr):
         if isinstance(x, UnaryNegExpr):
@@ -43,71 +44,106 @@ def UnaryNegExpr(self, x):
     else:
         return not x
 
+
 # could make a factory function for these
 class BinaryAndExpr(SyncatOpExpr):
     canonical_name = "&"
     op_name_uni = "∧"
     op_name_latex = "\\wedge{}"
+    commutative = True
+    associative = True
 
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
-    def simplify(self, **sopts):
+    @classmethod
+    def simplify_early_check(cls, e1, e2, origin=None, **sopts):
+        for e in (e1,e2):
+            if e == false_term:
+                if origin is None:
+                    origin = e
+                return derived(false_term, origin,
+                    "conjunction (elimination on `False`)", allow_trivial=True)
+        return None
+
+    @classmethod
+    def simplify_args(cls, e1, e2, origin=None, **sopts):
+        if origin is None:
+            origin = e1 & e2
+        elim = cls.simplify_early_check(e1, e2, origin=origin)
+        if elim is not None:
+            return elim
         def d(x, desc="conjunction"):
-            return derived(x, self, desc=desc)
-        if self.args[0] == false_term or self.args[1] == false_term:
-            return d(false_term)
-        elif self.args[0] == true_term:
-            return d(self.args[1].copy())
-        elif self.args[1] == true_term:
-            return d(self.args[0].copy())
-        elif self.args[0] == self.args[1]:
-            # *heuristic* simplification rule: under syntactic equivalence,
-            # simplify `p & p` to just p.
-            return d(self.args[0].copy())
-        elif (isinstance(self.args[0], UnaryNegExpr) and self.args[0][0] == self.args[1]
-                or isinstance(self.args[1], UnaryNegExpr) and self.args[1][0] == self.args[0]):
-            # *heuristic* simplification rule: non-contradiction law,
-            # simplify `p & ~p` to just False.
+            return derived(x, origin, desc=desc)
+
+        if e1 == true_term:
+            return d(e2.copy())
+        elif e2 == true_term:
+            return d(e1.copy())
+        elif e1 == e2:
+            # *syntactic* idempotence
+            return d(e1.copy(), desc="conjunction (idempotence)")
+        elif (isinstance(e1, UnaryNegExpr) and e1[0] == e2
+                or isinstance(e2, UnaryNegExpr) and e2[0] == e1):
+            # *syntactic* non-contradiction
             return d(false_term, desc="non-contradiction")
         else:
-            return self
+            return None
 
 
 class BinaryOrExpr(SyncatOpExpr):
     canonical_name = "|"
     op_name_uni = "∨"
     op_name_latex = "\\vee{}"
+    commutative = True
+    associative = True
+
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
-    def simplify(self, **sopts):
+    @classmethod
+    def simplify_early_check(cls, e1, e2, origin=None, **sopts):
+        for e in (e1,e2):
+            if e == true_term:
+                if origin is None:
+                    origin = e
+                return derived(true_term, origin,
+                    "disjunction (elimination on `True`)", allow_trivial=True)
+        return None
+
+
+    @classmethod
+    def simplify_args(cls, e1, e2, origin=None, **sopts):
+        if origin is None:
+            origin = e1 | e2
+        elim = cls.simplify_early_check(e1, e2, origin=origin)
+        if elim is not None:
+            return elim
+
         def d(x, desc="disjunction"):
-            return derived(x, self, desc=desc)
-        if self.args[0] == true_term or self.args[1] == true_term:
-            return d(true_term)
-        elif self.args[0] == false_term:
+            return derived(x, origin, desc=desc)
+        if e1 == false_term:
             # covers case of False | False
-            return d(self.args[1].copy())
-        elif self.args[1] == false_term:
-            return d(self.args[0].copy())
-        elif self.args[0] == self.args[1]:
-            # *heuristic* simplification rule: under syntactic equivalence,
-            # simplify `p | p` to just p.
-            return d(self.args[0].copy())
-        elif (isinstance(self.args[0], UnaryNegExpr) and self.args[0][0] == self.args[1]
-                or isinstance(self.args[1], UnaryNegExpr) and self.args[1][0] == self.args[0]):
-            # *heuristic* simplification rule: excluded middle,
-            # simplify `p | ~p` to just True.
+            return d(e2.copy())
+        elif e2 == false_term:
+            return d(e1.copy())
+        elif e1 == e2:
+            # *syntactic* idempotence
+            return d(e1.copy(), desc="disjunction (idempotence)")
+        elif (isinstance(e1, UnaryNegExpr) and e1[0] == e2
+                or isinstance(e2, UnaryNegExpr) and e2[0] == e1):
+            # syntactic excluded middle check
             return d(true_term, desc="excluded middle")
         else:
-            return self
+            return None
 
 
 class BinaryArrowExpr(SyncatOpExpr):
     canonical_name = ">>"
     op_name_uni = "→"
     op_name_latex = "\\rightarrow{}"
+    commutative = False
+    associative = False
 
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
@@ -135,6 +171,8 @@ class BinaryBiarrowExpr(SyncatOpExpr):
     secondary_names = {"=="}
     op_name_uni = "↔"
     op_name_latex = "\\leftrightarrow{}"
+    commutative = True
+    associative = True
 
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
@@ -172,7 +210,7 @@ class BinaryBiarrowExpr(SyncatOpExpr):
         elif isinstance(self.args[1], BinaryAndExpr) and self.args[0] == self.args[1][1]:
             return d(self.args[0] >> self.args[1][0])
         elif isinstance(self.args[0], BinaryAndExpr) and self.args[1] == self.args[0][0]:
-            return d(args[1] >> args[0][1])
+            return d(self.args[1] >> self.args[0][1])
         elif isinstance(self.args[0], BinaryAndExpr) and self.args[1] == self.args[0][1]:
             return d(self.args[1] >> self.args[0][0])
         else:
@@ -185,6 +223,9 @@ class BinaryNeqExpr(SyncatOpExpr):
     secondary_names = {"=/="}
     op_name_uni = "≠"
     op_name_latex = "\\not="
+    commutative = True
+    associative = True
+
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
@@ -296,6 +337,8 @@ class IotaUnary(BindingOp):
     op_name_uni = "ι"
     op_name_latex="\\iota{}"
     secondary_names = {"ι"}
+
+    commutative = False # a bit meaningless, since ιx:ιy can't occur..
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None,
                                                             type_check=True):

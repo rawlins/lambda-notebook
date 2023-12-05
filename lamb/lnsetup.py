@@ -64,6 +64,7 @@ def reload_lamb(use_nltk_tree=None):
         lamb.utils.use_nltk = use_nltk_tree
     lamb.magics.reset_envs()
     importlib.reload(lamb.types)
+    importlib.reload(lamb.meta.ply)
     importlib.reload(lamb.meta.core)
     importlib.reload(lamb.meta.meta)
     importlib.reload(lamb.meta.boolean)

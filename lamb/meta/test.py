@@ -6,6 +6,7 @@ from lamb.types import TypeMismatch, type_e, type_t, type_n
 from . import core, boolean, number, sets, meta
 from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
 from .meta import MetaTerm
+from .ply import alphanorm
 
 
 def repr_parse(e):
@@ -282,7 +283,6 @@ def testsimp(self, a, b, all=False):
         print("Failed simplification test: '%s == %s'" % (repr(a), repr(b)))
     self.assertEqual(intermediate, teb)
     return intermediate
-
 
 
 te_classes = [core.ApplicationExpr,
@@ -607,17 +607,27 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("~p_t | ~~~p_t"), te("~p_t"), all=True)
         testsimp(self, te("p_t => ~~p_t"), True, all=True)
         testsimp(self, te("p_t & ~~~p_t"), False, all=True)
-        # left here as a dangling indication of why syntactic equivalence is
-        # very ad hoc.
-        # these could be fixed by normalizing order:
-        testsimp(self, te("p_t & q_t & p_t"), te("p_t & q_t & p_t"), all=True) # not simplified!
-        testsimp(self, te("p_t & q_t | q_t & p_t"), te("p_t & q_t | q_t & p_t"), all=True) # not simplified!
+
+        # normalize term order (and consequent simplification):
+        # XX more tests for this
+        self.assertEqual(alphanorm(te("q_t & (p_t & ~p_t)")),
+                                   te("p_t & ~p_t & q_t"))
+        testsimp(self, te("(q_t & p_t) & ~p_t"), False, all=True)
+        testsimp(self, te("p_t & q_t & ~~p_t"), te("p_t & q_t"), all=True)
+        testsimp(self, te("p_t & q_t | q_t & p_t"), te("p_t & q_t"), all=True)
+
         # In principle you could add all sorts of other patterns, e.g.
-        # conversion of material implication to |, de morgan's laws, etc; but
-        # going any further on syntactic equivalence only seems a bit pointless
+        # conversion of material implication to |, de morgan's laws, etc.
         # testsimp(self, te("~p_t => p_t"), te("p_t"), all=True)
+        # under negation normal form:
         # testsimp(self, te("~(p_t & q_t)"), te("~p_t | ~p_t"), all=True)
         # etc..
+
+    def test_quantifier_simp(self):
+        # XX more
+        testsimp(self, te("Forall y_e : Forall x_e : ~~P_<(e,e),t>(y,x)"),
+                       te("Forall x_e : Forall y_e : P_<(e,e),t>(y,x)"),
+                       all=True)
 
     def test_boolean_evaluation(self):
         # this test is more to ensure that this code isn't crashing, than a
@@ -646,6 +656,15 @@ class MetaTest(unittest.TestCase):
         # parsing cases that aren't otherwise tested here)
         self.assertTrue(TypedExpr.factory("{x_e, y_e} <=> {x_e, y_e}").simplify())
         self.assertTrue(TypedExpr.factory("(x_e, y_e) <=> (x_e, y_e)").simplify())
+
+    def test_set_simplify(self):
+        for i in range(100):
+            x = random_expr(options=RType.SET_RELATION, depth=3)
+            try:
+                x.simplify_all(eliminate_sets=True, reduce=True)
+            except:
+                print("Failure on depth %i expression '%s'" % (depth, repr(x)))
+                raise
 
     # each of these generates 1000 random expressions with the specified depth,
     # and checks whether their repr parses as equal to the original expression
