@@ -343,16 +343,53 @@ def unsafe_variables(fun, arg):
     safe to use in application."""
     return arg.free_variables() | fun.free_variables()
 
+
 def beta_reduce_ts(t, varname, subst):
+    from .core import LFun
     if varname in t.free_variables():
         if (t.term() and t.op == varname):
-            return subst # TODO copy??
+            t = subst.copy()
+            t._reduced_cache = subst._reduced_cache
+            return t
         # we will be changing something in this expression, but not at this
         # level of recursion.
-        parts = list()
-        for p in t:
-            parts.append(beta_reduce_ts(p, varname, subst))
+        rcache = t._reduced_cache
+        parts = [beta_reduce_ts(p, varname, subst) for p in t]
         t = t.copy_local(*parts)
+        # update the chart. In particular, beta reduction may create a new
+        # subreducible expression by substituting a lambda expression, or an
+        # arbitrary subreducible expression, into a function-argument expression
+        # that was not previous reducible.
+        # example (setup, no chart update): `(L f_<e,e> : f(x))(L x_e : x)`
+        #  * the chart for `f(x)` will be [True, True] if it is filled in, but
+        #    after substitution, it becomes (L x_e : x)(x), which is not reduced.
+        # example (easy): `(L f_<e,e> : f(f(x)))(L x_e : x)`
+        #  * the chart for `f(f(x))` will be [True, True] if it is filled in, but
+        #    after substitution, it becomes (L x_e : x)(L x_e : x)(x), which
+        #    needs the chart [True, False] -- (L x_e : x)(x) is unreduced.
+        # example (worse): `((L f_<e,e> : f)((L f_<e,e> : f)((L f_<e,e> : f)(L x_e : x))))(x_e)`
+        # example (worse): `(L f_<e,e> : f(f(x_e)))((L f_<e,e> : f)(L x_e : x))`
+        #  * the chart for `f(f(x))` if filled in would be [True, True].
+        #    after one substitution, we get:
+        #    `(λ f_<e,e>: f)(λ x_e: x)((λ f_<e,e>: f)(λ x_e: x)(x_e))`
+        #    which should now have [False, False[False, True]]
+        # (etc)
+
+        # conditional chart modification. These are exactly the two cases where
+        # an existing `True` in the chart may need to be revised. Note that
+        # the subreducible() call forces the chart for `subst` to be at least
+        # partialy filled in.
+        if isinstance(subst, LFun) or subst.subreducible() is not None:
+            for i in range(len(rcache)):
+                if (rcache[i] == False # unchanged, reduction won't cause a subreduction
+                        # checks t[i].reducible():
+                        or t[i]._is_reduced_caching() == False):
+                    t._reduced_cache[i] = False
+                else:
+                    t._reduced_cache[i] = rcache[i]
+        else:
+            t._reduced_cache = rcache
+
     return t
 
 def variable_replace(expr, m):

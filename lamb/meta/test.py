@@ -510,6 +510,19 @@ class MetaTest(unittest.TestCase):
         self.assertNotEqual(test3[1][1][0], test3[1][1][2])
         self.assertNotEqual(test3[1][1][1], test3[1][1][2])
 
+        # test some relatively nasty reduction cases
+        self.assertEqual(te("(L x_e : (L f_<e,e> : f(f(f(f(f(x))))))(L x_e : x))").reduce_all(),
+            test2b)
+        self.assertEqual(te("(L f_<e,e> : L g_<e,e> : L x_e : g(f(x)))(L x_e : x)(L y_e : y)").reduce_all(),
+            test2b)
+        self.assertEqual(te("((L f_<e,e> : f)((L f_<e,e> : f)((L f_<e,e> : f)(L x_e : x))))(x_e)").reduce_all(),
+            self.x)
+        self.assertEqual(te("(L g_<e,e> : (L x_e : (L f_<e,e> : (L y_e : g(f(y))))))(L x_e : x)(y_e)(L x_e : x)(x_e)").reduce_all(),
+            self.x)
+        # nb variable identity in the output may be a bit too strict
+        self.assertEqual(te("(L f_<e,e> : f((L x_e : x)(Iota y : (L x_e : P_<e,t>(f(x)))(f(y)))))(L x_e : x)").reduce_all(),
+            te("Iota y_e : P_<e,t>(y)"))
+
     def test_polymorphism(self):
         # geach combinator test
         g = te("L g_<Y,Z> : L f_<X,Y> : L x_X : g(f(x))")
@@ -665,6 +678,25 @@ class MetaTest(unittest.TestCase):
             except:
                 print("Failure on depth %i expression '%s'" % (depth, repr(x)))
                 raise
+
+    def test_random_reduce(self):
+        # XX the functions generated this way do reduce substantially, but it's
+        # not entirely clear to me that they're fully exercising the reduction
+        # code...
+        arg = te("Test_e")
+        for i in range(100):
+            f = random_expr(options=RType.LFUN_BOUND, depth=4, typ=tp("<e,e>"))
+            x = f(arg).reduce_all()
+            self.assertFalse(x.subreducible(reset_cache=True),
+                f"Reduction failure on random function `{repr(f)}`)")
+
+        arg = te("L x_e : x")
+        for i in range(100):
+            f = random_expr(options=RType.LFUN_BOUND, depth=4, typ=tp("<<e,e>,e>"))
+            x = f(arg).reduce_all()
+            self.assertFalse(x.subreducible(reset_cache=True),
+                f"Reduction failure on random function `{repr(f)}`)")
+
 
     # each of these generates 1000 random expressions with the specified depth,
     # and checks whether their repr parses as equal to the original expression

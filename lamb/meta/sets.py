@@ -192,6 +192,9 @@ class ListedSet(TypedExpr):
     def term(self):
         return False
 
+    def name_of(self, i):
+        return f"element {i}"
+
     def __lshift__(self, i):
         """Use the `<<` operator for set membership."""
         return SetContains(i, self)

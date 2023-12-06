@@ -704,6 +704,10 @@ class TypedExpr(object):
 
         self.op = op
         self.args = list(args)
+        # tracks: during reduction, is arg i (currently) fully reduced?
+        # False = no, None = tbd, True = yes
+        # reset on copy without explicit handling
+        self._reduced_cache = [None] * len(self.args)
 
     def _type_cache_get(self, t):
         try:
@@ -846,6 +850,9 @@ class TypedExpr(object):
         parts[i] = s
         result = self.copy_local(*parts)
         return result
+
+    def name_of(self, i):
+        return f"operand {i}"
 
     @classmethod
     def parse(cls, s, assignment=None, locals=None):
@@ -1703,64 +1710,95 @@ class TypedExpr(object):
         return False
 
     def reduce(self):
-        assert (not self.reducible())
         return self
 
-    def reduce_sub(self, i):
-        """Applies reduce to a constituent term, determined by argument i."""
-        new_arg_i = self.args[i].reduce()
-        if new_arg_i is not self.args[i]:
-            result = self.copy()
-            result.args[i] = new_arg_i
-            if len(result.args) == 2 and isinstance(result, BindingOp):
-                reason = "Reduction of body"
+    def _is_reduced_caching(self):
+        if len(self) == 0:
+            return True
+        if self.reducible():
+            return False
+        seen_true = False
+        for i in range(len(self)):
+            if self._reduced_cache[i]:
+                seen_true = True
+            elif self._reduced_cache[i] == False:
+                return False
+        return seen_true or None
+
+    def subreduce(self, path, reason=True, force_full=True):
+        if not path:
+            return self.reduce()
+        else:
+            i = path[0]
+            if force_full:
+                new_arg_i = self[i].subreduce(path[1:], force_full=force_full, reason=True)
             else:
-                reason = "Reduction of operand %s" % (i)
-            return derived(result, self, desc=reason)
+                # pair recursion with reduce_all: for the sake of better
+                # derivations try to do this in batches
+                new_arg_i = self[i].reduce_all()
+            if new_arg_i is not self[i]:
+                args = list(self.args)
+                args[i] = new_arg_i
+                result = self.copy_local(*args)
+                if reason:
+                    if force_full:
+                        reason = f"reduction of path {repr(path)}"
+                        # bookkeeping is a bit annoying for this case
+                        # (because of sequences like (0,0,0) and then (0,0)),
+                        # so don't track the recursive detail at all. If this
+                        # were ever used by the automatic algorithm, this
+                        # should be fixed.
+                        subexpression = None
+                    else:
+                        reason = f"recursive reduction of {self.name_of(i)}"
+                        subexpression = new_arg_i
+                    result = derived(result, self,
+                            desc=reason,
+                            subexpression=subexpression)
+                result._reduced_cache = self._reduced_cache
+                # sync any changes to i's _reduced_cache:
+                result._reduced_cache[i] = result[i]._is_reduced_caching()
+                return result
         return self
 
-    def reduce_all(self):
+    def subreducible(self, force_full=True, reset_cache=False):
+        if reset_cache:
+            self._reduced_cache = [None] * len(self)
+        # depth first search for a reducible element. This memoizes:
+        if self.reducible():
+            return ()
+        for i in range(len(self)):
+            if not force_full and self._reduced_cache[i] is not None:
+                if self._reduced_cache[i]:
+                    continue
+                else:
+                    # note: this case returns an incomplete path
+                    return (i,)
+            path = self[i].subreducible(force_full=force_full)
+            if path is not None:
+                self._reduced_cache[i] = False
+                return (i,) + path
+            else:
+                self._reduced_cache[i] = True
+        return None
+
+    def reduce_all(self, group_recursion=True):
         """Maximally reduce function-argument combinations in `self`."""
 
-        # this is a dumb strategy: it's either not fully general (but I haven't
-        # found the case yet), or it's way too inefficient, I'm not sure which;
-        # probably both.  The potential overkill is the recursive step.
-        # TODO: research on reduction strategies.
-        # TODO: add some kind of memoization?
-
-        # uncomment this to see just how bad this function is...
-        #print("reduce_all on '%s'" % repr(self))
+        # uncomment this to see how bad this function is...
+        # print("reduce_all on '%s'" % repr(self))
         result = self
-        dirty = False
-        for i in range(len(result.args)):
-            new_arg_i = result.args[i].reduce_all()
-            if new_arg_i is not result.args[i]:
-                if not dirty:
-                    dirty = True
-                args = list(result.args)
-                args[i] = new_arg_i
-                next_step = result.copy_local(*args)
-                if len(result.args) == 2 and isinstance(result, BindingOp):
-                    reason = "Recursive reduction of body"
-                else:
-                    reason = "Recursive reduction of operand %s" % (i)
-                result = derived(next_step, result, desc=reason,
-                                                    subexpression=new_arg_i)
-        self_dirty = False
-        while result.reducible():
-            new_result = result.reduce()
-            if new_result is not result:
-                dirty = True
-                self_dirty = True
-                result = new_result # no need to add a derivation here, reduce
-                                    # will do that already
-            else:
-                break # should never happen...but prevent loops in case of error
-        if self_dirty:
-            new_result = result.reduce_all() # TODO: is this overkill?
-            result = new_result
-        return result
 
+        # `subreducible` calls will build a chart for subexpressions they
+        # visit, and `subreduce` will update that chart.
+        path = result.subreducible(force_full=not group_recursion)
+        while path is not None:
+            # `force_full` here can lead to less efficient derivation
+            # sequences, but more comprehensible derivations.
+            result = result.subreduce(path, reason=True, force_full=not group_recursion)
+            path = result.subreducible(force_full=not group_recursion)
+
+        return result
 
     def calculate_partiality(self, vars=None):
         condition = from_python(True)
@@ -2227,6 +2265,7 @@ class TypedTerm(TypedExpr):
         self.defer = False
         self.let = False
         update_a = False
+        self._reduced_cache = []
         if typ is None:
             if assignment is not None and self.op in assignment:
                 self.type = assignment[self.op].type
@@ -3266,9 +3305,16 @@ class BindingOp(TypedExpr):
                                                         merge_intersect=False))
         else:
             self.init_body(body)
+        self._reduced_cache = [None] * len(self.args)
 
     def copy_local(self, *args, type_check=True):
         return type(self)(*args, type_check=type_check)
+
+    def name_of(self, i):
+        if i == len(self) - 1:
+            return "body"
+        else:
+            return self.super().name_of(i)
 
     def scope_assignment(self, assignment=None):
         if assignment is None:
@@ -3751,16 +3797,9 @@ class LFun(BindingOp):
         # during beta reduction.
         ts = get_type_system()
         if ts.eq_check(self.argtype, arg.type):
-            # first check for potential variable name collisions when
-            # substituting, and the substitute
-            #TODO: do I want to actually return the result of alpha converting?
-            # May be needed later?
-            new_self = alpha_convert(self, unsafe_variables(self, arg))
-            # TODO: the copy here is a hack.  Right now identity functions
-            # otherwise result in no copying at all, leading to very
-            # wrong results.  This needs to be tracked down to its root and
-            # fixed.
-            return (beta_reduce_ts(new_self.body, new_self.varname, arg)).copy()
+            result = alpha_convert(self, unsafe_variables(self, arg))
+            result = beta_reduce_ts(result.body, result.varname, arg)
+            return result
         else:
             raise TypeMismatch(self, arg, error="Function-argument application: mismatched argument type")
 
