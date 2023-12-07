@@ -515,6 +515,18 @@ class MetaTest(unittest.TestCase):
             test2b)
         self.assertEqual(te("(L f_<e,e> : L g_<e,e> : L x_e : g(f(x)))(L x_e : x)(L y_e : y)").reduce_all(),
             test2b)
+
+        # The following example is loosely based on a case from:
+        # Lamping 1990, An algorithm for optimal lambda calculus reduction
+        # https://dl.acm.org/doi/pdf/10.1145/96709.96711
+        # aside from being just a very complicated reduction example, it
+        # illustrates a combinatorial blowup (in both time and spaceduring
+        # reduction due to the paired function reuse between function and
+        # argument.
+        # TODO: revisit for optimization
+        self.assertEqual(te("(L x_<e,e> : (L f2_<<e,e>,<e,e>> : (f2(f2(f2(f2(x)))))))(L x_e : x)(L f2_<e,e> : (L f_<e,e> : L x_e: f(f(f(f(x)))))(f2))").reduce_all(),
+            test2b)
+
         self.assertEqual(te("((L f_<e,e> : f)((L f_<e,e> : f)((L f_<e,e> : f)(L x_e : x))))(x_e)").reduce_all(),
             self.x)
         self.assertEqual(te("(L g_<e,e> : (L x_e : (L f_<e,e> : (L y_e : g(f(y))))))(L x_e : x)(y_e)(L x_e : x)(x_e)").reduce_all(),
