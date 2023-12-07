@@ -522,7 +522,7 @@ class MetaTest(unittest.TestCase):
         # aside from being just a very complicated reduction example, it
         # illustrates a combinatorial blowup (in both time and spaceduring
         # reduction due to the paired function reuse between function and
-        # argument.
+        # argument. (The full reduction has 513 steps.)
         # TODO: revisit for optimization
         self.assertEqual(te("(L x_<e,e> : (L f2_<<e,e>,<e,e>> : (f2(f2(f2(f2(x)))))))(L x_e : x)(L f2_<e,e> : (L f_<e,e> : L x_e: f(f(f(f(x)))))(f2))").reduce_all(),
             test2b)

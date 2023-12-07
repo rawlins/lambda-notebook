@@ -1,4 +1,5 @@
 from numbers import Number
+import re
 
 from lamb import display, types, utils
 from lamb.types import TypeMismatch
@@ -546,15 +547,31 @@ def alpha_convert(t, blocklist):
     return alpha_convert_r(t, overlap, conversions)
 
 
+# XX overlap with parsing code...
+# XX maybe too strict for initial char depending on locale?
+symbol_re = re.compile(r'^[a-zA-Z_]\w*$')
+var_re = re.compile(r'^[a-z]\w*$')
+
+
 def is_symbol(s):
-    "A string s is a symbol if it starts with an alphabetic char."
+    """A string `s` is a symbol if it starts with an alphabetic char or `_` and
+    contains only alphanumeric characters."""
+    return isinstance(s, str) and bool(re.match(symbol_re, s))
+
+
+def is_var_symbol(s):
+    """A string s is a variable symbol if it's a symbol that starts with a
+    lowercase letter."""
+    return isinstance(s, str) and bool(re.match(var_re, s))
+
+
+def is_symbol_hr(s):
     return (isinstance(s, str) and len(s) > 0
                 and s[:1].isalpha()
                 and not is_multiword(s))
 
 
-def is_var_symbol(s):
-    "A logic variable symbol is an initial-lowercase string."
+def is_var_symbol_hr(s):
     return is_symbol(s) and s[0].islower()
 
 

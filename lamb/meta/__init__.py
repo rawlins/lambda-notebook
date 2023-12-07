@@ -38,9 +38,8 @@ def default_metalanguage():
 
 default_metalanguage()
 
-# TODO, move all the tests into their own module?
+# TODO, move these tests elsewhere?
 def test_setup():
-    global ident, ia, ib, P, Q, p, y, t, testf, body, pmw_test1, pmw_test1b, t2
     ident = te("L x_e : x")
     ia = TypedExpr.factory(ident, "y")
     ib = LFun(type_e, ia, "y")

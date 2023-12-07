@@ -1,4 +1,4 @@
-import sys, re, logging, random, functools, inspect
+import sys, re, logging, random, functools, inspect, operator
 import collections
 from numbers import Number
 
@@ -10,7 +10,7 @@ from lamb.types import type_property, type_transitive, BasicType, FunType
 # meta.ply is the only meta module imported by core
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
 from .ply import simplify_all
-from .ply import is_var_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
+from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
 from .ply import term_replace_unify, variable_convert, alpha_variant
 from .ply import commutative, associative, left_commutative, right_commutative
 
@@ -2299,10 +2299,22 @@ class TypedTerm(TypedExpr):
                     "Invalid term name with `_` prefix for `TypedTerm` (did you mean `MetaTerm`?)",
                     s=repr(self.op))
 
+            if not is_symbol(self.op):
+                raise parsing.ParseError(
+                    f"`TypedTerm` requires a valid symbol name, got `{self.op}`")
+
+            # This follows the prolog convention: a named constant is a term with a
+            # capitalized first letter. All MetaTerms are constants, 
+            self._variable = is_var_symbol(self.op)
+            self._constant = not self.variable
+
         self.args = list()
         self.latex_op_str = latex_op_str
         if update_a:
             assignment[self.op] = self
+
+    variable = property(operator.attrgetter('_variable'))
+    constant = property(operator.attrgetter('_constant'))
 
     def copy(self):
         return TypedTerm(self.op, typ=self.type)
@@ -2322,14 +2334,14 @@ class TypedTerm(TypedExpr):
         return env
 
     def type_env(self, constants=False, target=None, free_only=True):
-        if self.constant() and not constants:
+        if self._constant and not constants:
             return set()
         if not target or self.op in target:
             return {self.op: self}
         return set()
 
     def free_terms(self, var_only=False):
-        if not var_only or is_var_symbol(self.op):
+        if not var_only or self._variable:
             return {self.op}
         else:
             return set()
@@ -2344,20 +2356,6 @@ class TypedTerm(TypedExpr):
     def term_name(self):
         return self.op
 
-    def constant(self):
-        """Return true iff `self` is a constant.
-
-        This follows the prolog convention: a constant is a term with a
-        capitalized first letter.  Numbers are constants."""
-        return not is_var_symbol(self.op)
-
-    def variable(self):
-        """Return true iff `self` is a variable.
-
-        This follows the prolog convention: a variable is a term with a
-        lowercase first letter."""
-        return is_var_symbol(self.op)
-
     def __repr__(self):
         return "%s_%s" % (self.op, repr(self.type))
 
@@ -2367,10 +2365,10 @@ class TypedTerm(TypedExpr):
                 return False
         if self.suppress_type:
             return False
-        if suppress_constant_type and self.constant() and not self.meta():
+        if suppress_constant_type and self.constant and not self.meta():
             return False
         if suppress_constant_predicate_type and not self.meta():
-            if (self.constant() and self.type.functional()
+            if (self.constant and self.type.functional()
                             and not isinstance(self.type, types.VariableType)):
                 if ((self.type.left == types.type_e
                                 or isinstance(self.type.left, types.TupleType))
@@ -2426,7 +2424,7 @@ class TypedTerm(TypedExpr):
                 typ = ts.random_type(max_type_depth, 0.5)
         else:
             used_typed = [x for x in list(usedset)
-                                if (x.type==typ and x.variable() == is_var)]
+                                if (x.type==typ and x.variable == is_var)]
             if try_used and len(used_typed) > 0:
                 varname = (random.choice(list(used_typed))).op
         if varname is None:

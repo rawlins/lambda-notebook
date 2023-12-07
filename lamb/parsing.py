@@ -376,7 +376,7 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
         # variable assignment case
         # don't pass assignment here, to allow for redefinition.  TODO: revisit
         term = meta.TypedExpr.term_factory(left_s)
-        if not term.variable():
+        if not term.variable:
             raise ParseError("Assignment to non-variable term '%s'" % term)
         ts = meta.get_type_system()
         u_result = ts.unify(term.type, right_side.type)

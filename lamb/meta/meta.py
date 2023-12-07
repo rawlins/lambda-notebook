@@ -51,6 +51,8 @@ class MetaTerm(core.TypedTerm):
             typ = self.check_type_domain(typ=typ, setfun=setfun)
 
         super().__init__(name, typ=typ, type_check=False)
+        self._variable = False
+        self._constant = True
 
         # cosmetics: hide the type subscript in rich reprs for t/n
         if self.type == type_t or self.type == type_n:
@@ -107,10 +109,6 @@ class MetaTerm(core.TypedTerm):
                 raise OutOfDomain(self, arg)
         else:
             raise ValueError(f"Unknown MetaTerm value `{self.op}`!")
-
-    def constant(self):
-        # this isn't strictly needed but it's nice to be explicit
-        return True
 
     def meta(self):
         return True
