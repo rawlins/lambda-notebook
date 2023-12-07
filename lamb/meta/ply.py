@@ -342,7 +342,14 @@ def alphanorm(e):
 def unsafe_variables(fun, arg):
     """For a function and an argument, return the set of variables that are not
     safe to use in application."""
-    return arg.free_variables() | fun.free_variables()
+    v = arg.free_variables() | fun.free_variables()
+    from .core import LFun
+    # the actual bound variable is always safe. This check in principle makes
+    # this code heavier, but generally prevents a bunch of unnecessary copying
+    # for common cases.
+    if isinstance(fun, LFun):
+        v.discard(fun[0].op)
+    return v
 
 
 def beta_reduce_ts(t, varname, subst):
@@ -541,6 +548,8 @@ def alpha_convert(t, blocklist):
 
     Possibly will not change t."""
     overlap = t.bound_variables() & blocklist
+    if not overlap:
+        return t
     full_bl = blocklist | t.free_variables() | t.bound_variables()
     # note that this relies on the side effect of alpha_variant...
     conversions = {x : alpha_variant(x, full_bl) for x in overlap}
