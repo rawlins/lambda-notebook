@@ -1735,7 +1735,7 @@ class TypedExpr(object):
             else:
                 # pair recursion with reduce_all: for the sake of better
                 # derivations try to do this in batches
-                new_arg_i = self[i].reduce_all()
+                new_arg_i = self[i].reduce_all(reset_cache=False)
             if new_arg_i is not self[i]:
                 args = list(self.args)
                 args[i] = new_arg_i
@@ -1782,7 +1782,7 @@ class TypedExpr(object):
                 self._reduced_cache[i] = True
         return None
 
-    def reduce_all(self, group_recursion=True):
+    def reduce_all(self, group_recursion=True, reset_cache=True):
         """Maximally reduce function-argument combinations in `self`."""
 
         # uncomment this to see how bad this function is...
@@ -1791,7 +1791,7 @@ class TypedExpr(object):
 
         # `subreducible` calls will build a chart for subexpressions they
         # visit, and `subreduce` will update that chart.
-        path = result.subreducible(force_full=not group_recursion)
+        path = result.subreducible(force_full=not group_recursion, reset_cache=reset_cache)
         while path is not None:
             # `force_full` here can lead to less efficient derivation
             # sequences, but more comprehensible derivations.
