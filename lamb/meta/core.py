@@ -1731,17 +1731,24 @@ class TypedExpr(object):
                 return False
         return seen_true or None
 
-    def subreduce(self, path, reason=True, force_full=True):
+    def subreduce(self, path, reason=True, force_full=True, use_cache=True):
         if not path:
             return self.reduce()
-        else:
-            i = path[0]
+        i = path[0]
+        if not use_cache or not self._reduced_cache[i]:
             if force_full:
-                new_arg_i = self[i].subreduce(path[1:], force_full=force_full, reason=True)
+                # continue recursing along the exact `path`
+                new_arg_i = self[i].subreduce(path[1:],
+                                    force_full=force_full,
+                                    reason=True,
+                                    use_cache=use_cache)
             else:
-                # pair recursion with reduce_all: for the sake of better
-                # derivations try to do this in batches
-                new_arg_i = self[i].reduce_all(reset_cache=False)
+                # there are unreduced elements at this point along the path.
+                # Look for them via pair recursion with reduce_all. This is
+                # useful (and the default for reduce_all calls) because it
+                # produces better derivations.
+                new_arg_i = self[i].reduce_all(use_cache=use_cache,
+                                                group_recursion=True)
             if new_arg_i is not self[i]:
                 args = list(self.args)
                 args[i] = new_arg_i
@@ -1761,26 +1768,32 @@ class TypedExpr(object):
                     result = derived(result, self,
                             desc=reason,
                             subexpression=subexpression)
-                result._reduced_cache = self._reduced_cache
+                result._reduced_cache = self._reduced_cache.copy()
                 # sync any changes to i's _reduced_cache:
                 result._reduced_cache[i] = result[i]._is_reduced_caching()
                 return result
         return self
 
-    def subreducible(self, force_full=True, reset_cache=False):
-        if reset_cache:
-            self._reduced_cache = [None] * len(self)
-        # depth first search for a reducible element. This memoizes:
+    def _reduction_order(self):
+        return range(len(self))
+
+    def subreducible(self, use_cache=True, group_recursion=True):
+        # depth first search for a reducible element. This memoizes. If
+        # `use_cache` is False, it does not check the cache when recursing
+        # (but still updates the cache).
         if self.reducible():
             return ()
-        for i in range(len(self)):
-            if not force_full and self._reduced_cache[i] is not None:
+        for i in self._reduction_order():
+            if use_cache and self._reduced_cache[i] is not None:
                 if self._reduced_cache[i]:
                     continue
-                else:
+                elif group_recursion:
                     # note: this case returns an incomplete path
                     return (i,)
-            path = self[i].subreducible(force_full=force_full)
+                # else: intentional fallthrough. Find the exact reducible
+                # element in the cached path.
+            path = self[i].subreducible(use_cache=use_cache,
+                                        group_recursion=group_recursion)
             if path is not None:
                 self._reduced_cache[i] = False
                 return (i,) + path
@@ -1788,7 +1801,7 @@ class TypedExpr(object):
                 self._reduced_cache[i] = True
         return None
 
-    def reduce_all(self, group_recursion=True, reset_cache=True):
+    def reduce_all(self, group_recursion=True, use_cache=True):
         """Maximally reduce function-argument combinations in `self`."""
 
         # uncomment this to see how bad this function is...
@@ -1797,12 +1810,20 @@ class TypedExpr(object):
 
         # `subreducible` calls will build a chart for subexpressions they
         # visit, and `subreduce` will update that chart.
-        path = result.subreducible(force_full=not group_recursion, reset_cache=reset_cache)
+        # TODO: right now the chart is stored on TypedExpr objects. It might
+        # be better to simply build the chart independently during recursion
+        # here?
+        path = result.subreducible(group_recursion=group_recursion,
+                                    use_cache=use_cache)
         while path is not None:
             # `force_full` here can lead to less efficient derivation
             # sequences, but more comprehensible derivations.
-            result = result.subreduce(path, reason=True, force_full=not group_recursion)
-            path = result.subreducible(force_full=not group_recursion)
+            result = result.subreduce(path,
+                reason=True,
+                force_full=not group_recursion,
+                use_cache=use_cache)
+            path = result.subreducible(group_recursion=group_recursion,
+                                        use_cache=use_cache)
 
         return result
 
@@ -2119,6 +2140,11 @@ class ApplicationExpr(TypedExpr):
 
         # assumption: by now, fun.type supports indexing to get the output type
         return (fun, arg, fun.type[1], history)
+
+    def _reduction_order(self):
+        # prefer to reduce the argument before the function, in case the
+        # argument is reused. (This is, however, non-optimal for constant fns)
+        return (1,0)
 
     def reducible(self):
         if (isinstance(self.args[0], LFun)

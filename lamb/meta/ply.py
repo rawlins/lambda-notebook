@@ -357,7 +357,7 @@ def beta_reduce_ts(t, varname, subst):
     if varname in t.free_variables():
         if (t.term() and t.op == varname):
             t = subst.copy()
-            t._reduced_cache = subst._reduced_cache
+            t._reduced_cache = subst._reduced_cache.copy()
             return t
         # we will be changing something in this expression, but not at this
         # level of recursion.
@@ -396,7 +396,7 @@ def beta_reduce_ts(t, varname, subst):
                 else:
                     t._reduced_cache[i] = rcache[i]
         else:
-            t._reduced_cache = rcache
+            t._reduced_cache = rcache.copy()
 
     return t
 
