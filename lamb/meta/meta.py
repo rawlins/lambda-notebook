@@ -50,7 +50,7 @@ class MetaTerm(core.TypedTerm):
         if not type_verified:
             typ = self.check_type_domain(typ=typ, setfun=setfun)
 
-        super().__init__(name, typ=typ, type_check=False)
+        super().__init__(name, typ=typ, type_check=False, validate_name=False)
         self._variable = False
         self._constant = True
 

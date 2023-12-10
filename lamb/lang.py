@@ -2202,7 +2202,10 @@ class PlaceholderTerm(meta.TypedTerm):
     def __init__(self, varname, placeholder_for, system=None, assignment=None,
                                                                type_check=True):
         meta.TypedTerm.__init__(self, varname, types.UnknownType(),
-                                assignment=assignment, type_check=type_check)
+                                assignment=assignment, type_check=type_check,
+                                validate_name=False)
+        self._variable = False
+        self._constant = True
         self.let = True
         self.placeholder_for = placeholder_for
         if system is None:

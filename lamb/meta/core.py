@@ -2258,7 +2258,8 @@ class TypedTerm(TypedExpr):
     The attribute 'type_guessed' is flagged if the type was not specified; this
     may result in coercion as necessary."""
     def __init__(self, varname, typ=None, latex_op_str=None, assignment=None,
-                                    defer_type_env=False, type_check=True):
+                                    defer_type_env=False, type_check=True,
+                                    validate_name=True):
         # NOTE: does not call super
         self.op = varname
         self.derivation = None
@@ -2287,7 +2288,7 @@ class TypedTerm(TypedExpr):
 
         self.suppress_type = False
         from .meta import MetaTerm
-        if not isinstance(self, MetaTerm):
+        if validate_name:
             if not isinstance(self.op, str):
                 # note: don't use `s` parameter, because the resulting error
                 # message is confusing for this specific case
