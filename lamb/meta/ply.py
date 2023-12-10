@@ -656,9 +656,11 @@ class DerivationStep(object):
 
 class Derivation(object):
     """A derivation sequence, consisting of DerivationSteps."""
+
+    max_display_steps = 100
+
     def __init__(self, steps):
         self.steps = list()
-        self.steps_hash = dict()
         if steps is not None:
             self.add_steps(steps)
             self.result = self[-1]
@@ -667,12 +669,10 @@ class Derivation(object):
         self.force_on_recurse = False
 
     def add_step(self, s):
-        self.steps_hash[len(self.steps)] = s
         self.steps.append(s)
 
     def add_steps(self, steps):
-        for s in steps:
-            self.add_step(s)
+        self.steps.extend(steps)
 
     def __iter__(self):
         return iter(self.steps)
@@ -686,7 +686,6 @@ class Derivation(object):
     def __delitem__(self, i):
         if i + 1 < len(self):
             self.steps[i+1].origin = self.steps[i].origin
-        del self.steps_hash[i]
         del self.steps[i]
 
     def can_collapse(self, recursing=True):
@@ -707,31 +706,69 @@ class Derivation(object):
         # is still compact?
         return f"[{subdesc}]", subexp
 
-    def steps_sequence(self, latex=False, ignore_trivial=False, all_recursion=False):
+    def steps_sequence(self, index=None, latex=False, ignore_trivial=False, all_recursion=False):
         l = list()
-        if len(self.steps) > 0:
-            l.append((self.steps[0].origin_str(latex), None, None))
-            for i in range(len(self.steps)):
+        if index is None:
+            start = None
+            stop = None
+            # index = slice(0, len(self.steps))
+        elif isinstance(index, int):
+            start = index
+            stop = index + 1
+            # index = slice(index, index + 1)
+        else:
+            start = index.start
+            stop = index.stop
+        if start is None:
+            start = 0
+        if stop is None:
+            stop = len(self.steps)
+
+        if start < 0 or stop < 0:
+            raise ValueError("Negative indexing on derivation displays is not supported")
+        trimmed = False
+        requested_stop = min(len(self.steps) - 1, stop)
+        # TODO: some kind of recursion cap also
+        if stop - start > self.max_display_steps - 2:
+            stop = start + self.max_display_steps - 1
+            trimmed = True
+        index = slice(start, stop)
+        subselect = self.steps[index]
+        # XX include step number here, not in display code?
+        if len(subselect) > 0:
+            l.append((subselect[0].origin_str(latex), None, None))
+            for i in range(len(subselect)):
                 # assume that origin matches previous result.  Could check this.
-                if self.steps[i].trivial and ignore_trivial:
+                if subselect[i].trivial and ignore_trivial:
                     continue
-                l.append(self.steps[i].unpack_for_display(latex=latex, all_recursion=all_recursion))
+                l.append(subselect[i].unpack_for_display(latex=latex, all_recursion=all_recursion))
+        if trimmed:
+            l.append((f"... {requested_stop - index.stop} steps omitted ...", "", None))
+            l.append(self.steps[requested_stop].unpack_for_display(
+                                            latex=latex,
+                                            all_recursion=all_recursion))
         return l
 
     def equality_display(self, content, style=None):
+        # TODO: small step count cap for this
         l = self.steps_sequence(latex=True, ignore_trivial=True)
         n = display.DisplayNode(content=content, parts=[step[0] for step in l],
                                 style = display.EqualityDisplay())
         return n
 
-    def build_display_tree(self, recurse=False, parent=None, reason=None,
-                                all_recursion=False, style=None):
+    def build_display_tree(self, index=None, recurse=False, parent=None,
+                                reason=None, all_recursion=False, style=None):
         if all_recursion:
             recurse = True
         defaultstyle = {"align": "left"}
         style = display.merge_styles(style, defaultstyle)
-        node_style = display.LRDerivationDisplay(**style)
-        l = self.steps_sequence(latex=True, all_recursion=all_recursion)
+        if index is None:
+            index = slice(0, len(self.steps))
+        elif isinstance(index, int):
+            index = slice(index, index + 1)
+
+        node_style = display.LRDerivationDisplay(start=index.start, **style)
+        l = self.steps_sequence(index=index, latex=True, all_recursion=all_recursion)
         parts = list()
         for (expr, subreason, subexpression) in l:
             if reason == "":
@@ -758,11 +795,11 @@ class Derivation(object):
         return display.DisplayNode(content=parent, explanation=reason,
                                                 parts=parts, style=node_style)
 
-    def trace(self, recurse=True, style=None, all_recursion=False):
-        return self.build_display_tree(recurse=recurse, style=style, all_recursion=all_recursion)
+    def trace(self, index=None, recurse=True, style=None, all_recursion=False):
+        return self.build_display_tree(index=index, recurse=recurse, style=style, all_recursion=all_recursion)
 
-    def show(self, recurse=False, style=None, all_recursion=False):
-        return self.trace(recurse=recurse, style=style, all_recursion=all_recursion)
+    def show(self, index=None, recurse=False, style=None, all_recursion=False):
+        return self.trace(index=index, recurse=recurse, style=style, all_recursion=all_recursion)
 
     def _repr_html_(self):
         return self.build_display_tree(recurse=False)._repr_html_()

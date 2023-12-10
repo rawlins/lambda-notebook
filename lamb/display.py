@@ -545,8 +545,11 @@ class TreeNodeDisplay(HTMLNodeDisplay):
 
 
 class LRDerivationDisplay(HTMLNodeDisplay):
-    def __init__(self, **style):
+    def __init__(self, start=None, **style):
         style["border"] = False
+        if start is None:
+            start = 0
+        self.start = start
         super().__init__(**style)
 
     def render_parts(self, parts, **kwargs):
@@ -562,7 +565,11 @@ class LRDerivationDisplay(HTMLNodeDisplay):
             else:
                 row_style = last_style
             row = SubElement(e, "div", style=row_style)
-            subelement_with_text(row, "div", text=("%2d. " % (i+1)),
+            if i + self.start == 0:
+                counter = ""
+            else:
+                counter = "%2d. " % (i + self.start)
+            subelement_with_text(row, "div", text=counter,
                 style="display:table-cell;padding-right:5px;vertical-align:bottom;")
             kwargs["parent_table"] = row
             result = to_html(parts[i], style=kwargs)
