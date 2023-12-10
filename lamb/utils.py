@@ -257,8 +257,10 @@ def set_latex_repr(d):
 
 
 def parens(s):
-    # TODO: ensure at most one outer set of parens
-    return "(" + s + ")"
+    if len(s) > 0 and (not s[0] == "(" or not s[-1] == ")"):
+        return f"({s})"
+    else:
+        return s
 
 def ensuremath(s):
     return "$" + s.replace("$", "") + "$"

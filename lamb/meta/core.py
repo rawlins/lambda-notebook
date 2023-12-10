@@ -1861,7 +1861,6 @@ class TypedExpr(object):
         This is guaranteed (barring bugs) to produce a parsable string that
         builds the same object.
         """
-        assert not isinstance(self.op, TypedExpr)
         if not self.args:         # Constant or proposition with arity 0
             return repr(self.op)
         elif len(self.args) == 1: # Prefix operator
@@ -1895,7 +1894,7 @@ class TypedExpr(object):
             return self.__repr__()
         else:
             # should this just return repr unconditionally?
-            return "%s, type %s" % (self.__repr__(), self.type)
+            return f"{self.__repr__()}, type {self.type}"
 
     def __eq__(self, other):
         """x and y are equal iff their ops and args are equal.
@@ -2043,23 +2042,14 @@ class ApplicationExpr(TypedExpr):
             return ensuremath(f"{fun.latex_str(**kwargs)}{arg_str}")
 
     def __repr__(self):
-        """Return a string representation of the TypedExpr.
-
-        This is guaranteed (barring bugs) to produce a parsable string that
-        builds the same object.
-        """
         fun = self.args[0]
-        arg = self.args[1]
-        if isinstance(arg, Tuple):
-            arg_str = repr(arg) # tuple already generates parens
-        else:
-            arg_str = "(%s)" % (repr(arg))
+        arg_str = utils.parens(repr(self.args[1]))
+
         if isinstance(fun, CustomTerm):
             return fun.custom_appl(arg_str) # TODO: ???
-        elif isinstance(fun, LFun):
-            return "(%s)%s" % (repr(fun), arg_str)
         else:
-            return '%s%s' % (repr(fun), arg_str)
+            # assumption: LFun adds its own parens
+            return f"{repr(fun)}{arg_str}"
 
     def try_adjust_type_local(self, new_type, derivation_reason, assignment,
                                                                         env):
@@ -2861,9 +2851,6 @@ class SyncatOpExpr(TypedExpr):
             p.pretty(self.args[-1])
             p.text(")")
 
-    def __str__(self):
-        return "%s\nType: %s" % (repr(self), self.type)
-
     def __repr__(self):
         if self.arity == 1:
             if (self.operator_style):
@@ -3161,9 +3148,6 @@ class TupleIndex(SyncatOpExpr):
                 "Using non-constant index; not well-supported at present.")
             return None
 
-    def __str__(self):
-        return "%s\nType: %s" % (repr(self), self.type)
-
     def __repr__(self):
         return "(%s[%s])" % (repr(self.args[0]), repr(self.args[1]))
 
@@ -3455,10 +3439,6 @@ class BindingOp(TypedExpr):
         return "%s %s_{%s} \\: . \\:" % (self.op_name_latex, 
                                                 self.varname, 
                                                 self.vartype.latex_str())
-
-    def __str__(self):
-        return "%s %s : %s, Type: %s" % (self.op_name, self.varname,
-                                            repr(self.body), self.type)
 
     def latex_str(self, assignment=None, suppress_parens=False, **kwargs):
         assignment = self.scope_assignment(assignment=assignment)
