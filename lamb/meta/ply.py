@@ -568,27 +568,14 @@ def is_symbol(s):
     return isinstance(s, str) and bool(re.match(symbol_re, s))
 
 
+def symbol_is_var_symbol(s):
+    return s[0].islower()
+
+
 def is_var_symbol(s):
     """A string s is a variable symbol if it's a symbol that starts with a
     lowercase letter."""
     return isinstance(s, str) and bool(re.match(var_re, s))
-
-
-def is_symbol_hr(s):
-    return (isinstance(s, str) and len(s) > 0
-                and s[:1].isalpha()
-                and not is_multiword(s))
-
-
-def is_var_symbol_hr(s):
-    return is_symbol(s) and s[0].islower()
-
-
-def is_multiword(s):
-    """a string is multiword if there is intermediate (non-initial and
-    non-trailing) whitespace."""
-    #TODO this could be more efficient
-    return (len(s.strip().split()) != 1)
 
 
 #################################

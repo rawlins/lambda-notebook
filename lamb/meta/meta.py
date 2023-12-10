@@ -71,7 +71,7 @@ class MetaTerm(core.TypedTerm):
             return typ
         else:
             if self.op not in typ.domain:
-                if typ.find_type_vars():
+                if typ.bound_type_vars():
                     # it's helpful to have a specific error for this case
                     raise TypeMismatch(value, typ,
                         error=f"Can't instantiate domain elements with variable types")

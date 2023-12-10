@@ -38,7 +38,7 @@ def random_binding_expr(ctrl, max_type_depth=1):
 def random_lfun(typ, ctrl):
     global random_used_vars
     ftyp = typ
-    if ftyp is not None:
+    if ftyp is not None and not isinstance(ftyp, types.FunType):
         ftyp = get_type_system().unify(typ, tp("<?,?>"))
     # n.b.: unification here can get ? types, if `typ` is a variable. So use
     # with care -- e.g. it can lead to repr_parse failures.
@@ -54,7 +54,7 @@ def random_lfun(typ, ctrl):
 def random_lfun_force_bound(typ, ctrl):
     global random_used_vars
     ftyp = typ
-    if ftyp is not None:
+    if ftyp is not None and not isinstance(ftyp, types.FunType):
         ftyp = get_type_system().unify(typ, tp("<?,?>"))
     if ftyp is None:
         raise ValueError(f"Need a functional type to generate random LFuns, got {typ}")

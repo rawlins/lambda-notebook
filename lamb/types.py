@@ -233,6 +233,19 @@ class ComplexDomainSet(SimpleInfiniteSet):
             "Can't check membership for abstract complex domain sets")
 
 
+class CachableType:
+    def __init__(self, t):
+        self.t = t
+
+    def __eq__(self, other):
+        return self.t._type_eq(other.t, cache=True)
+
+    def __hash__(self):
+        return self.t._type_hash(cache=True)
+
+    def __repr__(self):
+        return repr(self.t)
+
 class TypeConstructor(object):
     domain_class = None
     def __init__(self, domain=None):
@@ -246,6 +259,20 @@ class TypeConstructor(object):
             else:
                 domain = self.domain_class(typ=self)
         self.domain = domain
+
+    def __eq__(self, other):
+        return self._type_eq(other)
+
+    def __hash__(self):
+        return self._type_hash()
+
+    def _type_eq(self, other, cache=False):
+        # in principle, could use the sequence interface to implement this
+        # more generically
+        raise NotImplementedError
+
+    def _type_hash(self, cache=False):
+        raise NotImplementedError
 
     def __len__(self):
         return 0
@@ -287,26 +314,23 @@ class TypeConstructor(object):
         print(repr(cls))
         raise NotImplementedError
 
-    def find_type_vars(self):
-        """Finds any type variables in the type that are bound.  Reminder:
-        in Hindley-Milner, the way it is normally used, all type variables are
-        bound. So in practice, this finds all type variables."""
-        accum = set()
-        for part in iter(self):
-            accum.update(part.find_type_vars())
-        return accum
-
     def bound_type_vars(self):
-        return self.type_vars
+        """Returns all bound type variables in the type.  Reminder: In
+        Damas-Hindley-Milner, the way it is normally used, all type variables
+        are bound. So in practice, this gives all type variables."""
+        return self._type_vars
 
     def is_polymorphic(self):
-        return len(self.type_vars) > 0
+        return len(self._type_vars) > 0
+
+    def has_fresh_variables(self):
+        return any(v.is_fresh() for v in self._type_vars)
 
     def init_type_vars(self):
         accum = set()
         for part in iter(self):
-            accum.update(part.type_vars)
-        self.type_vars = accum
+            accum.update(part._type_vars)
+        self._type_vars = accum
 
     def sub_type_vars(self, assignment, trans_closure=False):
         """Substitute type variables in `self` given the mapping in
@@ -314,7 +338,7 @@ class TypeConstructor(object):
 
         This does only one-place substitutions, so it won't follow chains if
         there are any."""
-        if len(self.type_vars) == 0:
+        if len(self._type_vars) == 0:
             return self
         l = list()
         dirty = False
@@ -328,20 +352,20 @@ class TypeConstructor(object):
         else:
             return self
 
-    def unify(self, other, unify_control_fun, data):
+    def unify(self, other, unify_control_fun, assignment=None):
         """General function for type unification.  Not intended to be called
         directly.  See `TypeSystem.unify`."""
         if not isinstance(self, other.__class__):
-            return (None, data)
+            return (None, assignment)
         if len(self) != len(other):
-            return (None, data)
+            return (None, assignment)
         sig = list()
         for i in range(len(self)):
-            (part_result, data) = unify_control_fun(self[i], other[i], data)
+            (part_result, assignment) = unify_control_fun(self[i], other[i], assignment=assignment)
             if part_result is None:
-                return (None, data)
+                return (None, assignment)
             sig.append(part_result)
-        return (self.copy_local(*sig), data)
+        return (self.copy_local(*sig), assignment)
 
 
 class BasicType(TypeConstructor):
@@ -387,20 +411,16 @@ class BasicType(TypeConstructor):
     def check(self, x):
         return self.domain.check(x)
 
-    def __eq__(self, other):
-        try:
-            return self.symbol == other.symbol
-        except AttributeError:
-            return False
-
     def copy_local(self):
         return BasicType(self.symbol, self.domain, self.name)
 
-    def equal(self, other):
-        raise NotImplementedError
-        return self.__eq__(other)
+    def _type_eq(self, other, cache=False):
+        if isinstance(other, BasicType):
+            return self.symbol == other.symbol
+        else:
+            return False
 
-    def __hash__(self):
+    def _type_hash(self, cache=False):
         return hash(self.symbol)
 
     def __repr__(self):
@@ -418,11 +438,11 @@ class BasicType(TypeConstructor):
     def add_internal_argument(self, arg_type):
         return FunType(arg_type, self)
 
-    def unify(self, other, unify_control_fun, data):
+    def unify(self, other, unify_control_fun, assignment=None):
         if self == other:
-            return (self, data)
+            return (self, assignment)
         else:
-            return (None, data)
+            return (None, assignment)
 
 
 class FunDomainSet(ComplexDomainSet):
@@ -533,27 +553,16 @@ class FunType(TypeConstructor):
     def __repr__(self):
         return "<%s,%s>" % (self.left, self.right)
 
-    def __eq__(self, other):
-        try:
-             return other.left == self.left and other.right == self.right
-        except AttributeError:
-            return False
-
-    def equal(self, other):
-        raise NotImplementedError
-        if not other.functional():
-            return False
-        r1 = self.left.equal(other.left)
-        r2 = self.right.equal(other.right)
-        if r1 == False or r2 == False:
-            return False
-        elif r1 == Maybe or r2 == Maybe:
-            return Maybe
+    def _type_eq(self, other, cache=False):
+        if isinstance(other, FunType):
+            return (self.left._type_eq(other.left, cache=cache)
+                and self.right._type_eq(other.right, cache=cache))
         else:
-            return True
+            return False
 
-    def __hash__(self):
-        return hash(self.left) ^ hash(self.right)
+    def _type_hash(self, cache=False):
+        return (self.left._type_hash(cache=cache)
+                ^ self.right._type_hash(cache=cache))
 
     def __call__(self, other):
         return FunType(self, other)
@@ -665,22 +674,14 @@ class SetType(TypeConstructor):
         return ensuremath("\\left\\{%s\\right\\}"
                                             % self.content_type.latex_str())
 
-    def __eq__(self, other):
+    def _type_eq(self, other, cache=False):
         if isinstance(other, SetType):
-            return self.content_type == other.content_type
+            return self.content_type._type_eq(other.content_type, cache=cache)
         else:
             return False
 
-    def __hash__(self):
-        return hash("Set") ^ hash(self.content_type)
-
-    def equal(self, other):
-        raise NotImplementedError
-        # TODO: is this too rigid?
-        if isinstance(other, SetType):
-            return self.content_type.equal(other.content_type)
-        else:
-            return False
+    def _type_hash(self, cache=False):
+        return hash("Set") ^ self.content_type._type_hash(cache=cache)
 
     @classmethod
     def parse(cls, s, i, parse_control_fun):
@@ -754,18 +755,6 @@ class TupleType(TypeConstructor):
             [self.signature[i].latex_str()
                                     for i in range(len(self.signature))]))
 
-    def __eq__(self, other):
-        try:
-            if len(self.signature) != len(other.signature):
-                return False
-            # just use tuple equality?
-            for i in range(len(self.signature)):
-                if not self.signature[i] == other.signature[i]:
-                    return False
-            return True
-        except AttributeError:
-            return False
-
     def __len__(self):
         return len(self.signature)
 
@@ -776,24 +765,18 @@ class TupleType(TypeConstructor):
         return iter(self.signature)
 
 
-    def equal(self, other):
-        raise NotImplementedError
-        try:
-            othersig = other.signature
-        except:
+    def _type_eq(self, other, cache=False):
+        if not isinstance(other, TupleType):
             return False
-        if len(self.signature) != len(othersig):
+        if len(self.signature) != len(other.signature):
             return False
-        results = set([self.signature[i].equal(othersig[i])
-                                        for i in range(len(self.signature))])
-        if False in results:
-            return False
-        if Maybe in results:
-            return Maybe
-        return True
+        return all((self.signature[i]._type_eq(other.signature[i])
+                                        for i in range(len(self.signature))))
 
-    def __hash__(self):
-        return hash(self.signature)
+    def _type_hash(self, cache=False):
+        # converting to tuple is necessary: generators hash but their hash
+        # is not determined by (what would be their) content!
+        return hash(tuple(t._type_hash(cache=cache) for t in self.signature))
 
     def __call__(self, other):
         return FunType(self, other)
@@ -1014,9 +997,14 @@ class VariableType(TypeConstructor):
                 raise TypeParseError("Can't parse variable type", s=symbol)
             self.symbol = symbol
             self.number = number
+        self.number = max(0, self.number)
         if self.number > VariableType.max_id:
             VariableType.max_id = self.number
         self.name = symbol
+        if self.number == 0:
+            self._key_str = str(self.symbol)
+        else:
+            self._key_str = f"{self.symbol}{self.number}"
         self.domain = set()
         self.init_type_vars()
 
@@ -1031,12 +1019,7 @@ class VariableType(TypeConstructor):
     def copy_local(self):
         return VariableType(self.symbol, self.number)
     
-    def equal(self, other):
-        raise NotImplementedError
-        return Maybe
-    
-    # 
-    def unify(self, t2, unify_control_fun, assignment):
+    def unify(self, t2, unify_control_fun, assignment=None):
         """Unify `self` with `t2`.  Getting this right is rather complicated.
 
         The result is a tuple of a principal type and an assignment.
@@ -1051,6 +1034,8 @@ class VariableType(TypeConstructor):
         # 1. find the principal type in the equivalence class identified by
         #    self.  May return self if there's a loop.
         #    (Other sorts of loops should be ruled out?)
+        if assignment is None:
+            assignment = dict()
         if self in assignment:
             (start, prev) = transitive_find_end(self, assignment)
         else:
@@ -1114,14 +1099,11 @@ class VariableType(TypeConstructor):
                 return (None, None)
         return (new_principal, assignment)
 
-    def find_type_vars(self):
-        return set((self,))
-    
     def init_type_vars(self):
         # this will trigger on the initial call to TypeConstructor.__init__,
         # need to defer
         if self.number is not None:
-            self.type_vars = set((self,))
+            self._type_vars = set((self,))
     
     def sub_type_vars(self, assignment, trans_closure=False):
         """find the principal type, if any, determined by the `assignment` for
@@ -1148,28 +1130,31 @@ class VariableType(TypeConstructor):
         else:
             return self
 
-    def key_str(self):
-        return self.symbol + str(self.number)
-
-    def __hash__(self):
-        return hash(self.key_str())
-
-    def __eq__(self, other):
+    def _type_eq(self, other, cache=False):
         """This implements token equality.  This is _not_ semantic equality due
         to type variable binding.
         """
         if isinstance(other, VariableType):
-            return self.symbol == other.symbol and self.number == other.number
+            return self._key_str == other._key_str
         else:
             return False
+
+    def sort_key(self):
+        return (self.symbol, self.number)
+
+    def _type_hash(self, cache=False):
+        return hash(self._key_str)
     
+    def is_fresh(self):
+        return False
+
     def __repr__(self):
-        if self.number > 3 or self.symbol == "?":
-            return self.symbol + str(self.number)
-        else:
-            return self.symbol + "'" * self.number
+        # never use primes in the repr
+        return self._key_str
     
     def latex_str(self):
+        # XX the prime thing was cute, but I'm not sure it ends up being very
+        # readable...
         if self.number > 3 or self.symbol == "?":
             return ensuremath(self.symbol + "_{" + str(self.number) + "}")
         else:
@@ -1209,18 +1194,43 @@ class UnknownType(VariableType):
     max_identifier = 0
     def __init__(self, force_num=None):
         if force_num is None:
-            UnknownType.max_identifier += 1
-            self.identifier = UnknownType.max_identifier
+            self.freshen()
         else:
             self.identifier = force_num
         super().__init__("?", number=self.identifier)
+
+    def freshen(self):
+        # XX this implementation is extremely simple, but very brute force...
+        UnknownType.max_identifier += 1
+        self.identifier = UnknownType.max_identifier
+
+    @classmethod
+    def fresh(cls):
+        return UnknownType()
+
+    def is_fresh(self):
+        return True
 
     def __repr__(self):
         return "?"
 
     def latex_str(self):
         return ensuremath("?")
-    
+
+    def _type_eq(self, other, cache=False):
+        # unknown types hash together for caching purposes:
+        if isinstance(other, UnknownType) and cache:
+            return True
+        else:
+            return super()._type_eq(other, cache=cache)
+
+    def _type_hash(self, cache=False):
+        if cache:
+            # hash any ? variables together for cache purposes
+            return hash('?')
+        else:
+            return super()._type_hash(cache=cache)
+
     def internal(self):
         # n.b. the return value compares equal to `self`; this can be used to
         # inspect the identifier
@@ -1239,10 +1249,6 @@ class UnknownType(VariableType):
 
     @classmethod
     def random(cls, random_ctrl_fun):
-        return UnknownType()
-
-    @classmethod
-    def fresh(cls):
         return UnknownType()
 
 
@@ -1303,14 +1309,16 @@ class DisjunctiveType(TypeConstructor):
         super().__init__()
         self.store_functional_info()
         
-    def __hash__(self):
-        return hash(tuple(self.type_list))
-    
-    def __eq__(self, other):
+    def _type_eq(self, other, cache=False):
+        # no variable types allowed, it is safe to ignore `cache`
         if isinstance(other, DisjunctiveType):
             return self.disjuncts == other.disjuncts
         else:
             return False
+
+    def _type_hash(self, cache=False):
+        # no variable types allowed, it is safe to ignore `cache`
+        return hash(tuple(self.type_list))
         
     def __len__(self):
         return len(self.disjuncts)
@@ -1363,7 +1371,7 @@ class DisjunctiveType(TypeConstructor):
             return DisjunctiveType(*r)
 
     # test case: tp("[<e,t>|<e,n>|<n,t>]").intersection_point(tp("<X,t>"),
-    #                                       types.poly_system.unify_r, dict())
+    #                                       types.poly_system._unify_r, dict())
     #               should map X to [e|n].
     def intersection_point(self, b, unify_fun, assignment):
         if b in self.disjuncts:
@@ -1408,7 +1416,7 @@ class DisjunctiveType(TypeConstructor):
     def factor_functional_types(self):
         return FunType(self.left, self.right)
 
-    def intersection(self, b, unify_fun, assignment):
+    def intersection(self, b, unify_fun, assignment=None):
         """Calculate the intersection of `self` and type `b`.
 
         If `b` is a DisjunctiveType, this involves looking at the intersection
@@ -1422,6 +1430,8 @@ class DisjunctiveType(TypeConstructor):
             [<e,t>|<n,t>|<e,e>] intersect <X,t> = [<e,t>|<n,t>]
             [e|n] intersect t = None
         """
+        if assignment is None:
+            assignment = dict()
         if isinstance(b, DisjunctiveType):
             # this relies on type variables not being possible as disjuncts.
             # otherwise, you'd need to use unify to check equality.
@@ -1437,7 +1447,7 @@ class DisjunctiveType(TypeConstructor):
                 return t
         return None
 
-    def unify(self, b, unify_control_fun, assignment):
+    def unify(self, b, unify_control_fun, assignment=None):
         return self.intersection(b, unify_control_fun, assignment)
     
     @classmethod
@@ -1615,24 +1625,34 @@ class TypeSystem(object):
     def check_type(self, t):
         return (t in self.atomics or t.__class__ in self.nonatomics)
 
-    def unify(self, a, b):
+    def _unify_r(self, a, b, assignment=None):
         if not (self.check_type(a) and self.check_type(b)):
             return None
-        (result, r_assign) = a.unify(b, self.unify, None)
+        (result, r_assign) = a.unify(b, self._unify_r)
         return result
 
+    def unify(self, t1, t2, assignment=None):
+        r = self.unify_details(t1, t2, assignment=assignment)
+        if r is None:
+            return None
+        return r.principal
+
     def unify_details(self, t1, t2, assignment=None):
-        result = self.unify(t1, t2)
+        # assignment is unused here
+        if (cached := get_unify_cached(t1, t2)) is not None:
+            return cached
+
+        result = self._unify_r(t1, t2)
         if result is None:
             return None
         # unification in this system is very straightforward: if a type is
         # found, it is the principal type.
-        return UnificationResult(result, t1, t2, dict())
+        return UnificationResult(result, t1, t2)
 
-    def unify_ar(self, arg, ret):
+    def unify_ar(self, arg, ret, assignment=None):
         return FunType(arg, ret)
 
-    def unify_fr(self, fun, ret):
+    def unify_fr(self, fun, ret, assignment=None):
         if fun.functional():
             r = self.unify(fun.right, ret)
             if r is None:
@@ -1642,7 +1662,7 @@ class TypeSystem(object):
         else:
             return (None, None, None)
 
-    def unify_fa(self, fun, arg):
+    def unify_fa(self, fun, arg, assignment=None):
         """Try unifying the input type of the function with the argument's type.
         If it succeeds, it returns a (possibly changed) tuple of the function's
         type, the argument's type, and the output type. If this fails, returns
@@ -1768,13 +1788,12 @@ def vars_in_env(type_env, keys=False):
         unsafe |= type_env[k].bound_type_vars()
     return unsafe
 
-def safe_var_in_set(unsafe, internal=False):
+def safe_var_in_set(unsafe, internal=False, n=0):
     """Find a safe type variable relative to set `unsafe`.  
 
     This will be prefixed with `X` unless `internal`=True, in which case the
     prefix is `I`.
     """
-    n = 0
     if internal:
         symbol = "I"
     else:
@@ -1784,6 +1803,26 @@ def safe_var_in_set(unsafe, internal=False):
         n += 1
         vt = VariableType(symbol, n)
     return vt
+
+def fresh_for(*types, unsafe=None, internal=False, n=1):
+    """Find `n` fresh type variables relative to any types in `types`, and/or
+    a set of type variables provided by `unsafe`. The elements of `types` may
+    be arbitrary polymorphic types."""
+
+    # unused: written for some code that has not yet worked out to try to
+    # improve type freshening. However, this code was reasonably well-tested
+    # in the process.
+    l = []
+    var_n = 0
+    if unsafe is None:
+        unsafe = set()
+    all_unsafe = unsafe.union(*[t.bound_type_vars() for t in types])
+
+    for i in range(n):
+        l.append(safe_var_in_set(all_unsafe, internal=internal, n=var_n))
+        all_unsafe.add(l[-1])
+        var_n = l[-1].number
+    return l
 
 def make_safe(typ1, typ2, unsafe=None):
     """Return a version of typ1 that is completely safe w.r.t. variables in
@@ -1815,7 +1854,7 @@ def compact_type_set(types, unsafe=None):
             remap.append(t)
         else:
             keep.add(t)
-    remap.sort(key=VariableType.key_str) # for deterministic behavior
+    remap.sort(key=lambda x : x._key_str) # for deterministic behavior
     for t in remap:
         m = safe_var_in_set(keep | unsafe)
         assert t not in m
@@ -1823,25 +1862,73 @@ def compact_type_set(types, unsafe=None):
         keep.add(m)
     return mapping
 
-def freshen_type_set(types, unsafe=None):
-    """Produce a mapping from variables in `types` to fresh type variables.
+def freshen_type_set(types):
+    """Produce a mapping from variables in `types` to fresh type variables."""
 
-    if `unsafe` is set, avoid the types in `unsafe`."""
-    if unsafe is None:
-        unsafe = set()
-    mapping = dict()
-    for v in types:
-        mapping[v] = VariableType.fresh()
-    return mapping
+    # XX it would be nice to move away from using this method for fresh vars,
+    # but it is extremely tricky to get anything more minimal right
+    return {t: UnknownType() for t in types}
+
+
+_unify_cache = {}
+
+
+def update_unify_cache(result):
+    global _unify_cache
+    # type variable unification is semantically, but not syntactically,
+    # symmetric. That is, unify(X,Y) = X, but unify(Y,X) = Y. To ensure
+    # deterministic results, for now we do not cache the symmetric pair
+    # if the principal type is polymorphic. (If it isn't, this should be safe..)
+    symmetric = not result.is_polymorphic()
+    t1, t2 = result.cache_values()
+    if t1 not in _unify_cache:
+        _unify_cache[t1] = {}
+    if symmetric and t2 not in _unify_cache:
+        _unify_cache[t2] = {}
+    # print(f"unify cache: {result.t1} + {result.t2} => {result.principal}")
+    _unify_cache[t1][t2] = result
+    if symmetric:
+        _unify_cache[t2][t1] = result
+
+
+def reset_unify_cache():
+    global _unify_cache
+    _unify_cache = {}
+
+
+def get_unify_cached(t1, t2):
+    t1 = CachableType(t1)
+    if t1 not in _unify_cache:
+        return None
+    return _unify_cache[t1].get(CachableType(t2), None)
+
 
 class UnificationResult(object):
     """Wrapper class for passing around unification results."""
-    def __init__(self, principal, t1, t2, mapping):
+    def __init__(self, principal, t1, t2, mapping=None, update_cache=True):
+        if mapping is None:
+            mapping = dict()
         self.principal = principal
         self.t1 = t1
         self.t2 = t2
         self.mapping = mapping
         self.trivial = injective(mapping) and not strengthens(mapping)
+
+        # in principle it's certainly possible to handle the case where the
+        # principal type has ? variables, but it's very complicated to get
+        # right, and (so far) it doesn't seem important to optimize
+        # (XX does ? ever show up in mapping?)
+        if update_cache and not self.principal.has_fresh_variables():
+            update_unify_cache(self)
+
+    def cache_values(self):
+        return CachableType(self.t1), CachableType(self.t2)
+
+    def is_polymorphic(self):
+        """Is the principal type polymorphic?"""
+        # note! polymorphic input types can unify to a non-polymorphic
+        # principle type, e.g. unify(<X,e>,<e,X>) = <e,e>
+        return self.principal is not None and self.principal.is_polymorphic()
 
     def _repr_html_(self):
         s = "<table>"
@@ -1853,6 +1940,10 @@ class UnificationResult(object):
                                 % utils.dict_latex_repr(self.mapping))
         s += "</table>"
         return s
+
+    def __repr__(self):
+        # just the principal type
+        return f"{repr(self.principal)}"
 
 class PolyTypeSystem(TypeSystem):
     """A polymorphic type system.  
@@ -1878,8 +1969,16 @@ class PolyTypeSystem(TypeSystem):
         super().add_atomic(t)
         self.type_ranking[t.__class__] = ranking
 
+    def _unify(self, t1, t2):
+        raise NotImplementedError
+
     def unify(self, t1, t2, assignment=None, allow_raise=False):
-        assignment = dict()
+        if assignment is None:
+            assignment = dict()
+
+        if not assignment and (cached := get_unify_cached(t1, t2)) is not None:
+            return cached.principal
+
         try:
             result = self.unify_details(t1, t2, assignment=assignment)
         except OccursCheckFailure as e:
@@ -1909,8 +2008,14 @@ class PolyTypeSystem(TypeSystem):
         else:
             assignment = assignment.copy() # ugh
 
+        # for now, no caching for calls that are under some type assignment;
+        # we would need to factor this in to the caching
+        use_cache = not assignment
+        if use_cache and (cached := get_unify_cached(t1, t2)) is not None:
+            return cached
+
         # note: the following may raise OccursCheckFailure!
-        (result, r_assign) = self.unify_r(t1, t2, assignment)
+        (result, r_assign) = self._unify_r(t1, t2, assignment=assignment)
 
         if result is None:
             return None
@@ -1922,16 +2027,17 @@ class PolyTypeSystem(TypeSystem):
         for i in range(len(result)):
             l.append(result[i].sub_type_vars(r_assign, trans_closure=True))
         result = result.copy_local(*l)
-        return UnificationResult(result, t1, t2, r_assign)
+        return UnificationResult(result, t1, t2, r_assign, update_cache=use_cache)
 
-    def unify_r_swap(self, t1, t2, assignment):
+
+    def _unify_r_swap(self, t1, t2, assignment):
         try:
-            return self.unify_r(t2, t1, assignment)
+            return self._unify_r(t2, t1, assignment=assignment)
         except TypeMismatch as e:
             e.swap_order()
             raise e
 
-    def unify_r(self, t1, t2, assignment):
+    def _unify_r(self, t1, t2, assignment):
         """Recursive unification of `t1` and `t2` given some assignment.
 
         This is not really intended to be called directly; see comments in
@@ -1952,18 +2058,17 @@ class PolyTypeSystem(TypeSystem):
         # is guaranteed. (Polymorphic unification is only symmetric up to
         # alphabetic variants.)
         if self.type_ranking[t1.__class__] <= self.type_ranking[t2.__class__]:
-            return t2.unify(t1, self.unify_r_swap, assignment)
+            return t2.unify(t1, self._unify_r_swap, assignment=assignment)
         else:
-            return t1.unify(t2, self.unify_r, assignment)
+            return t1.unify(t2, self._unify_r, assignment=assignment)
 
     def unify_fr(self, fun, ret, assignment=None):
         """Find principal types if `ret` is a return value for `fun`.  
 
         Returns a triple of the principal types of the function, its left type,
         and its right type.  Returns (None, None, None) on failure."""
-        if assignment is None:
-            assignment = dict()
-        input_var = VariableType.fresh() #UnknownType()
+
+        input_var = UnknownType()
         hyp_fun = FunType(input_var, ret)
         try:
             # order probably matters here
@@ -1983,9 +2088,20 @@ class PolyTypeSystem(TypeSystem):
 
         Returns a triple of the principal types of the function, its left type,
         and its right type.  Returns (None, None, None) on failure."""
-        if assignment is None:
-            assignment = dict()
-        output_var = VariableType.fresh() #UnknownType()
+
+        # the code below works for non-polymorphic types, but uses much
+        # heavier infrastructure
+        if not fun.is_polymorphic() and not arg.is_polymorphic():
+            return super().unify_fa(fun, arg)
+
+        # note: your instinct here may be to pick a type var that's fresh for
+        # fun/arg. However, it needs to be fresh for the entire context in a
+        # way that is not a pure type-based calculation.
+        # Example: `f_Y(y_<Y,X>(g(X,Z)))`. The inner expression is type <Y,Z>
+        # and X does not appear at all. A naive implementation (e.g. using
+        # fresh_for here) could end up generating X, accidentally having an
+        # impact on this context.
+        output_var = UnknownType()
         hyp_fun = FunType(arg, output_var)
         try:
             # order matters here (why?)
@@ -2012,7 +2128,9 @@ class PolyTypeSystem(TypeSystem):
         t1safe = make_safe(t1, t2, set(assignment.keys())
                                                     | set(assignment.values()))
         try:
-            (result, r_assign) = self.unify_r(t1safe, t2, assignment)
+            (result, r_assign) = self._unify_r(t1safe, t2, assignment=assignment)
+            if r_assign is None:
+                r_assign = dict()
         except OccursCheckFailure:
             # only used in a test context, so we don't need to make occurs
             # checks presentable..
@@ -2245,13 +2363,17 @@ class TypeTest(unittest.TestCase):
 
     def test_parser_poly(self):
         for i in range(0, 1000):
+            t = poly_system.random_type(5, 0.2)
             self.assertTrue(
-                    poly_system.repr_check(poly_system.random_type(5, 0.2)))
+                    poly_system.repr_check(t),
+                    f"repr_check failure on random polymorphic system type {t}")
 
     def test_parser_poly_unify(self):
         for i in range(0, 1000):
+            t = poly_system.random_type(5, 0.2)
             self.assertTrue(
-                poly_system.repr_unify_check(poly_system.random_type(5, 0.2)))
+                poly_system.repr_unify_check(t),
+                f"unify failure on random polymorphic system type {t}")
 
     def test_parser_poly_varsonly(self):
         for i in range(0, 1000):

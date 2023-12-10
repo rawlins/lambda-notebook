@@ -9,7 +9,7 @@ from lamb.types import TypeMismatch, type_e, type_t, type_n
 from lamb.types import type_property, type_transitive, BasicType, FunType
 # meta.ply is the only meta module imported by core
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
-from .ply import simplify_all
+from .ply import simplify_all, symbol_is_var_symbol
 from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
 from .ply import term_replace_unify, variable_convert, alpha_variant
 from .ply import commutative, associative, left_commutative, right_commutative
@@ -1405,7 +1405,7 @@ class TypedExpr(object):
                                             store_mapping=store_mapping)
 
 
-    def freshen_type_vars(self, target=None, unsafe=None, used_vars_only=False,
+    def freshen_type_vars(self, target=None, used_vars_only=False,
                                                         store_mapping=False):
         history_env = self.get_type_env()
         if len(history_env.type_var_set) == 0:
@@ -1420,7 +1420,8 @@ class TypedExpr(object):
             tenv = env.type_var_set
         if len(tenv) == 0:
             return self
-        fresh_map = types.freshen_type_set(tenv, unsafe=unsafe)
+        fresh_map = types.freshen_type_set(tenv)
+        # XX result vs c??
         result = self.under_type_injection(fresh_map)
         result._type_env_history = history_env
         if not store_mapping:
@@ -1511,10 +1512,13 @@ class TypedExpr(object):
     def free_terms(self, var_only=False):
         """Find the set of variables that are free in the typed expression.
         """
+        v = set(self.get_type_env().var_mapping.keys())
+        if var_only:
+            v = {var for var in v if symbol_is_var_symbol(var)}
+        return v
+
         result = set()
         # term case handled in subclass
-        if isinstance(self.op, TypedExpr):
-            result.update(self.op.free_terns(var_only=var_only))
         for a in self.args:
             result.update(a.free_terms(var_only=var_only))
         return result
@@ -1552,8 +1556,10 @@ class TypedExpr(object):
         return all(a.term() for a in self)
 
     def functional(self):
-        funtype = ts_unify(self.type, tp("<?,?>"))
-        return (funtype is not None)
+        # XX a really general implementation of this might want to unify with
+        # <?,?> or <X,Y> where X,Y are `fresh_for` self.type. However, doing
+        # so is quite inefficient in a way that can occasionally add up...
+        return self.type.functional()
 
     def atomic(self):
         return len(self.args) == 0
@@ -1988,11 +1994,7 @@ class ApplicationExpr(TypedExpr):
         if isinstance(args[0], LFun):
             args[1].type_not_guessed()
         else:
-            # not 100% that the following is the right fix...
-            try:
-                self.type_guessed = args[0].type_guessed
-            except AttributeError:
-                self.type_guessed = False
+            self.type_guessed = args[0].type_guessed
 
     def copy(self):
         return self.copy_local(self.args[0], self.args[1])
