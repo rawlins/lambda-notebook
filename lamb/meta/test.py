@@ -697,17 +697,17 @@ class MetaTest(unittest.TestCase):
         # not entirely clear to me that they're fully exercising the reduction
         # code...
         arg = te("Test_e")
-        for i in range(100):
+        for i in range(200):
             f = random_expr(options=RType.LFUN_BOUND, depth=4, typ=tp("<e,e>"))
             x = f(arg).reduce_all()
-            self.assertFalse(x.subreducible(reset_cache=True),
+            self.assertFalse(x.subreducible(use_cache=False),
                 f"Reduction failure on random function `{repr(f)}`)")
 
         arg = te("L x_e : x")
-        for i in range(100):
+        for i in range(200):
             f = random_expr(options=RType.LFUN_BOUND, depth=4, typ=tp("<<e,e>,e>"))
             x = f(arg).reduce_all()
-            self.assertFalse(x.subreducible(reset_cache=True),
+            self.assertFalse(x.subreducible(use_cache=False),
                 f"Reduction failure on random function `{repr(f)}`)")
 
 
