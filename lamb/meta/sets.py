@@ -449,9 +449,9 @@ class SetUnion(BinarySetOp):
             if self.args[0].meta() and self.args[1].meta():
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
-                return derived(MetaTerm(s1 | s2), self, "set union")
+                return derived(MetaTerm(s1 | s2, typ=self.type), self, "set union")
             else:
-                return derived(sset(s1 | s2), self, "set union") # blessedly simple
+                return derived(sset(s1 | s2, typ=self.type.content_type), self, "set union") # blessedly simple
         elif s1 is not None and len(s1) == 0:
             return derived(self.args[1], self, "set union") # {} | X = X
         elif s2 is not None and len(s2) == 0:
@@ -495,7 +495,7 @@ class SetIntersection(BinarySetOp):
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
                 return derived(
-                    MetaTerm(s1 & s2, typ=self.type.content_type),
+                    MetaTerm(s1 & s2, typ=self.type),
                     self,
                     "set intersection")
 
@@ -539,8 +539,8 @@ class SetIntersection(BinarySetOp):
                     "set intersection (set elimination)")
 
             tbd = ConditionSet(var, (var << sset(tbd, typ=self.type.content_type)
-                                        & (var << sset(s1 - definite))
-                                        & (var << sset(s2 - definite))))
+                                        & (var << sset(s1 - definite, typ=self.type.content_type))
+                                        & (var << sset(s2 - definite, typ=self.type.content_type))))
             return derived((definite_expr | tbd), self, "set intersection (set elimination)").simplify_all(**sopts)
 
         elif s1 is not None and len(s1) == 0:
@@ -582,7 +582,7 @@ class SetDifference(BinarySetOp):
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
                 return derived(
-                    MetaTerm(s1 - s2, typ=self.type.content_type),
+                    MetaTerm(s1 - s2, typ=self.type),
                     self,
                     "set difference")
 
@@ -664,12 +664,14 @@ class SetEquivalence(BinarySetOp):
             # a subset from consideration
             if s1 < s2:
                 return derived(
-                    ForallUnary(var, ((var << self.args[0]).equivalent_to(var << sset(s2 - s1)))),
+                    ForallUnary(var, ((var << self.args[0]).equivalent_to(
+                            var << sset(s2 - s1, typ=self[0].type.content_type)))),
                     self,
                     "set equivalence (set elimination)").simplify_all(**sopts)
             elif s2 < s1:
                 return derived(
-                    ForallUnary(var, ((var << self.args[1]).equivalent_to(var << sset(s1 - s2)))),
+                    ForallUnary(var, ((var << self.args[1]).equivalent_to(
+                            var << sset(s1 - s2, typ=self[0].type.content_type)))),
                     self,
                     "set equivalence (set elimination)").simplify_all(**sopts)
 
