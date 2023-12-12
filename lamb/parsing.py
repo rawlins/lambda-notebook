@@ -569,7 +569,7 @@ def parse_qtree_r(s, i=0):
 
 
 def flatten_paren_struc(struc):
-    """Flatten a parsed structure into a string"""
+    """Flatten a parsed structure back into a string; mainly used for errors"""
     s = ""
     for sub in struc:
         if isinstance(sub, str):
@@ -581,6 +581,64 @@ def flatten_paren_struc(struc):
 global brackets, close_brackets
 brackets = {"(" : ")", "{" : "}"}
 close_brackets = {brackets[y] : y for y in brackets.keys()}
+
+
+term_symbols_re = r'[a-zA-Z0-9]'
+
+
+def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
+    accum = ""
+    seq = list()
+    if initial_accum is not None:
+        seq.append(initial_accum)
+    start_i = i
+    while i < len(s):
+        # TODO: code dup/overlap with parse_term
+        if (i > 0 and s[i] == "_" and s[i-1] == "_"):
+            # without special handling here for this error case, an error
+            # message can be triggered on eval and is extremely cryptic.
+            raise ParseError("Stray `_` in expression", s=s, i=i)
+        elif (i > 0 and s[i] == "_" and re.match(term_symbols_re, s[i-1])
+                        and type_sys != None):
+            accum += "_"
+            # have to parse type here in order to handle bracketing in types
+            # correctly. I don't think there's a shortcut to this.  In the long
+            # run, this should do proper tokenizing of terms.
+            typ, end = type_sys.type_parser_recursive(s, i+1)
+            assert(typ is not None)
+            # oh good god
+            accum += repr(typ)
+            i = end
+        elif s[i] in brackets.keys():
+            stack.append(s[i])
+            i += 1
+
+            r, new_i = parse_paren_str_r(s, i, stack, initial_accum=stack[-1],
+                                                            type_sys=type_sys)
+            if len(accum) > 0:
+                seq.append(accum)
+                accum = ""
+            seq.append(r)
+            i = new_i
+        elif s[i] in close_brackets.keys():
+            if len(stack) > 0 and s[i] == brackets[stack[-1]]:
+                if len(accum) > 0:
+                    seq.append(accum)
+                    accum = ""
+                stack.pop()
+                seq.append(s[i])
+                i += 1
+                return (seq, i)
+            else:
+                raise ParseError("Unbalanced `%s...%s` expression"
+                                        % (close_brackets[s[i]], s[i]), s, i)
+        else:
+            accum += s[i]
+            i += 1
+    if len(accum) > 0:
+        seq.append(accum)
+    return (seq, i)
+
 
 def parse_paren_str(s, i, type_sys=None):
     """Turn a string with parenthesis into a structured representation,
@@ -597,9 +655,6 @@ def parse_paren_str(s, i, type_sys=None):
         raise ParseError("Unbalanced '%s...%s' expression at end of string" %
                                     (stack[-1], brackets[stack[-1]]), s, i)
     return (seq, i)
-
-
-term_symbols_re = r'[a-zA-Z0-9]'
 
 
 def find_term_locations(s, i=0):
@@ -712,87 +767,3 @@ def try_parse_typed_term(s, assignment=None, strict=False):
     seq = try_parse_term_sequence(s, lower_bound=1, upper_bound=1,
                                                     assignment=assignment)
     return seq[0]
-
-
-def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
-    accum = ""
-    seq = list()
-    if initial_accum is not None:
-        seq.append(initial_accum)
-    start_i = i
-    while i < len(s):
-        # TODO: code dup/overlap with parse_term
-        if (i > 0 and s[i] == "_" and s[i-1] == "_"):
-            # without special handling here for this error case, an error
-            # message can be triggered on eval and is extremely cryptic.
-            raise ParseError("Stray `_` in expression", s=s, i=i)
-        elif (i > 0 and s[i] == "_" and re.match(term_symbols_re, s[i-1])
-                        and type_sys != None):
-            accum += "_"
-            # have to parse type here in order to handle bracketing in types
-            # correctly. I don't think there's a shortcut to this.  In the long
-            # run, this should do proper tokenizing of terms.
-            typ, end = type_sys.type_parser_recursive(s, i+1)
-            assert(typ is not None)
-            # oh good god
-            accum += repr(typ)
-            i = end
-        elif s[i] in brackets.keys():
-            stack.append(s[i])
-            i += 1
-
-            r, new_i = parse_paren_str_r(s, i, stack, initial_accum=stack[-1],
-                                                            type_sys=type_sys)
-            if len(accum) > 0:
-                seq.append(accum)
-                accum = ""
-            seq.append(r)
-            i = new_i
-        elif s[i] in close_brackets.keys():
-            if len(stack) > 0 and s[i] == brackets[stack[-1]]:
-                if len(accum) > 0:
-                    seq.append(accum)
-                    accum = ""
-                stack.pop()
-                seq.append(s[i])
-                i += 1
-                return (seq, i)
-            else:
-                raise ParseError("Unbalanced `%s...%s` expression"
-                                        % (close_brackets[s[i]], s[i]), s, i)
-        else:
-            accum += s[i]
-            i += 1
-    if len(accum) > 0:
-        seq.append(accum)
-    return (seq, i)
-
-def macro_parse_r(struc, parse_fun, h, vnum=1, vprefix="ilnb", always_var=True):
-    """Proof of concept for parsing paren structures.  Not used generally."""
-    s = ""
-    for sub in struc:
-        if isinstance(sub, str):
-            s += sub 
-        else:
-            (sub_str, new_hash, vnum) = macro_parse_r(sub, parse_fun, h, vnum,
-                                        vprefix=vprefix, always_var=always_var)
-            h = new_hash
-            parsed_sub = parse_fun(sub_str, locals=h)
-            if isinstance(parsed_sub, str) and not always_var:
-                s += "(" + parsed_sub + ")"
-            else:
-                var = vprefix + str(vnum)
-                s += "(" + var + ")"
-                vnum += 1
-                h[var]= parsed_sub
-    return (s, h, vnum)
-
-
-def macro_parse(s, parse_fun):
-    """Proof of concept for parsing paren structures.  Not used generally."""
-    vnum = 1
-    vprefix = "ilnb"
-    (struc, i) = parse_paren_str(s, 0)
-    (s, h, vnum) = macro_parse_r(struc, parse_fun, dict(), vnum, vprefix)
-    result = parse_fun(s, locals=h)
-    return result
