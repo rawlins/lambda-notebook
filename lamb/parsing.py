@@ -257,7 +257,7 @@ def parse_te(line, env=None, use_env=False):
     line = remove_comments(line)
     reduce, line = magic_opt("reduce", line)
     simplify, line = magic_opt("simplify", line)
-    if line[-1] == ";":
+    if line and line[-1] == ";":
         line = line[:-1]
 
     if env is None or not use_env:
