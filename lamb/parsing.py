@@ -1,6 +1,7 @@
 import sys, re, traceback, collections
 from contextlib import contextmanager
 
+# imported by meta
 from lamb import utils
 from lamb.utils import * # TODO: remove
 
@@ -8,6 +9,19 @@ Tree = utils.get_tree_class()
 
 global eq_transforms
 eq_transforms = dict()
+
+# wrap some common circular import cases:
+def parsing_ts():
+    from lamb.meta import get_type_system
+    return get_type_system()
+
+def logger():
+    from lamb.meta import logger
+    return logger
+
+def is_te(x):
+    from lamb.meta import is_te
+    return is_te(x)
 
 class ParseError(Exception):
     def __init__(self, msg, s=None, i=None, met_preconditions=True, e=None):
@@ -79,9 +93,8 @@ class ParseError(Exception):
         if self.s is None:
             return m + aux
         elif self.i is None:
-            from lamb import meta
             s_desc = (isinstance(self.s, str) and 'string'
-                or (isinstance(self.s, meta.TypedExpr) and 'TypedExpr'
+                or (is_te(self, s) and 'TypedExpr'
                     or 'object'))
             return f"{m}, in {s_desc} `{self.s}`{aux}"
         else:
@@ -173,18 +186,16 @@ def consume_whitespace(s, i, error=None):
 def vars_only(env):
     """Ensure that env is a 'pure' variable assignment -- exclude anything but
     TypedExprs."""
-    from lamb import meta
-    env2 = {key: env[key] for key in env.keys()
-                                    if isinstance(env[key], meta.TypedExpr)}
+    env2 = {key: env[key] for key in env.keys() if is_te(env[key])}
     return env2
 
 # wrap other exception types in ParseError with designated parameters
 @contextmanager
 def parse_error_wrap(msg, paren_struc=None, wrap_all=True, **kwargs):
-    from lamb import types
+    from lamb.types import TypeParseError, TypeMismatch
     try:
         yield
-    except (types.TypeParseError, types.TypeMismatch) as e:
+    except (TypeParseError, TypeMismatch) as e:
         if not wrap_all:
             raise e
         kwargs['e'] = e
@@ -212,7 +223,7 @@ def parse_error_wrap(msg, paren_struc=None, wrap_all=True, **kwargs):
 # to display them, and if not, falls back on logging.
 @contextmanager
 def error_manager(summary=None):
-    from lamb import meta, types
+    from lamb.types import TypeParseError, TypeMismatch
     display = None
     try:
         from IPython.display import display
@@ -222,16 +233,16 @@ def error_manager(summary=None):
     try:
         try:
             yield
-        except (types.TypeParseError,
-                types.TypeMismatch,
+        except (TypeParseError,
+                TypeMismatch,
                 ParseError) as e:
             if not display:
                 raise e
             display(e)
     except Exception as e:
         if summary:
-            meta.logger.error(summary)
-        meta.logger.error(str(e))
+            logger().error(summary)
+        logger().error(str(e))
 
 def magic_opt(optname, line):
     # simple and dumb, maybe improve some day
@@ -241,7 +252,8 @@ def magic_opt(optname, line):
         return (False, line)
 
 def parse_te(line, env=None, use_env=False):
-    from lamb import meta
+    # implementation of the %te magic
+    from lamb.meta import te
     line = remove_comments(line)
     reduce, line = magic_opt("reduce", line)
     simplify, line = magic_opt("simplify", line)
@@ -253,8 +265,8 @@ def parse_te(line, env=None, use_env=False):
     var_env = vars_only(env)
     result = None
     with error_manager("Parsing of typed expression failed with exception:"):
-        result = meta.te(line, assignment=var_env)
-        if isinstance(result, meta.TypedExpr):
+        result = te(line, assignment=var_env)
+        if is_te(result):
             result = result.regularize_type_env(var_env, constants=True)
             # TODO: should calling simplify_all simply entail reduce_all in the
             # first place?
@@ -277,8 +289,7 @@ def try_parse_item_name(s, env=None, ambiguity=False):
         return (None, None)
     lex_name = match.group(1).replace(" ", "_")
     if lex_name != match.group(1):
-        from lamb import meta
-        meta.logger.info("Exporting item ||%s|| to python variable `%s`."
+        logger().info("Exporting item ||%s|| to python variable `%s`."
                                 % (match.group(1), lex_name))
     index = None
     index_str = match.group(2)
@@ -292,25 +303,25 @@ def try_parse_item_name(s, env=None, ambiguity=False):
     return (lex_name, index)
 
 def parse_right(left_s, right_s, env, constants=False):
-    from lamb import meta
+    from lamb.meta import te
     right_side = None
     with error_manager():
         with parse_error_wrap(f"Parsing of assignment to `{left_s}` failed"):
-            right_side = meta.te(right_s.strip(), assignment=env)
+            right_side = te(right_s.strip(), assignment=env)
             right_side = right_side.regularize_type_env(env, constants=constants)
             right_side = right_side.under_assignment(env)
 
     return right_side
 
 def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
-    from lamb import meta, lang, types
+    from lamb.lang import get_system, Item, Items
     # TODO should this go by lines....
     if env is None:
         env = dict()
     if transforms is None:
         transforms = dict()
     var_env = vars_only(env)
-    system = lang.get_system()
+    system = get_system()
     a_ctl = system.assign_controller
     l = s.split("=", 1)
     if len(l) != 2:
@@ -345,7 +356,7 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
         if transform:
             right_side = transform(right_side)
 
-        item = lang.Item(lex_name, right_side)
+        item = Item(lex_name, right_side)
         # TODO: add to composition system's lexicon?  Different way of tracking
         # lexicons?
         if item_index is None:
@@ -353,13 +364,13 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
         else:
             # item_index is only set to a value if the item already exists in
             # env.
-            if isinstance(env[lex_name], lang.Item):
+            if isinstance(env[lex_name], Item):
                 tmp_list = list([env[lex_name]])
                 if item_index is True:
                     tmp_list.append(item)
                 else:
                     tmp_list[item_index] = item # may throw an exception
-                item = lang.Items(tmp_list)
+                item = Items(tmp_list)
                 env[lex_name] = item
             else:
                 if item_index is True:
@@ -375,10 +386,11 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
 
         # variable assignment case
         # don't pass assignment here, to allow for redefinition.  TODO: revisit
-        term = meta.TypedExpr.term_factory(left_s)
+        from lamb.meta import TypedExpr
+        term = TypedExpr.term_factory(left_s)
         if not term.variable:
             raise ParseError("Assignment to non-variable term '%s'" % term)
-        ts = meta.get_type_system()
+        ts = parsing_ts()
         u_result = ts.unify(term.type, right_side.type)
         # there are two ways in which unify could fail.  One is the built-in ad
         # hoc type_guessed flag, and one is a genuine type mismatch. We want to
@@ -387,7 +399,8 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
             if term.type_guessed:
                 term.type = right_side.type
             else:
-                raise types.TypeMismatch(term, right_side,
+                from lamb.types import TypeMismatch
+                raise TypeMismatch(term, right_side,
                                                         "Variable assignment")
         else:
             # brute force
@@ -415,9 +428,8 @@ def parse_line(s, env=None, transforms=None, ambiguity=False):
         else:
             return (dict(), env)
     except Exception as e:
-        from lamb import meta
-        meta.logger.error("Parsing failed with exception:")
-        meta.logger.error(e)
+        logger().error("Parsing failed with exception:")
+        logger().error(e)
         
         return (dict(), env)
 
@@ -443,30 +455,30 @@ def parse(s, state=None, transforms=None, ambiguity=False):
     return parse_lines(s, transforms=transforms, env=state, ambiguity=ambiguity)
 
 def fullvar(d, s):
-    from lamb import meta
-    if isinstance(s, meta.TypedTerm):
+    from lamb.meta import TypedTerm
+    if isinstance(s, TypedTerm):
         return s
     else:
-        return meta.TypedTerm(s, d[s].type)
+        return TypedTerm(s, d[s].type)
 
 def html_output(accum, env):
-    from lamb import meta, lang
+    from lamb.lang import Items, Composable
     lines = []
     plain_lines = []
     if len(accum) == 0:
         # use markdown for consistency...
         return utils.show(markdown="<i>(Empty lexicon)</i>")
     for k in accum.keys():
-        if isinstance(accum[k], meta.TypedExpr):
+        if is_te(accum[k]):
             var = fullvar(accum, k)
             lines.append(ensuremath(var._repr_latex_()
                                     + "\\:=\\:"
                                     + accum[k]._repr_latex_()))
             plain_lines.append(repr(var) + " = " + repr(accum[k]))
-        elif isinstance(accum[k], lang.Items):
+        elif isinstance(accum[k], Items):
             # TODO: less ad hoc treatment of this case
             lines.extend(accum[k].all_latex_strs())
-        elif isinstance(accum[k], lang.Composable):
+        elif isinstance(accum[k], Composable):
             # item will automatically print an equality statement
             lines.append(accum[k]._repr_latex_())
             plain_lines.append(repr(accum[k]))
@@ -588,6 +600,118 @@ def parse_paren_str(s, i, type_sys=None):
 
 
 term_symbols_re = r'[a-zA-Z0-9]'
+
+
+def find_term_locations(s, i=0):
+    """Find locations in a string `s` that are term names."""
+    # TODO: code dup with parse_term
+    term_re = re.compile(r'(_?' + term_symbols_re + '+)(_)?')
+    unfiltered_result = find_pattern_locations(term_re, s, i=i, end=None)
+    result = list()
+    for r in unfiltered_result:
+        if r.start() > 0 and s[r.start() - 1] == ".":
+            # result is prefaced by a ".", and therefore is a functional
+            # call or attribute
+            continue
+        result.append(r)
+    return result
+
+
+def parse_term(s, i=0, return_obj=True, assignment=None):
+    """Parse position `i` in `s` as a term expression.  A term expression
+    is some alphanumeric sequence followed optionally by an underscore and
+    a type.  If a type is not specified locally, but is present in 
+    `assignment`, use that.  If a type is specified and is present in
+    `assignment`, check type compatibility immediately."""
+
+    term_re = r'(_?' + term_symbols_re + '+)(_)?'
+    term_name, next = consume_pattern(s, i, term_re, return_match=True)
+
+    if not term_name:
+        if return_obj:
+            return (None, i)
+        else:
+            return (None, None, i)
+    if term_name.group(2):
+        # try to parse a type
+        # if there is a _, will force an attempt
+        typ, end = parsing_ts().type_parser_recursive(s, next)
+    else:
+        typ = None
+        end = next
+
+    if return_obj:
+        from lamb.meta import TypedExpr
+        term = TypedExpr.term_factory(term_name.group(1), typ=typ,
+                                assignment=assignment, preparsed=True)
+        return (term, end)
+    else:
+        return (term_name.group(1), typ, end)
+
+
+def try_parse_term_sequence(s, lower_bound=1, upper_bound=None,
+                                                    assignment=None):
+    """Try to parse `s` as a sequence of terms separated by commas. This
+    consumes the entire string."""
+    s = s.strip()
+    if len(s) == 0:
+        sequence = list()
+        i = 0
+    else:
+        v, typ, i = parse_term(s, i=0, return_obj=False,
+                                                    assignment=assignment)
+        sequence = [(v, typ)]
+    if i < len(s):
+        i = consume_whitespace(s, i)
+        while i < len(s):
+            i = consume_char(s, i, ",", "expected comma in variable sequence")
+            i = consume_whitespace(s, i)
+            v, typ, i = parse_term(s, i=i, return_obj=False,
+                                                    assignment=assignment)
+            if v is None:
+                raise ParseError(
+                    "Failed to find term following comma in variable sequence",
+                    s=s, i=i, met_preconditions=True)
+            sequence.append((v, typ))
+
+    if lower_bound and len(sequence) < lower_bound:
+        if lower_bound == 1 and upper_bound == 1:
+            err = "Expected a variable"
+        else:
+            err = f"Too few variables ({len(sequence)} < {lower_bound}) in variable sequence"
+        raise ParseError(err, s=s, i=i, met_preconditions=True)
+
+    if upper_bound and len(sequence) > upper_bound:
+        if upper_bound == 1:
+            err = "Expected a single variable, got a sequence"
+        else:
+            err = f"Too many variables ({len(sequence)} > {upper_bound}) in variable sequence"
+        raise ParseError(err, s=s, i=i, met_preconditions=True)
+    return sequence
+
+
+def try_parse_typed_term(s, assignment=None, strict=False):
+    """Try to parse string 's' as a typed term.
+    assignment: a variable assignment to parse s with.
+
+    Format: n_t
+      * 'n': a term name.
+        - initial numeric: term is a number.
+        - initial alphabetic: term is a variable or constant.  (Variable:
+          lowercase initial.)
+      * 't': a type, optional.  If absent, will either get it from
+        assignment, or return None as the 2nd element.
+
+    Returns a tuple of a variable name, and a type.  If you want a
+    TypedTerm, call one of the factory functions.
+
+    Raises: TypeMismatch if the assignment supplies a type inconsistent
+    with the specified one.
+    """
+
+    seq = try_parse_term_sequence(s, lower_bound=1, upper_bound=1,
+                                                    assignment=assignment)
+    return seq[0]
 
 
 def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):

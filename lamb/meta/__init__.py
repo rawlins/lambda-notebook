@@ -13,7 +13,7 @@ from lamb.meta.core import LFun, BindingOp
 from lamb.meta.core import Tuple, TupleIndex, Partial, Disjunctive, BinaryGenericEqExpr
 from lamb.meta.core import registry, logger, op, op_expr_factory
 from lamb.meta.core import get_type_system, set_type_system, constants_use_custom, ts_unify, ts_compatible
-from lamb.meta.core import te, tp, term, let_wrapper, check_type, MiniOp, typed_expr
+from lamb.meta.core import te, is_te, tp, term, let_wrapper, check_type, MiniOp
 from lamb.meta.core import geach_combinator, fun_compose, unify
 
 from lamb.meta.ply import simplify_all, derived, default_sopts, collect, join

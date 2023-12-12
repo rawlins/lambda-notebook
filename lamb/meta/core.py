@@ -133,6 +133,13 @@ def te(s, let=True, assignment=None):
     return result
 
 
+def is_te(x, cls=None):
+    if cls is None:
+        return isinstance(x, TypedExpr)
+    else:
+        return issubclass(cls, TypedExpr) and isinstance(x, cls)
+
+
 def term(s, typ=None, assignment=None, meta=False):
     """Convenience wrapper for building terms.
     `s`: the term's name.
@@ -148,12 +155,6 @@ def term(s, typ=None, assignment=None, meta=False):
             raise parsing.ParseError(f"Failed to infer a type domain element", s=s)
     return r
 
-
-def typed_expr(s):
-    # class method replaces this.  Call this instead of factory, which has a 
-    # slightly different semantics -- factory will make a copy if handed a
-    # TypedExpr.
-    return TypedExpr.ensure_typed_expr(s)
 
 def check_type(item, typ, raise_tm=True, msg=None):
     ts = get_type_system()
@@ -898,7 +899,7 @@ class TypedExpr(object):
 
         The gist of the magic (see expand_terms):
           * replace some special cases with less reasonable operator names.
-            (This is based on AIMA logic.py)
+            (This is originally based on AIMA logic.py)
           * find things that look like term names, and surround them with calls
             to the term factory function.
 
@@ -1011,99 +1012,13 @@ class TypedExpr(object):
 
 
     @classmethod
-    def try_parse_type(cls, s, onto=None):
-        """Attempt to get a type name out of s.
-
-        Assumes s is already stripped."""
-
-        ts = get_type_system()
-        result = ts.type_parser(s)
-        return result
-
-    @classmethod
-    def try_parse_term_sequence(cls, s, lower_bound=1, upper_bound=None,
-                                                        assignment=None):
-        s = s.strip()
-        if len(s) == 0:
-            sequence = list()
-            i = 0
-        else:
-            v, typ, i = cls.parse_term(s, i=0, return_obj=False,
-                                                        assignment=assignment)
-            sequence = [(v, typ)]
-        if i < len(s):
-            i = parsing.consume_whitespace(s, i)
-            while i < len(s):
-                i = parsing.consume_char(s, i, ",",
-                                        "expected comma in variable sequence")
-                i = parsing.consume_whitespace(s, i)
-                v, typ, i = cls.parse_term(s, i=i, return_obj=False,
-                                                        assignment=assignment)
-                if v is None:
-                    raise parsing.ParseError(
-                        "Failed to find term following comma in variable sequence",
-                        s=s, i=i, met_preconditions=True)
-                sequence.append((v, typ))
-        if lower_bound and len(sequence) < lower_bound:
-            raise parsing.ParseError(
-                ("Too few variables (%i < %i) in variable sequence"
-                                            % (len(sequence), lower_bound)),
-                s=s, i=i, met_preconditions=True)
-        if upper_bound and len(sequence) > upper_bound:
-            raise parsing.ParseError(
-                ("Too many variables (%i > %i) in variable sequence"
-                                            % (len(sequence), upper_bound)),
-                s=s, i=i, met_preconditions=True)
-        return sequence
-
-    @classmethod
-    def try_parse_typed_term(cls, s, assignment=None, strict=False):
-        """Try to parse string 's' as a typed term.
-        assignment: a variable assignment to parse s with.
-
-        Format: n_t
-          * 'n': a term name.  
-            - initial numeric: term is a number.
-            - initial alphabetic: term is a variable or constant.  (Variable:
-              lowercase initial.)
-          * 't': a type, optional.  If absent, will either get it from
-            assignment, or return None as the 2nd element.
-
-        Returns a tuple of a variable name, and a type.  If you want a
-        TypedTerm, call one of the factory functions.
-        
-        Raises: TypeMismatch if the assignment supplies a type inconsistent
-        with the specified one.
-        """
-
-        seq = cls.try_parse_term_sequence(s, lower_bound=1, upper_bound=1,
-                                                        assignment=assignment)
-        return seq[0]
-
-    @classmethod
-    def find_term_locations(cls, s, i=0):
-        """Find locations in a string `s` that are term names."""
-        # TODO: code dup with parse_term
-        term_re = re.compile(r'(_?' + parsing.term_symbols_re + '+)(_)?')
-        unfiltered_result = parsing.find_pattern_locations(term_re, s, i=i,
-                                                                    end=None)
-        result = list()
-        for r in unfiltered_result:
-            if r.start() > 0 and s[r.start() - 1] == ".":
-                # result is prefaced by a ".", and therefore is a functional
-                # call or attribute
-                continue
-            result.append(r)
-        return result
-
-    @classmethod
     def expand_terms(cls, s, i=0, assignment=None, ignore=None):
         """Treat terms as macros for term_factory calls.  Attempt to find all
         term strings, and replace them with eval-able factory calls.
 
         This is an expanded version of the original regex approach; one reason
         to move away from that is that this will truely parse the types."""
-        terms = cls.find_term_locations(s, i)
+        terms = parsing.find_term_locations(s, i)
         if ignore is None:
             ignore = set()
         offset = 0
@@ -1112,7 +1027,7 @@ class TypedExpr(object):
                 # parsing has already consumed this candidate term, ignore.
                 # (E.g. an "e" in a type signature.)
                 continue
-            (name, typ, end) = cls.parse_term(s, t.start() + offset,
+            (name, typ, end) = parsing.parse_term(s, t.start() + offset,
                                     return_obj=False, assignment=assignment)
             if name is None:
                 logger.warning("Unparsed term '%s'" % t.group(0)) # TODO: more?
@@ -1121,48 +1036,15 @@ class TypedExpr(object):
                 continue
             # ugh this is sort of absurd
             if typ is None:
-                replace = ('TypedExpr.term_factory("%s", typ=None, assignment=assignment)' % (name))
+                replace = (f'TypedExpr.term_factory("{name}", typ=None, assignment=assignment)')
             else:
-                replace = ('TypedExpr.term_factory("%s", typ="%s", assignment=assignment)' % (name, repr(typ)))
+                replace = (f'TypedExpr.term_factory("{name}", typ="{repr(typ)}", assignment=assignment)')
             s = s[0:t.start() + offset] + replace + s[end:]
             i = t.start() + offset + len(replace)
             len_original = end - (t.start() + offset)
             offset += len(replace) - len_original
         return s
 
-
-    @classmethod
-    def parse_term(cls, s, i=0, return_obj=True, assignment=None):
-
-        """Parse position `i` in `s` as a term expression.  A term expression
-        is some alphanumeric sequence followed optionally by an underscore and
-        a type.  If a type is not specified locally, but is present in 
-        `assignment`, use that.  If a type is specified and is present in
-        `assignment`, check type compatibility immediately."""
-
-        ts = get_type_system()
-        term_re = r'(_?' + parsing.term_symbols_re + '+)(_)?'
-        term_name, next = parsing.consume_pattern(s, i, term_re,
-                                                            return_match=True)
-        if not term_name:
-            if return_obj:
-                return (None, i)
-            else:
-                return (None, None, i)
-        if term_name.group(2):
-            # try to parse a type
-            # if there is a _, will force an attempt
-            typ, end = ts.type_parser_recursive(s, next)
-        else:
-            typ = None
-            end = next
-
-        if return_obj:
-            term = cls.term_factory(term_name.group(1), typ=typ,
-                                    assignment=assignment, preparsed=True)
-            return (term, end)
-        else:
-            return (term_name.group(1), typ, end)
 
     @classmethod
     def term_factory(cls, s, typ=None, assignment=None, preparsed=False):
@@ -1196,7 +1078,8 @@ class TypedExpr(object):
             if isinstance(s, str) and typ is None and not preparsed:
                 # in principle, if typ is supplied, could try parsing and
                 # confirm the type?
-                v, typ = cls.try_parse_typed_term(s, assignment=assignment, strict=True)
+                v, typ = parsing.try_parse_typed_term(s,
+                                            assignment=assignment, strict=True)
             else:
                 v = s
             v = utils.num_or_str(v)
@@ -3601,7 +3484,7 @@ class BindingOp(TypedExpr):
         header = split[0]
         vname = header[i:].strip() # removes everything but a variable name
         try:
-            var_seq = cls.try_parse_term_sequence(vname, lower_bound=None,
+            var_seq = parsing.try_parse_term_sequence(vname, lower_bound=None,
                                     upper_bound=None, assignment=assignment)
             cls.binding_op_precheck(op_class, var_seq)
         except parsing.ParseError as e:
