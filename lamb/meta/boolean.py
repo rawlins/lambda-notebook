@@ -330,7 +330,7 @@ class ForallUnary(BindingOp):
         # (would return True). We are therefore assuming that this case is
         # ruled out a priori.
         if not self.varname in self.body.free_variables():
-            return derived(self.body, self, "trivial ∀ elimination")
+            return derived(self.body.copy(), self, "trivial ∀ elimination")
         elif self.type.domain.cardinality() == 0:
             return derived(true_term, self, "∀ triviality with empty domain")
         elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.finite:
@@ -398,7 +398,7 @@ class ExistsUnary(BindingOp):
             if self.type.domain.cardinality() == 0:
                 return derived(false_term, self, "∃ triviality with empty domain")
             else:
-                return derived(self.body, self, "trivial ∃ elimination")
+                return derived(self.body.copy(), self, "trivial ∃ elimination")
         elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.finite:
             a = self.scope_assignment()
             for elem in self[0].type.domain:
