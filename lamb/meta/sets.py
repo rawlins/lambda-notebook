@@ -5,6 +5,7 @@ from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
 from .core import Tuple
 from .meta import MetaTerm
+from .ply import alphanorm_key
 from .boolean import BinaryOrExpr, BinaryAndExpr, ForallUnary, ExistsUnary, false_term, true_term
 from lamb.types import type_t, SetType
 
@@ -82,11 +83,27 @@ class ConditionSet(BindingOp):
         """Return a LFun based on the condition used to describe the set."""
         return LFun(self.vartype, self.body, self.varname)
 
+    def eliminate(self, **sopts):
+        # this is a bit wacky. But for the case where there are no free terms
+        # at all, we can convert to a ListedSet via domain enumeration. I'm
+        # not sure how generally useful this is...
+        if self[0].type.domain.finite and not self.free_terms():
+            a = self.scope_assignment()
+            sopts['evaluate'] = True
+            subs = [elem
+                    for elem in self[0].type.domain
+                    if self[1]
+                            .under_assignment(a | {self.varname : elem})
+                            .simplify_all(**sopts) == true_term]
+            return derived(
+                sset(subs, typ=self.type.content_type),
+                self,
+                f"ConditionSet => ListedSet (generic on {self.varname})")
+        return self
+
     def simplify(self, **sopts):
         if self[1] == false_term:
             return derived(emptyset(self.type), self, "trivial set condition")
-        # the true_term case has no simpler version. (Should there be a
-        # MetaTerm value for this case for each type?)
 
         return self
 
@@ -155,6 +172,7 @@ class ListedSet(TypedExpr):
     canonical_name = "ListedSet"
     op_name_uni="ListedSet"
     op_name_latex="ListedSet"
+    pre_simplify = True # I think this is formally unnecessary, but it reduces work
 
     def __init__(self, iterable, typ=None, assignment=None, type_check=True):
         # note! uniqueness is not enforced here.
@@ -189,6 +207,12 @@ class ListedSet(TypedExpr):
             return emptyset(self.type)
         return ListedSet(args)
 
+    @classmethod
+    def join(self, l):
+        # the constructor already matches the `join` api, and this is just for
+        # completeness. It ensures presimplification.
+        return sset(l)
+
     def term(self):
         return False
 
@@ -208,7 +232,7 @@ class ListedSet(TypedExpr):
 
     def sorted_set(self):
         s = self.set()
-        return sorted(s, key=repr)
+        return sorted(s, key=alphanorm_key)
 
     def to_condition_set(self):
         """Convert to a condition set by disjoining members."""
@@ -225,7 +249,7 @@ class ListedSet(TypedExpr):
         # an alternative: go directly to self.to_condition_set().to_characteristic()
         return LFun(var, (var << s))
 
-    def simplify(self, **sopts):
+    def do_simplify(self, **sopts):
         # eliminate any duplicates under syntactic identity when simplifying
         if self.set_simplified or len(self.args) <= 1:
             return self
@@ -235,14 +259,18 @@ class ListedSet(TypedExpr):
             # if every domain element is present in `args`, drop extraneous
             # elements. E.g. `{True, False, p_t}` simplifies to just {True, False}.
             args = args & domain.domain
-        args = sorted(args, key=repr) # for a canonical ordering
+        args = sorted(args, key=alphanorm_key) # for a canonical ordering
         result = self.copy_local(*args)
         result.set_simplified = True
+        result.derivation = self.derivation # copy any derivation, no changes
         return result
 
-    def simplify_all(self, **sopts):
-        # run self.simplify() before the recursive step as well as after
-        return super().simplify_all(pre=True, **sopts)
+    def simplify(self, **sopts):
+        result = self.do_simplify(**sopts)
+        if result is self:
+            return self
+        else:
+            return derived(result, self, "ListedSet normalization")
 
     def __repr__(self):
         if not len(self.args):
@@ -303,7 +331,7 @@ def emptyset(settype=None):
 
 
 def sset(iterable, typ=None, assignment=None):
-    return ListedSet(iterable, typ=typ, assignment=assignment).simplify()
+    return ListedSet(iterable, typ=typ, assignment=assignment).do_simplify()
 
 
 class SetContains(SyncatOpExpr):
@@ -438,6 +466,10 @@ class SetUnion(BinarySetOp):
     commutative = True
     associative = True
 
+    # for set operations, we need to run self.simplify() before the
+    # recursive steps.
+    pre_simplify = True
+
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set union")
 
@@ -469,11 +501,6 @@ class SetUnion(BinarySetOp):
 
         return self
 
-    def simplify_all(self, **sopts):
-        # for set operations, we need to run self.simplify() before the
-        # recursive steps.
-        return super().simplify_all(pre=True, **sopts)
-
 
 class SetIntersection(BinarySetOp):
     """Binary operation of set intersection."""
@@ -483,6 +510,7 @@ class SetIntersection(BinarySetOp):
     op_name_latex = "\\cap{}"
     commutative = True
     associative = True
+    pre_simplify = True
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set intersection")
@@ -557,11 +585,6 @@ class SetIntersection(BinarySetOp):
                 "set intersection (set elimination)").simplify_all(**sopts)
         return self
 
-    def simplify_all(self, **sopts):
-        # for set operations, we need to run self.simplify() before the
-        # recursive steps.
-        return super().simplify_all(pre=True, **sopts)
-
 
 class SetDifference(BinarySetOp):
     """Binary operation of set difference."""
@@ -570,6 +593,7 @@ class SetDifference(BinarySetOp):
     op_name_latex = "-"
     commutative = False
     associative = False
+    pre_simplify = True
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set difference")
@@ -605,11 +629,6 @@ class SetDifference(BinarySetOp):
                 self,
                 "set difference (set elimination)")#.simplify_all(**sopts)
         return self
-
-    def simplify_all(self, **sopts):
-        # for set operations, we need to run self.simplify() before the
-        # recursive steps.
-        return super().simplify_all(pre=True, **sopts)
 
 
 class SetEquivalence(BinarySetOp):

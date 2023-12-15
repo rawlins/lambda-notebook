@@ -1492,6 +1492,9 @@ class TypedExpr(object):
         # default behavior: no change
         return self
 
+    def eliminate(self, **sopts):
+        return self
+
     def _multisimplify_wrapper(self, ctrl=None, **sopts):
         if getattr(self, 'simplify_args', None):
             simplify_args = self.simplify_args
@@ -1582,7 +1585,20 @@ class TypedExpr(object):
             # don't apply `reduce` recursively, it is already recursive
             sopts['reduce'] = False
 
+        # do this before the normal simplify pass, since it almost guarantees
+        # something that will feed the rest of simplification
+        while get_sopt('eliminate_quantifiers', sopts) and isinstance(result, BindingOp):
+            # currently, only quantifiers and ConditionSet actually implement
+            # `eliminate`...
+            # this is subject to combinatorial blowup with the size of the domain
+            r2 = result.eliminate(**sopts)
+            if r2 is result:
+                result = r2
+                break
+            result = r2
+
         collect = get_sopt('collect', sopts) and collectable(result)
+        pre = pre or getattr(result.__class__, 'pre_simplify', False)
         if collect and associative(result):
             return result.simplify_collected(pre=pre, **sopts)
         else:
@@ -1721,13 +1737,12 @@ class TypedExpr(object):
             new_parts.append(part_i)
         new_self = self.copy_local(*new_parts)
         condition = condition.simplify_all()
-        if condition == from_python(True):
-            intermediate = derived(Partial(new_self, condition), self,
-                                                "Partiality simplification")
-            return derived(new_self, intermediate, "Partiality simplification")
+        intermediate = derived(Partial(new_self, condition), self,
+                                            "Recursive simplification of condition")
+        if condition == True:
+            return derived(new_self, intermediate, "Partiality (trivial condition)")
         else:
-            return derived(Partial(new_self, condition), self,
-                                                "Partiality simplification")
+            return intermediate
 
 
     def __call__(self, *args):
@@ -2037,6 +2052,17 @@ class ApplicationExpr(TypedExpr):
             result.let = self.let
             return derived(result, self, desc="Reduction")
 
+    def simplify(self, **sopts):
+        # recursive reduction is not triggered locally, but rather via an
+        # initial `reduce_all()` call. However, we do allow handling of
+        # MetaTerms here via `evaluate`, triggerable independently from
+        # reduction. (This can be useful when supplying MetaTerms via an
+        # assignment.)
+        if (get_sopt('evaluate', sopts)
+                        and self.args[0].meta() and self.args[1].meta()):
+            return self.reduce() # this will add a derivation
+        return self
+
     def calculate_partiality(self, vars=None):
         # defer calculation of the argument until beta reduction has occurred
         if isinstance(self.args[0], LFun):
@@ -2262,9 +2288,9 @@ class TypedTerm(TypedExpr):
         return "%s_%s" % (self.op, repr(self.type))
 
     def should_show_type(self, assignment=None):
-        if assignment and suppress_bound_var_types:
-            if self.op in assignment:
-                return False
+        if (assignment and suppress_bound_var_types
+                        and not self.meta() and self.op in assignment):
+            return False
         if self.suppress_type:
             return False
         if suppress_constant_type and self.constant and not self.meta():
@@ -2463,10 +2489,18 @@ class Partial(TypedExpr):
         if isinstance(new_body, Partial):
             new_condition = new_condition & new_body.condition
             new_body = new_body.body
-        new_condition = new_condition.simplify_all()
+        # XX division of labor with simplify_all?? At least need to pass around
+        # sopts...
+        result = Partial(new_body, new_condition).simplify_all()
         return derived(Partial(new_body, new_condition), self,
-                                                "Partiality simplification")
-    
+                                                "Recursive partiality simplification")
+
+    def simplify(self, **sopts):
+        if self.condition == True:
+            # the copy here is (apparently) needed to get derivation bookkeeping right...
+            return derived(self.body.copy(), self, "Partiality elimination")
+        return self
+
     def term(self):
         return self.body.term()
 
@@ -2485,12 +2519,13 @@ class Partial(TypedExpr):
         return self.copy_local(result[1], result[2])
         
     def latex_str(self, suppress_parens=False, **kwargs):
-        if self.condition and self.condition != from_python(True):
-            return ensuremath("\\left|\\begin{array}{l}%s\\\\%s\\end{array}\\right|"
-                % (self.body.latex_str(suppress_parens=True, **kwargs),
-                   self.condition.latex_str(suppress_parens=True, **kwargs)))
-        else:
-            return ensuremath("%s" % (self.body.latex_str(suppress_parens=True, **kwargs)))
+        body_str = self.body.latex_str(suppress_parens=True, **kwargs)
+        if self.condition == False:
+            # XX \xcancel works in current MathJax, but it seems likely that it
+            # won't work elsewhere...
+            body_str = f"\\xcancel{{{body_str}}}"
+        condition_str = self.condition.latex_str(suppress_parens=True, **kwargs)
+        return ensuremath(f"\\left|\\begin{{array}}{{l}}{body_str}\\\\{condition_str}\\end{{array}}\\right|")
 
     @classmethod
     def from_Tuple(cls, t):
@@ -3424,28 +3459,29 @@ class BindingOp(TypedExpr):
 
         new_body = self.body.calculate_partiality(vars=vars)
         if isinstance(new_body, Partial):
-            if new_body.condition == from_python(True):
+            if new_body.condition == True:
                 return derived(self.copy_local(self.var_instance, new_body),
-                                            self, "Partiality simplification")
+                        self, "Partiality (trivial body condition)")
+
             if self.varname in new_body.condition.free_variables():
                 if BindingOp.partiality_weak:
                     return derived(
                         self.project_partiality_weak(new_body.body,
                                                      new_body.condition),
-                        self, "Partiality simplification")
+                        self, "Partiality (weak projection)")
                 else:
                     return derived(
                         self.project_partiality_strict(new_body.body,
                                                        new_body.condition),
-                        self, "Partiality simplification")
+                        self, "Partiality (strict projection)")
             else:
                 new_condition = new_body.condition
                 new_self = self.copy_local(self.var_instance, new_body.body)
                 return derived(Partial(new_self, new_condition), self,
-                    "Partiality simplification")
+                    "Partiality (unquantified condition)")
         else:
             return derived(self.copy_local(self.var_instance, new_body), self,
-                "Partiality simplification")
+                "Partiality elimination")
 
     @classmethod
     def try_parse_header(cls, s, assignment=None, locals=None):

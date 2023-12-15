@@ -3,6 +3,7 @@ from lamb import types
 from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
 from .core import BindingOp, Partial, LFun, get_sopt
 from .meta import MetaTerm
+from .ply import simplify_all, alphanorm
 from lamb.types import type_t
 
 global true_term, false_term
@@ -34,7 +35,7 @@ false_term = MetaTerm(False)
 
 # proof of concept for now: the rest of the logical operators do not quite
 # work as pure python
-@op("~", type_t, type_t, op_uni="¬", op_latex="\\neg{}", deriv_desc="double negation", python_only=False)
+@op("~", type_t, type_t, op_uni="¬", op_latex="\\neg{}", deriv_desc="negation elimination", python_only=False)
 def UnaryNegExpr(self, x):
     if isinstance(x, TypedExpr):
         if isinstance(x, UnaryNegExpr):
@@ -261,7 +262,38 @@ class BinaryNeqExpr(SyncatOpExpr):
 
 ####################### Quantifiers
 # These are not picky about the variable type, but t is the minimum needed for
-# them to work.
+# them to work, hence putting them in `boolean`
+
+def deriv_generic(instantiated, generic, varname):
+    if instantiated.derivation:
+        # copy the last step of `instantiated`'s derivation into generic,
+        # without any other history from `instantiated`. (Is this general
+        # enough?)
+        # this will truncate a lot of derivation. But it's hard to see a way
+        # around this. Simple example: Forall p_t : Exists q_t : p == q
+        # * intuitively, might want to show something like `p == q` at the
+        #   step evaluating the existential
+        # * but, the verifier for the existential varies with the value of p, so
+        #   there isn't easy access to a subexpression to show there
+        # * but, in practice, because there's a simplify_all call, something
+        #   completely different happens anyways: <=> simplifies first,
+        #   leaving `Exists q_t : q` or `Exists q_t: ~q_t` depending on the
+        #   value of `p`, and these make even less sense to show in isolation!
+        # * one idea might be to lazily evaluate the assignment somehow?
+        # * in principle, could just track every instantiation...
+        i_step = instantiated.derivation[-1].copy()
+        i_result = instantiated.derivation[-1].result
+        i_result.derivation = None
+        # XX does this always make sense?
+        i_step.desc = f"{i_step.desc} (generic on {varname})"
+        return derived(i_result, generic,
+            desc=i_step.desc,
+            # weird results from this, due to issues described above
+            # subexpression=i_step.subexpression
+            )
+    else:
+        return generic
+
 
 class ForallUnary(BindingOp):
     """Universal unary quantifier"""
@@ -280,12 +312,53 @@ class ForallUnary(BindingOp):
     def copy_local(self, var, arg, type_check=True):
         return ForallUnary(var, arg, type_check=type_check)
 
+    def to_conjunction(self):
+        if self[0].type.domain.finite:
+            a = self.scope_assignment()
+            subs = [self[1].under_assignment(a | {self.varname : elem})
+                    for elem in self[0].type.domain]
+            return derived(BinaryAndExpr.join(subs, empty=True),
+                self,
+                f"∀{self.varname} => ∧")
+        return self
+
+    def eliminate(self, **sopts):
+        return self.to_conjunction()
+
     def simplify(self, **sopts):
         # note: not valid if the domain of individuals is completely empty
         # (would return True). We are therefore assuming that this case is
         # ruled out a priori.
         if not self.varname in self.body.free_variables():
-            return self.body
+            return derived(self.body, self, "trivial ∀ elimination")
+        elif self.type.domain.cardinality() == 0:
+            return derived(true_term, self, "∀ triviality with empty domain")
+        elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.finite:
+            a = self.scope_assignment()
+            for elem in self[0].type.domain:
+                a[self.varname] = elem
+                # XX how to handle OutOfDomain
+                # XX should this call simplify_all or something more targeted?
+                cur = self[1].under_assignment(a).simplify_all(**sopts)
+                if cur == False:
+                    return derived(false_term, self,
+                        f"counterexample for ∀{self.varname}",
+                        subexpression=cur,
+                        force_on_recurse=True)
+                elif cur == True:
+                    continue
+                else:
+                    # somehow, failed to simplify...
+                    return self
+            # only verifiers found
+            # stitch together a derivation using the latest `cur`.
+            a[self.varname] = self[0]
+            generic_body = deriv_generic(cur,
+                self[1].under_assignment(a).simplify_all(**sopts),
+                self.varname)
+            return derived(true_term, self, "∀ evaluation",
+                subexpression=generic_body,
+                force_on_recurse=True)
         return self
 
 class ExistsUnary(BindingOp):
@@ -305,12 +378,82 @@ class ExistsUnary(BindingOp):
     def copy_local(self, var, arg, type_check=True):
         return ExistsUnary(var, arg, type_check=type_check)        
 
-    def simplify(self, **sopts):
-        # note: not valid if the domain of individuals is completely empty
-        # (would return False)
-        if not self.varname in self.body.free_variables():
-            return self.body
+    def to_disjunction(self):
+        if self[0].type.domain.finite:
+            a = self.scope_assignment()
+            subs = [self[1].under_assignment(a | {self.varname : elem})
+                    for elem in self[0].type.domain]
+            return derived(BinaryOrExpr.join(subs, empty=False),
+                self,
+                f"∃{self.varname} => ∨")
         return self
+
+    def eliminate(self, **sopts):
+        return self.to_disjunction()
+
+    def simplify(self, **sopts):
+        if not self.varname in self.body.free_variables():
+            # note: not valid if the domain is completely empty.
+            # it's a bit silly to check for this, but let's be exact:
+            if self.type.domain.cardinality() == 0:
+                return derived(false_term, self, "∃ triviality with empty domain")
+            else:
+                return derived(self.body, self, "trivial ∃ elimination")
+        elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.finite:
+            a = self.scope_assignment()
+            for elem in self[0].type.domain:
+                a[self.varname] = elem
+                # XX how to handle OutOfDomain
+                cur = self[1].under_assignment(a).simplify_all(**sopts)
+                if cur == False:
+                    continue
+                elif cur == True:
+                    return derived(true_term,
+                        self,
+                        f"verifier for ∃{self.varname}",
+                        subexpression=cur,
+                        force_on_recurse=True)
+                else:
+                    # somehow, failed to simplify...
+                    return self
+            # no verifiers found
+            a[self.varname] = self[0]
+            generic_body = deriv_generic(cur,
+                self[1].under_assignment(a).simplify_all(**sopts),
+                self.varname)
+            return derived(false_term, self, "no verifiers for ∃",
+                subexpression=generic_body,
+                force_on_recurse=True)
+
+        return self
+
+
+# shared code for ∃! and ι; this could probably be much further generalized
+def find_unique_evaluation(domain, te, f, varname, assignment):
+    found = None
+    found_te = None
+    cur = None
+    for elem in domain:
+        assignment[varname] = elem
+        # XX how to handle OutOfDomain
+        # cur = self[1].under_assignment(a).simplify_all(**sopts)
+        cur = f(te.under_assignment(assignment))
+        if cur == True:
+            if found is None:
+                found = elem
+                found_te = cur
+                continue
+            return None, (found, elem), (found_te, cur)
+        elif cur == False:
+            continue
+        else:
+            # somehow, failed to simplify...
+            return None, te, None
+    if found_te is None:
+        # provide the last `cur` (if any) to be used in creating a derivation
+        found_te = cur
+    return found, None, found_te
+
 
 class ExistsExact(BindingOp):
     """Existential unary quantifier"""
@@ -328,6 +471,62 @@ class ExistsExact(BindingOp):
 
     def copy_local(self, var, arg, type_check=True):
         return ExistsExact(var, arg, type_check=type_check)        
+
+    def eliminate(self, **sopts):
+        var1 = self[0].copy()
+        var2 = TypedTerm(self[1].find_safe_variable(starting=self.varname), typ=var1.type)
+        fun = LFun(var1.copy(), self[1])
+        result = ExistsUnary(var1, fun(var1) & ForallUnary(var2, fun(var2) >> var1.equivalent_to(var2)))
+        result = derived(result, self, "∃! elimination")
+        return result.reduce_all()
+
+    def simplify(self, **sopts):
+        if not self.varname in self.body.free_variables():
+            # even sillier to check for than the ∃ case...
+            c = self.type.domain.cardinality()
+            if c == 1:
+                return derived(true_term, self, "∃! triviality (cardinality 1)")
+            else:
+                reason = c == 0 and "empty domain" or "cardinality > 1"
+                return derived(false_term, self, f"∃! triviality ({reason})")
+        elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.finite:
+            a = self.scope_assignment()
+            verifier, counterexample, sub = find_unique_evaluation(
+                self[0].type.domain,
+                self[1],
+                (lambda t : simplify_all(t, **sopts)),
+                self.varname,
+                self.scope_assignment())
+            if counterexample is self[1]:
+                return self
+            elif verifier is not None:
+                return derived(true_term, self,
+                        f"unique verifier for ∃!{self.varname}",
+                        subexpression=sub,
+                        force_on_recurse=True)
+            elif counterexample is not None:
+                # XX this derivation is a bit clunky
+                r = derived(false_term, self,
+                        f"counterexample for ∃!{self.varname}",
+                        subexpression=sub[0],
+                        force_on_recurse=True)
+                return derived(r, r,
+                        f"counterexample for ∃!{self.varname}",
+                        subexpression=sub[1],
+                        force_on_recurse=True,
+                        allow_trivial=True)
+            else:
+                if sub is not None:
+                    a[self.varname] = self[0]
+                    generic_body = deriv_generic(sub,
+                        self[1].under_assignment(a).simplify_all(**sopts),
+                        self.varname)
+                else:
+                    generic_body = None
+                return derived(false_term, self, f"no verifiers for ∃!",
+                    subexpression=generic_body,
+                    force_on_recurse=True)
+        return self
 
 
 # maybe should be elsewhere?
@@ -366,12 +565,37 @@ class IotaUnary(BindingOp):
         result = self.copy_local(sub_var, new_condition)
         return result
 
+    def simplify(self, **sopts):
+        if not self.varname in self.body.free_variables():
+            c = self.type.domain.cardinality()
+            if c == 1:
+                return derived(c.domain[0], self, "ι triviality (cardinality 1)")
+            else:
+                # XX what should really happen here?
+                return self
+        elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.finite:
+            verifier, counterexample, sub = find_unique_evaluation(
+                self[0].type.domain,
+                self[1],
+                (lambda t : simplify_all(t, **sopts)),
+                self.varname,
+                self.scope_assignment())
+            if verifier is not None:
+                return derived(MetaTerm(verifier), self, f"unique instantiation for ι",
+                    subexpression=sub, force_on_recurse=True)
+            else:
+                # it's extremely unclear what should happen for a real
+                # counterexample for vanilla IotaUnary. Maybe it needs to raise
+                # a python exception (cf. OutOfDomain?)
+                return self
+        return self
 
 class IotaPartial(IotaUnary):
     canonical_name = "IotaPartial"
     op_name_uni = "ι"
     op_name_latex="\\iota{}"
     secondary_names = {}
+    pre_simplify = True
 
     def __init__(self, var_or_vtype, body, varname=None, assignment=None,
                                                             type_check=True):
@@ -386,10 +610,11 @@ class IotaPartial(IotaUnary):
     def calculate_partiality(self, vars=None):
         new_body = self.body.calculate_partiality(vars=vars)
         # defer any further calculation if there are bound variables in the body
+        # (probably not technically necessary?)
         if vars is not None:
-            if vars | new_body.free_variables():
+            if vars & new_body.free_variables():
                 return derived(self.copy_local(self.var_instance, new_body),
-                                            self, "Partiality simplification")
+                                            self, "Partiality (Iota body only)")
         if isinstance(new_body, Partial):
             new_body = new_body.body & new_body.condition
         new_condition = new_body.copy()
@@ -398,8 +623,15 @@ class IotaPartial(IotaUnary):
         if self.varname in new_condition.free_variables():
             new_condition = ExistsExact(self.var_instance, new_condition)
         return derived(Partial(new_body, new_condition), self,
-                                                    "Partiality simplification")
+                                                    "Partiality (Iota)")
 
+    def simplify(self, **sopts):
+        # it's part of the semantics that this converts to a completely
+        # different value, so do it unconditionally as part of simplify.
+        # (This class is marked with `pre_simplify`.)
+        # XX the division of labor between these is weird, and doing this
+        # without checking for bound vars could lead to problems?
+        return self.calculate_partiality()
 
 pure_ops = {UnaryNegExpr, BinaryAndExpr, BinaryOrExpr, BinaryArrowExpr,
             BinaryNeqExpr, BinaryBiarrowExpr}
