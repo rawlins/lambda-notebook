@@ -5,11 +5,9 @@ import lamb
 from lamb import types
 
 from . import core, boolean
-# from .core import TypedTerm, TypeEnv, term
-# from .boolean import pure_ops
 from lamb import types, parsing
 from lamb.utils import ensuremath
-from lamb.types import TypeMismatch, type_e, type_t, type_n
+from lamb.types import TypeMismatch, type_e, type_t, type_n, BasicType, SetType, TupleType
 
 
 class OutOfDomain(Exception):
@@ -60,6 +58,7 @@ class MetaTerm(core.TypedTerm):
 
         # not set by superclass with type_check=False
         self._type_env = self.calc_type_env()
+        self.assignment_name = None
 
     def check_type_domain(self, typ=None, setfun=False):
         if typ is None:
@@ -119,6 +118,7 @@ class MetaTerm(core.TypedTerm):
     def copy_local(self, type_check=True):
         r = MetaTerm(self.op, typ=self.type)
         r.latex_op_str = self.latex_op_str
+        r.assignment_name = self.assignment_name
         return r
 
     def under_assignment(self, assignment):
@@ -159,11 +159,14 @@ class MetaTerm(core.TypedTerm):
             # TODO: convert to frozenset, and some sort of frozendict implementation?
             return hash(self.op)
 
-    def op_repr(self, rich=False):
+    def op_repr(self, rich=False, addsf=False):
         if self.type is None:
             # error in constructor, just need something here
             return str(self.op)
-        return self.type.domain.element_repr(self.op, rich=rich)
+        r = self.type.domain.element_repr(self.op, rich=rich)
+        if addsf and rich:
+            r = f"\\textsf{{{r}}}"
+        return r
 
     def calc_type_env(self, recalculate=False):
         # currently, MetaTerms are not represented at all in the type
@@ -180,15 +183,27 @@ class MetaTerm(core.TypedTerm):
     def __repr__(self):
         return f"{self.op_repr()}_{repr(self.type)}"
 
-    def latex_str(self, show_types=True, assignment=None, **kwargs):
+    def latex_str(self, show_types=True, assignment=None, use_aname=None, **kwargs):
         # TODO: similar to __repr__, possibly this code should be on the
         # type domain itself
         # if just using `op` as the name, we use textsf, but setting
         # an arbitrary latex name is allowed
+        if use_aname is None:
+            use_aname = True
         if self.latex_op_str is None:
-            n = self.op_repr(rich=True)
-            # render the variable name as sans serif
-            op_str = f"\\textsf{{{n}}}"
+            if use_aname and self.assignment_name is not None:
+                if isinstance(self.type, BasicType):
+                    superscript = self.op_repr(rich=True, addsf=True)
+                else:
+                    # don't try to show the actual value for this case
+                    superscript = "\\text{\\textsf{[meta]}}"
+                return self.assignment_name.latex_str(show_types=show_types,
+                                            assignment=assignment,
+                                            superscript=superscript,
+                                            **kwargs)
+            else:
+                # render a domain element name as sans serif
+                op_str = self.op_repr(rich=True, addsf=True)
         else:
             op_str = f"{self.latex_op_str}"
         if not show_types or not self.should_show_type(assignment=assignment):
@@ -196,6 +211,12 @@ class MetaTerm(core.TypedTerm):
         else:
             # does this need to be in a \text? frontend compat in general...
             return ensuremath(f"{{{op_str}}}_{{{self.type.latex_str()}}}")
+
+    def _repr_latex_(self):
+        # override: when directly inspecting an arbitrary MetaTerm, suppress
+        # any assignment-derived name, except for the BasicType case, which
+        # always shows the value
+        return self.latex_str(suppress_parens=True, use_aname=isinstance(self.type, BasicType))
 
     @classmethod
     def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(),

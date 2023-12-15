@@ -1380,7 +1380,7 @@ class TypedExpr(object):
         result.derivation = self.derivation
         return result
 
-    def under_assignment(self, assignment):
+    def under_assignment(self, assignment, track_all_names=False):
         """Use `assignment` to replace any appropriate variables in `self`."""
         # do this first so that any errors show up before the recursive step
         if assignment is None:
@@ -1388,7 +1388,7 @@ class TypedExpr(object):
         else:
             a2 = {key: self.ensure_typed_expr(assignment[key])
                                                         for key in assignment}
-        return term_replace_unify(self, a2)
+        return term_replace_unify(self, a2, track_all_names=track_all_names)
 
     # TODO: can the type env be used instead? It is effectively already
     # memoizing a superset of this information
@@ -2321,15 +2321,17 @@ class TypedTerm(TypedExpr):
     def __hash__(self):
         return hash("TypedTerm") ^ super().__hash__()
 
-    def latex_str(self, show_types=True, assignment=None, **kwargs):
+    def latex_str(self, show_types=True, assignment=None, superscript="", **kwargs):
         if self.latex_op_str is None:
             op = self.op
         else:
             op = self.latex_op_str
+        if superscript:
+            superscript = f"^{{{superscript}}}"
         if not show_types or not self.should_show_type(assignment=assignment):
-            return ensuremath("{%s}" % op)
+            return ensuremath(f"{{{op}}}{superscript}")
         else:
-            return ensuremath("{%s}_{%s}" % (op, self.type.latex_str()))
+            return ensuremath(f"{{{op}}}{superscript}_{{{self.type.latex_str()}}}")
 
     random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
     atomics = {type_t, type_e, type_n}

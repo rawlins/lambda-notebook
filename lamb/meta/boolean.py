@@ -339,7 +339,7 @@ class ForallUnary(BindingOp):
                 a[self.varname] = elem
                 # XX how to handle OutOfDomain
                 # XX should this call simplify_all or something more targeted?
-                cur = self[1].under_assignment(a).simplify_all(**sopts)
+                cur = self[1].under_assignment(a, track_all_names=True).simplify_all(**sopts)
                 if cur == False:
                     return derived(false_term, self,
                         f"counterexample for ∀{self.varname}",
@@ -404,7 +404,7 @@ class ExistsUnary(BindingOp):
             for elem in self[0].type.domain:
                 a[self.varname] = elem
                 # XX how to handle OutOfDomain
-                cur = self[1].under_assignment(a).simplify_all(**sopts)
+                cur = self[1].under_assignment(a, track_all_names=True).simplify_all(**sopts)
                 if cur == False:
                     continue
                 elif cur == True:
@@ -436,8 +436,7 @@ def find_unique_evaluation(domain, te, f, varname, assignment):
     for elem in domain:
         assignment[varname] = elem
         # XX how to handle OutOfDomain
-        # cur = self[1].under_assignment(a).simplify_all(**sopts)
-        cur = f(te.under_assignment(assignment))
+        cur = f(te.under_assignment(assignment, track_all_names=True))
         if cur == True:
             if found is None:
                 found = elem

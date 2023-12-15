@@ -2,7 +2,7 @@ from numbers import Number
 import re
 
 from lamb import display, types, utils
-from lamb.types import TypeMismatch
+from lamb.types import TypeMismatch, BasicType
 
 # code for manipulation and normalization of TypedExprs.
 # this is imported by .core
@@ -413,10 +413,14 @@ def variable_replace_strict(expr, m):
         return result
     return variable_transform(expr, m.keys(), transform)
 
-def term_replace_unify(expr, m):
+def term_replace_unify(expr, m, track_all_names=False):
     from .core import TypedExpr, ts_unify_with
     def transform(e):
         result = TypedExpr.factory(m[e.op])
+        if result.meta() and e.constant or track_all_names:
+            # XX revisit exact conditions under which this is set.
+            # should be impossible for e to be a MetaTerm here
+            result.assignment_name = e
         if result.type != e.type:
             # note: error reporting from here has a different order than the
             # raise below, so we handle it manually... (unclear to me if this
@@ -426,7 +430,7 @@ def term_replace_unify(expr, m):
                 raise TypeMismatch(e, result,
                         error="Variable replace failed with mismatched types")
             if unify == e.type: # unify gives us back e.  Can we return e?
-                if result.term() and result.op == e.op:
+                if result.term() and not result.meta() and result.op == e.op:
                     return e
                 else:
                     return result
@@ -436,7 +440,7 @@ def term_replace_unify(expr, m):
                 result = result.try_adjust_type(unify, assignment=m)
                 return result
         else:
-            if result.term() and result.op == e.op:
+            if result.term() and not result.meta() and result.op == e.op:
                 return e
             else:
                 return result
