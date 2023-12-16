@@ -650,8 +650,6 @@ class DerivationStep(object):
 
     def result_str(self, latex=False):
         if latex:
-            if self.trivial:
-                return "..."
             if isinstance(self.result, list) or isinstance(self.result, tuple):
                 # assumption: sequence of typed exprs
                 return f"[{', '.join([x.latex_str() for x in self.result])}]"
@@ -676,6 +674,8 @@ class DerivationStep(object):
     def origin_str(self, latex=False):
         if len(self.origin) == 1:
             if latex:
+                if self.trivial:
+                    return "..."
                 if isinstance(self.origin[0], list) or isinstance(self.origin[0], tuple):
                     # assumption: sequence of typed exprs
                     return f"[{', '.join([x.latex_str() for x in self.origin[0]])}]"
