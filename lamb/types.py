@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
-import sys, re, random, collections.abc, math, functools
+import sys, re, random, collections.abc, math, functools, itertools
 from numbers import Number
 from lamb import utils, parsing
 from lamb.utils import *
@@ -76,6 +76,10 @@ class DomainSet(collections.abc.Container):
             raise NotImplementedError(
                 "Can't iterate over an abstract infinite set")
 
+    def enumerable(self):
+        # by default, conflate enumerability with finiteness
+        return self.finite
+
     def infcheck(self, x):
         """Does `x` meet the criteria for being a member of a set if infinite?"""
         raise NotImplementedError(
@@ -147,6 +151,9 @@ class SimpleInfiniteSet(DomainSet):
             yield f"_{self.prefix}{i}"
             i += 1
 
+    def enumerable(self):
+        return True
+
     def random(self, limit=None):
         if limit is None:
             # python 3 has no maxint, this is semi-arbitrary
@@ -193,6 +200,9 @@ class SimpleNumericSet(DomainSet):
             yield i
             yield -i
 
+    def enumerable(self):
+        return True
+
     def random(self, limit=None):
         # this will only return ints...is that a problem?
         if limit is None:
@@ -211,8 +221,9 @@ def is_type(x):
 # domain set handling for complex types, e,g, <(e,e),t> etc. that can't be
 # pre-constructed (there is a non-finite set of these).
 class ComplexDomainSet(SimpleInfiniteSet):
-    def __init__(self, prefix, typ):
+    def __init__(self, prefix, typ, finite=False):
         super().__init__(prefix, typ=typ)
+        self.finite = finite
 
     def __iter__(self):
         raise NotImplementedError(
@@ -222,6 +233,13 @@ class ComplexDomainSet(SimpleInfiniteSet):
         """Does `x` meet the criteria for being a member of a set if infinite?"""
         raise NotImplementedError(
             "Can't check membership for an abstract complex domain set")
+
+    def check(self,x):
+        # don't use regular membership checking even for finite sets of this class
+        return self.infcheck(demeta(x))
+
+    def enumerable(self):
+        return False
 
     def element_repr(self, x, rich=False):
         preprefix = (not rich) and "_" or ""
@@ -447,7 +465,9 @@ class BasicType(TypeConstructor):
 
 class FunDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        super().__init__("Fun", typ)
+        finite = (isinstance(typ.left.domain, DomainSet) and typ.left.domain.finite
+                    and isinstance(typ.left.domain, DomainSet) and typ.left.domain.finite)
+        super().__init__("Fun", typ, finite=finite)
 
     def infcheck(self, x):
         # XX variable types
@@ -464,6 +484,26 @@ class FunDomainSet(ComplexDomainSet):
         else:
             # XX allow some sort of actual python function here
             return False
+
+    def __len__(self):
+        if not self.finite:
+            raise ValueError("Non-finite `FunDomainSet`s do not have a length.")
+        else:
+            return len(self.type.right.domain) ** len(self.type.left.domain)
+
+    def __iter__(self):
+        if not self.finite:
+            raise ValueError("Can't iterate over non-finite `FunDomainSet`s.")
+        # careful with this -- it can definitely blow up!
+        # XX like a bunch of other code, this will raise on types like
+        # <<t,t>,t> because dict is not hashable...
+        dom = list(self.type.left.domain)
+        for p in itertools.product(self.type.right.domain, repeat=len(dom)):
+            yield dict(list(zip(dom, p)))
+
+    def enumerable(self):
+        # only the finite case is supported right now...
+        return self.finite
 
     def __repr__(self):
         return f"FunDomainSet({self.type})"
@@ -701,7 +741,8 @@ class SetType(TypeConstructor):
 
 class TupleDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        super().__init__("Tuple", typ)
+        finite = all(isinstance(t.domain, DomainSet) and t.domain.finite for t in typ)
+        super().__init__("Tuple", typ, finite=finite)
 
     def infcheck(self, x):
         if isinstance(x, collections.abc.Sequence) and not isinstance(x, str):
@@ -710,6 +751,21 @@ class TupleDomainSet(ComplexDomainSet):
             return all(x[i] in self.type[i].domain for i in range(len(self.type)))
         else:
             return False
+
+    def __len__(self):
+        if not self.finite:
+            raise ValueError("Non-finite `TupleDomainSet`s do not have a length.")
+        else:
+            return functools.reduce(lambda x, y: x*y, (len(t.domain) for t in self.type))
+
+    def __iter__(self):
+        domains = (t.domain for t in self.type)
+        for p in itertools.product(*domains):
+            yield p
+
+    def enumerable(self):
+        # the non-finite case is not supported for now
+        return self.finite
 
     def element_repr(self, x, rich=False):
         return f"({','.join(self.type[i].domain.element_repr(x[i], rich=rich) for i in range(len(x)))})"
