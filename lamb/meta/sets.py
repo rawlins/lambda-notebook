@@ -258,7 +258,9 @@ class ListedSet(TypedExpr):
         if isinstance(domain, types.DomainSet) and domain.finite and args > domain.domain:
             # if every domain element is present in `args`, drop extraneous
             # elements. E.g. `{True, False, p_t}` simplifies to just {True, False}.
-            args = args & domain.domain
+            # sadly, we can't rely on & here; since domain elements are not
+            # MetaTerms, it can result in non-MetaTerms in args.
+            args = {a for a in args if a in domain.domain}
         args = sorted(args, key=alphanorm_key) # for a canonical ordering
         result = self.copy_local(*args)
         result.set_simplified = True
