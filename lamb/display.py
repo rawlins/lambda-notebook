@@ -570,13 +570,13 @@ class LRDerivationDisplay(HTMLNodeDisplay):
             else:
                 counter = "%2d. " % (i + self.start)
             subelement_with_text(row, "div", text=counter,
-                style="display:table-cell;padding-right:5px;vertical-align:bottom;")
+                style="display:table-cell;padding:0.2em 5px 0.2em 0px;vertical-align:top;")
             kwargs["parent_table"] = row
             result = to_html(parts[i], style=kwargs)
             if result is not row:
                 # otherwise, the to_html call has already done the appending
                 sub_cell = SubElement(row, "div",
-                    style="display:table-cell; vertical-align:bottom;padding-left:5px;padding-right:5px;")
+                    style="display:table-cell; vertical-align:top;padding-left:5px;padding-right:5px;")
                 sub_cell.append(result)
         return e
 
@@ -589,11 +589,11 @@ class LRDerivationDisplay(HTMLNodeDisplay):
                 style=("display:table;" + self.border_style(**kwargs)))
         if content is not None:
             content_cell = SubElement(e, "div",
-                style="display:table-cell;vertical-align:bottom;border-right:1px solid #848482;padding-right:5px;")
+                style="display:table-cell;vertical-align:top;border-right:1px solid #848482;padding-right:5px;;padding-top:0.2em")
             content_cell.append(self.render_content(content, **kwargs))
         if explanation is not None or len(parts):
             expl_cell = SubElement(e, "div",
-                style="display:table-cell;vertical-align:bottom;padding-left:5px;padding-right:5px;padding-top:0.5em")
+                style="display:table-cell;vertical-align:top;padding-left:5px;padding-right:5px;padding-top:0.2em")
             sub_table = SubElement(expl_cell, "div", style="display:table;")
             if explanation is not None:
                 expl_row = SubElement(sub_table, "div",
@@ -601,7 +601,7 @@ class LRDerivationDisplay(HTMLNodeDisplay):
                 expl_row.append(self.render_explanation(explanation, **kwargs))
             if len(parts):
                 parts_row = SubElement(sub_table, "div",
-                    style="display:table-row;vertical-align:bottom;")
+                    style="display:table-row;vertical-align:top;")
                 parts_row.append(self.render_parts(parts, **kwargs))
         return e
 

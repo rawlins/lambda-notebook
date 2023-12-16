@@ -341,10 +341,17 @@ class ForallUnary(BindingOp):
                 # XX should this call simplify_all or something more targeted?
                 cur = self[1].under_assignment(a, track_all_names=True).simplify_all(**sopts)
                 if cur == False:
+                    if cur.derivation:
+                        reason = f"counterexample for ∀{self.varname}"
+                    else:
+                        # no subderivation to show the counterexample; show it
+                        # directly
+                        reason = f"counterexample for ∀{self.varname} ({self.varname}={elem})"
                     return derived(false_term, self,
-                        f"counterexample for ∀{self.varname}",
+                        reason,
                         subexpression=cur,
-                        force_on_recurse=True)
+                        force_on_recurse=True,
+                        note=a[self.varname])
                 elif cur == True:
                     continue
                 else:
@@ -408,11 +415,19 @@ class ExistsUnary(BindingOp):
                 if cur == False:
                     continue
                 elif cur == True:
+                    if cur.derivation:
+                        reason = f"verifier for ∃{self.varname}"
+                    else:
+                        # no subderivation to show the verifier; show it
+                        # directly
+                        reason = f"verifier for ∃{self.varname} ({self.varname}={elem})"
+
                     return derived(true_term,
                         self,
-                        f"verifier for ∃{self.varname}",
+                        reason,
                         subexpression=cur,
-                        force_on_recurse=True)
+                        force_on_recurse=True,
+                        note=a[self.varname])
                 else:
                     # somehow, failed to simplify...
                     return self
@@ -421,7 +436,7 @@ class ExistsUnary(BindingOp):
             generic_body = deriv_generic(cur,
                 self[1].under_assignment(a).simplify_all(**sopts),
                 self.varname)
-            return derived(false_term, self, "no verifiers for ∃",
+            return derived(false_term, self, f"no verifiers for ∃{self.varname}",
                 subexpression=generic_body,
                 force_on_recurse=True)
 
@@ -475,9 +490,9 @@ class ExistsExact(BindingOp):
         var1 = self[0].copy()
         var2 = TypedTerm(self[1].find_safe_variable(starting=self.varname), typ=var1.type)
         fun = LFun(var1.copy(), self[1])
-        result = ExistsUnary(var1, fun(var1) & ForallUnary(var2, fun(var2) >> var1.equivalent_to(var2)))
+        result = ExistsUnary(var1, fun.apply(var1) & ForallUnary(var2, fun.apply(var2) >> var1.equivalent_to(var2)))
         result = derived(result, self, "∃! elimination")
-        return result.reduce_all()
+        return result
 
     def simplify(self, **sopts):
         if not self.varname in self.body.free_variables():
@@ -502,7 +517,8 @@ class ExistsExact(BindingOp):
                 return derived(true_term, self,
                         f"unique verifier for ∃!{self.varname}",
                         subexpression=sub,
-                        force_on_recurse=True)
+                        force_on_recurse=True,
+                        note=verifier)
             elif counterexample is not None:
                 # XX this derivation is a bit clunky
                 r = derived(false_term, self,
@@ -513,7 +529,8 @@ class ExistsExact(BindingOp):
                         f"counterexample for ∃!{self.varname}",
                         subexpression=sub[1],
                         force_on_recurse=True,
-                        allow_trivial=True)
+                        allow_trivial=True,
+                        note=counterexample) # store both as a tuple in the note field
             else:
                 if sub is not None:
                     a[self.varname] = self[0]
@@ -522,7 +539,7 @@ class ExistsExact(BindingOp):
                         self.varname)
                 else:
                     generic_body = None
-                return derived(false_term, self, f"no verifiers for ∃!",
+                return derived(false_term, self, f"no verifiers for ∃!{self.varname}",
                     subexpression=generic_body,
                     force_on_recurse=True)
         return self
@@ -622,7 +639,7 @@ class IotaPartial(IotaUnary):
         if self.varname in new_condition.free_variables():
             new_condition = ExistsExact(self.var_instance, new_condition)
         return derived(Partial(new_body, new_condition), self,
-                                                    "Partiality (Iota)")
+                                                    "Partiality (Iota expansion)")
 
     def simplify(self, **sopts):
         # it's part of the semantics that this converts to a completely

@@ -853,7 +853,7 @@ class TypedExpr(object):
         return result
 
     def name_of(self, i):
-        return f"operand {i}"
+        return f"subexpression {i}"
 
     @classmethod
     def parse(cls, s, assignment=None, locals=None):
@@ -1540,8 +1540,7 @@ class TypedExpr(object):
             new_arg_i = result.args[i].simplify_all(**sopts)
             if new_arg_i is not result.args[i]:
                 result = derived(result.subst(i, new_arg_i), result,
-                    desc=("Recursive simplification of subexpression %i"
-                            % i),
+                    desc=f"Recursive simplification of {result.name_of(i)}",
                     subexpression=new_arg_i)
         return result.simplify(**sopts)
 
@@ -2751,6 +2750,9 @@ class SyncatOpExpr(TypedExpr):
         factory."""
         # TODO: is this necessary?
         return op_expr_factory(self.op, *args)
+
+    def name_of(self, i):
+        return f"operand {i}"
 
     def _repr_pretty_(self, p, cycle):
         if cycle:

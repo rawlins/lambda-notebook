@@ -1,5 +1,5 @@
 from numbers import Number
-import re
+import re, collections
 
 from lamb import display, types, utils
 from lamb.types import TypeMismatch, BasicType
@@ -248,7 +248,9 @@ def multisimplify(e, simplify_fun = None,
             if old != es[i]:
                 desc = ""
                 if es[i].derivation and len(es[i].derivation) > 1:
-                    desc = f"Recursive simplification of subexpression {i}"
+                    # XX this is an abusive of the lack of bounds checking for
+                    # name_of...
+                    desc = f"Recursive simplification of {e.name_of(i)}"
                 derivation.add_step(DerivationStep(intermediate(es),
                             desc=desc,
                             subexpression=es[i]))
@@ -303,9 +305,10 @@ def multisimplify(e, simplify_fun = None,
         # if there were no changes, or the simplify calls don't implement
         # derivational history
         need_join_step = False
-    elif len(derivation) == first_step + 1 and not initial_deriv_trivial:
-        # only change to be shown is from collect/alphanorm, so collapse the
-        # collect and join steps
+    elif (len(derivation) == first_step + 1 and not initial_deriv_trivial
+                or len(es) == 1):
+        # only change to be shown is from collect/alphanorm, or the join step
+        # goes from [x] to x, so collapse the last step
         derivation[-1].result = result
         need_join_step = False
 
@@ -313,7 +316,7 @@ def multisimplify(e, simplify_fun = None,
         # XX does this work for all relevant classes?
         symbol = cls.op_name_uni and cls.op_name_uni or cls.canonical_name
         derivation.add_step(DerivationStep(result, desc=f"join on {symbol}"))
-    
+
     if len(derivation) == 0:
         # no non-trivial derivational steps at all, just wipe the object
         derivation = None
@@ -583,8 +586,9 @@ def is_var_symbol(s):
 
 class DerivationStep(object):
     """A single step of a derivation."""
-    def __init__(self, result,  desc=None, origin=None, latex_desc=None,
-                                        subexpression=None, trivial=False):
+    def __init__(self, result,
+                    desc=None, origin=None, latex_desc=None, note=None,
+                    subexpression=None, trivial=False):
         self.result = result
         self.subexpression = subexpression
         if desc is None:
@@ -600,6 +604,8 @@ class DerivationStep(object):
                 self.latex_desc = latex_desc
         self.set_origin(origin)
         self.trivial = trivial
+        self.i = None
+        self.note = note
 
     def set_origin(self, origin):
         from .core import is_te
@@ -624,6 +630,18 @@ class DerivationStep(object):
         return DerivationStep(self.result, desc=self.desc, origin=self.origin,
             latex_desc=self.latex_desc, subexpression=self.subexpression,
             trivial=self.trivial)
+
+    def __iter__(self):
+        return iter((self.get_origin(), self.result))
+
+    def __len__(self):
+        return 2
+
+    def __getitem__(self, i):
+        if i is None:
+            return self
+        return (self.get_origin(), self.result)[i]
+
 
     def force_on_recurse(self):
         if (self.subexpression is not None
@@ -652,13 +670,15 @@ class DerivationStep(object):
                 and self.subexpression is not None and self.subexpression.derivation
                 and self.subexpression.derivation.can_collapse()):
             subdesc, subsubexp = self.subexpression.derivation.collapsed_desc(latex=latex)
-            return (self.result_str(latex=latex), subdesc, subsubexp)
-            # return (self.result_str(latex=latex), subdesc, self.subexpression)
-        return (self.result_str(latex=latex), self.desc_str(latex=latex), self.subexpression)
+            return (self.origin_str(latex=latex), subdesc, subsubexp)
+        return (self.origin_str(latex=latex), self.desc_str(latex=latex), self.subexpression)
 
     def origin_str(self, latex=False):
         if len(self.origin) == 1:
             if latex:
+                if isinstance(self.origin[0], list) or isinstance(self.origin[0], tuple):
+                    # assumption: sequence of typed exprs
+                    return f"[{', '.join([x.latex_str() for x in self.origin[0]])}]"
                 return self.origin[0].latex_str(suppress_parens=True)
             else:
                 return repr(self.origin[0])
@@ -670,6 +690,11 @@ class DerivationStep(object):
                     (" + ".join([o.latex_str() for o in self.origin])) + ")")
             else:
                 return "(" + (" + ".join([repr(o) for o in self.origin])) + ")"
+
+    def _repr_html_(self):
+        d = Derivation()
+        d.add_step(self.copy())
+        return d.build_display_tree(recurse=True, start_index=self.i)._repr_html_()
 
     def __repr__(self):
         return ("[DerivationStep origin: "
@@ -683,7 +708,7 @@ class DerivationStep(object):
 class Derivation(object):
     """A derivation sequence, consisting of DerivationSteps."""
 
-    max_display_steps = 100
+    max_display_steps = 50
 
     def __init__(self, steps=None, origin=None):
         self.steps = list()
@@ -698,6 +723,15 @@ class Derivation(object):
         else:
             self.result = None
         self.force_on_recurse = False
+
+    @property
+    def note(self):
+        # return the last note, if any
+        # XX if this field ever gets more use, need an api for getting them all
+        for i in range(len(self.steps)-1, -1, -1):
+            if self[i].note is not None:
+                return self[i].note
+        return None
 
     def last(self):
         if len(self.steps):
@@ -718,6 +752,8 @@ class Derivation(object):
             cur_last = self.last()
             self.steps.extend(steps)
             if not self.steps[end].origin:
+                if isinstance(cur_last, list) or isinstance(cur_last, tuple):
+                    cur_last = [cur_last]
                 self.steps[end].set_origin(cur_last) # may be None
             if end == 0 and self.origin is None:
                 # first step(s), still empty origin: copy an origin (if any)
@@ -732,7 +768,20 @@ class Derivation(object):
         return len(self.steps)
 
     def __getitem__(self, i):
-        return self.steps[i]
+        if i is None:
+            return self
+        if isinstance(i, collections.abc.Sequence):
+            return self.resolve_path(i)
+        if i == len(self):
+            return self[i - 1].result
+        v = self.steps[i]
+        if isinstance(v, collections.abc.Sequence):
+            # should be a sequence of DerivationSteps
+            # Note: this case returns a list, so has no rich repr..
+            v[0].i = i
+        else:
+            v.i = i
+        return v
 
     def __delitem__(self, i):
         if i + 1 < len(self):
@@ -787,17 +836,16 @@ class Derivation(object):
         subselect = self.steps[index]
         # XX include step number here, not in display code?
         if len(subselect) > 0:
-            l.append((subselect[0].origin_str(latex), None, None))
             for i in range(len(subselect)):
                 # assume that origin matches previous result.  Could check this.
                 if subselect[i].trivial and ignore_trivial:
                     continue
                 l.append(subselect[i].unpack_for_display(latex=latex, all_recursion=all_recursion))
-        if trimmed:
-            l.append((f"... {requested_stop - index.stop} steps omitted ...", "", None))
-            l.append(self.steps[requested_stop].unpack_for_display(
-                                            latex=latex,
-                                            all_recursion=all_recursion))
+            if trimmed:
+                l.append((f"... {requested_stop - index.stop} steps omitted ...", "", None))
+                l.append((self.steps[requested_stop].result_str(latex), None, None))
+            else:
+                l.append((subselect[-1].result_str(latex), None, None))
         return l
 
     def equality_display(self, content, style=None):
@@ -808,7 +856,8 @@ class Derivation(object):
         return n
 
     def build_display_tree(self, index=None, recurse=False, parent=None,
-                                reason=None, all_recursion=False, style=None):
+                                reason=None, all_recursion=False, style=None,
+                                start_index=None):
         if all_recursion:
             recurse = True
         defaultstyle = {"align": "left"}
@@ -818,7 +867,9 @@ class Derivation(object):
         elif isinstance(index, int):
             index = slice(index, index + 1)
 
-        node_style = display.LRDerivationDisplay(start=index.start, **style)
+        if start_index is None:
+            start_index = index.start
+        node_style = display.LRDerivationDisplay(start=start_index, **style)
         l = self.steps_sequence(index=index, latex=True, all_recursion=all_recursion)
         parts = list()
         for (expr, subreason, subexpression) in l:
@@ -845,6 +896,25 @@ class Derivation(object):
             parts = None
         return display.DisplayNode(content=parent, explanation=reason,
                                                 parts=parts, style=node_style)
+
+    def _resolve_path(self, index):
+        if index is None or index == ():
+            return self, None
+        elif isinstance(index, slice) or isinstance(index, int):
+            return self, index
+        elif len(index) == 1:
+            return self, index[0]
+        else:
+            sub = self[index[0]].subexpression
+            if sub is None:
+                raise IndexError(f"No subexpression at index {index}")
+            if sub.derivation is None:
+                raise IndexError(f"No subexpression derivation at index {index}")
+            return sub.derivation._resolve_path(index[1:])
+
+    def resolve_path(self, index):
+        d, sl = self._resolve_path(index)
+        return d[sl]
 
     def trace(self, index=None, recurse=True, style=None, all_recursion=False):
         return self.build_display_tree(index=index, recurse=recurse, style=style, all_recursion=all_recursion)
@@ -879,18 +949,19 @@ class Derivation(object):
 
 
 def derivation_factory(result, desc=None, latex_desc=None, origin=None,
-                                steps=None, subexpression=None, trivial=False):
+                                steps=None, subexpression=None, trivial=False,
+                                note=None):
     """Convenience factory function for `Derivation`s, that populates it with
     an initial step determined by the parameters."""
     drv = Derivation(steps)
     # note: will make a copy of the derivation if steps is one; may be better to have something more efficient in the long run
-    drv.add_step(DerivationStep(result, desc=desc, origin=origin,
+    drv.add_step(DerivationStep(result, desc=desc, origin=origin, note=note,
                 latex_desc=latex_desc, subexpression=subexpression, trivial=trivial))
     return drv
 
-def derived(result, origin, desc=None, latex_desc=None, subexpression=None,
-                                                        allow_trivial=False,
-                                                        force_on_recurse=False):
+def derived(result, origin,
+            desc=None, latex_desc=None, subexpression=None, note=None,
+            allow_trivial=False, force_on_recurse=False):
     """Convenience function to return a derived TypedExpr while adding a
     derivational step. Always return result, adds or updates its derivational
     history as a side effect."""
@@ -926,12 +997,13 @@ def derived(result, origin, desc=None, latex_desc=None, subexpression=None,
                                                    origin=origin,
                                                    steps=d,
                                                    subexpression=subexpression,
-                                                   trivial=trivial)
+                                                   trivial=trivial,
+                                                   note=note)
     if force_on_recurse:
         result.derivation[-1].force_on_recurse()
     return result
 
-def add_derivation_step(te, result, origin, desc=None, latex_desc=None,
+def add_derivation_step(te, result, origin, desc=None, latex_desc=None, note=None,
                                     subexpression=None, allow_trivial=False):
     trivial = False
     if result == origin: # may be inefficient?
@@ -948,7 +1020,8 @@ def add_derivation_step(te, result, origin, desc=None, latex_desc=None,
                                                origin=origin,
                                                steps=d,
                                                subexpression=subexpression,
-                                               trivial=trivial)
+                                               trivial=trivial,
+                                               note=note)
     return te
 
 def add_subexpression_step(te, subexpr, desc=None, latex_desc=None):
