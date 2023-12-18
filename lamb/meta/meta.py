@@ -487,25 +487,21 @@ def truthtable(e, max_terms=12, simplify=False, extract=False):
                     display_assignment=a)
 
 
-def truthtable_equiv(e1, e2, simplify=True, max_terms=12):
+def truthtable_equiv(e1, e2, simplify=True):
     """Are e1 and e2 equivalent in terms of evaluation on a truth-table?
 
     e1 and e2 must be propositional. This supports formulas with complex
     propositional elements, but they will be compared on syntactic equivalence
     only."""
-    if simplify:
-        e1 = e1.simplify_all(reduce=True)
-        e2 = e2.simplify_all(reduce=True)
-    result, assignment = extract_boolean(e1, e2)
-    # display(truthtable(result[0]), truthtable(result[1]))
-    return truthtable(result[0], max_terms=max_terms) == truthtable(result[1],
-                        max_terms=max_terms)
+
+    return truthtable_valid(e1.equivalent_to(e2), simplify=simplify)
 
 
 def truthtable_valid(e, simplify=True):
     if simplify:
         e = e.simplify_all(reduce=True)
     result, assignment = extract_boolean(e)
+    # display(truthtable(result[0]))
     return all((eval[1] == True) for eval in truthtable(result[0]))
 
 
