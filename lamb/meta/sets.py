@@ -90,7 +90,7 @@ class ConditionSet(BindingOp):
         if self[0].type.domain.finite and not self.free_terms():
             a = self.scope_assignment()
             sopts['evaluate'] = True
-            subs = [elem
+            subs = [MetaTerm(elem, typ=self[0].type)
                     for elem in self[0].type.domain
                     if self[1]
                             .under_assignment(a | {self.varname : elem})
@@ -255,7 +255,9 @@ class ListedSet(TypedExpr):
             return self
         args = set(self.args) # remove duplicates, flatten order
         domain = self.type.content_type.domain
-        if isinstance(domain, types.DomainSet) and domain.finite and args > domain.domain:
+        # assumption: there is no truly empty domain, so if domain.domain is
+        # empty, it is not actually in use.
+        if isinstance(domain, types.DomainSet) and domain.finite and domain.domain and args > domain.domain:
             # if every domain element is present in `args`, drop extraneous
             # elements. E.g. `{True, False, p_t}` simplifies to just {True, False}.
             # sadly, we can't rely on & here; since domain elements are not

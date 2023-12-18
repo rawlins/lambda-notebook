@@ -161,7 +161,7 @@ class SimpleInfiniteSet(DomainSet):
         return f"_{self.prefix}{random.randint(0,limit)}"
 
     def __repr__(self):
-        return f"SimpleInfiniteSet('{self.prefix}'')"
+        return f"SimpleInfiniteSet('{self.prefix}')"
 
     @classmethod
     def element_to_type(cls, x, ctrl):
@@ -499,7 +499,7 @@ class FunDomainSet(ComplexDomainSet):
         # <<t,t>,t> because dict is not hashable...
         dom = list(self.type.left.domain)
         for p in itertools.product(self.type.right.domain, repeat=len(dom)):
-            yield dict(list(zip(dom, p)))
+            yield utils.frozendict(list(zip(dom, p)))
 
     def enumerable(self):
         # only the finite case is supported right now...

@@ -1,4 +1,5 @@
 import sys, re, html
+import collections.abc
 from numbers import Number
 
 global tree_error_printed
@@ -292,3 +293,40 @@ def nltk_tree_wrapper(t):
         pass
 
     return tree
+
+# a minimal frozendict implementation, to support type domains that need a hashable
+# function representation. There's lots of bells and whistles one could add
+# here, but at the moment I don't see the need.
+class frozendict(collections.abc.Mapping):
+    def __init__(self, mapping):
+        if isinstance(mapping, frozendict):
+            self._store = mapping._store
+            self._hash = mapping._hash
+        else:
+            if not isinstance(mapping, dict):
+                # handles the case where mapping is a sequence
+                mapping = dict(mapping)
+            self._store = mapping
+            self._hash = None
+
+    def compute_hash(self):
+        # This is *a* hash function, but I really have no idea if it's any good.
+        # could it be better to just use the two lists without zipping?
+        self._hash = hash(zip(list(self._store.keys()), list(self._store.values())))
+
+    def __hash__(self):
+        if self._hash is None:
+            self.compute_hash()
+        return self._hash
+
+    def __getitem__(self, k):
+        return self._store[k]
+
+    def __len__(self):
+        return len(self._store)
+
+    def __iter__(self):
+        return iter(self._store)
+
+    def __repr__(self):
+        return f"frozendict({repr(self._store)})"

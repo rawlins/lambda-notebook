@@ -2872,6 +2872,11 @@ def from_python(p, typ=None):
         # this will raise if there is no known type domain for python objects
         # of p's type
         from .meta import MetaTerm
+        # should these cases be handled in MetaTerm?
+        if isinstance(p, collections.abc.Mapping):
+            p = utils.frozendict(p)
+        elif isinstance(p, collections.abc.Set):
+            p = frozenset(p)
         return MetaTerm(p, typ=typ)
 
 
