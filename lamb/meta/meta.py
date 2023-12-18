@@ -239,23 +239,74 @@ def is_propositional(e):
 # TODO: run these with time-based timeouts, rather than heuristic maxes
 # TODO: there might be faster ways to do this with numpy arrays + broadcasting
 
-# warning, exponential in both time and space in the size of l...
-def all_boolean_combos(l, cur=None, max_length=20):
+def combinations_gen(l, elems):
+    for c in itertools.product(elems, repeat=len(l)):
+        yield dict(zip(l, c))
+
+# the following code is essentially calculating
+# `list(combinations_gen(terms, elems))`. Unfortunately, doing this the compact
+# way is noticeably inefficient. In fact, unfortunately, I haven't
+# even been able to get a generator version that is as fast as the following
+# code (I guess because of yield overhead?)
+#
+# >>> s = list('abcdefghijklmnopqrstuv')
+# >>> %time x = combos(s, (False, True), max_length=100)
+# >>> %time x = list(combinatsion_gen(s, (False, True)))
+# CPU times: user 1.04 s, sys: 282 ms, total: 1.32 s
+# Wall time: 1.33 s
+# CPU times: user 3.65 s, sys: 242 ms, total: 3.89 s
+# Wall time: 3.97 s
+
+# warning, exponential in both time and space in the size of `terms`...
+def combinations(terms, elems, max_length=20):
     # 20 here is somewhat arbitrary: it's about where exponential blowup gets
-    # noticeable on a reasonably fast computer
-    if len(l) > max_length:
-        raise ValueError(f"Tried to calculate boolean combos for an overlong sequence: {repr(e)}")
-    if cur is None:
-        cur = dict()
-    if len(l) == 0:
-        return [cur]
-    remainder = l[1:]
-    # note: if `MetaTerm`s can ever show up in l, they need to be handled here
-    cur_false = cur.copy()
-    cur[l[0]] = True
-    cur_false[l[0]] = False
-    # false first for better sort order
-    return all_boolean_combos(remainder, cur_false) + all_boolean_combos(remainder, cur)
+    # noticeable on a reasonably fast computer with two elems
+    # XX should factor in elems
+    if len(terms) > max_length:
+        raise ValueError(f"Tried to calculate combinations for an overlong sequence: {repr(terms)}")
+    if not elems:
+        raise ValueError("Can't produce value combinations without elements")
+    if not terms:
+        return [{}]
+    if len(elems) == 1:
+        # this case is very simple, return early
+        return {t: elems[0] for t in terms}
+    stop = len(terms) - 1
+    elem_range = range(len(elems) - 2)
+    # now we can assume 2+ elems
+    last_elem = elems[-1]
+    last2_elem = elems[-2]
+    g = []
+    def combos_r(i, accum):
+        if elem_range:
+            for j in elem_range:
+                branch = accum.copy()
+                branch[terms[i]] = elems[j]
+                if i < stop:
+                    combos_r(i + 1, branch)
+                else:
+                    g.append(branch)
+        # unroll two iterations. Doing this gets a non-trivial speedup for
+        # large term lists, partly from the unrolling, partly from not copying
+        # for the last accum, and partly from the precalculation of the element
+        # values rather than accessing from elems. Doing this is essentialy an
+        # optimization for the boolean case.
+        branch = accum.copy()
+        branch[terms[i]] = last2_elem
+        accum[terms[i]] = last_elem
+        if i < stop:
+            combos_r(i + 1, branch)
+            combos_r(i + 1, accum)
+        else:
+            g.append(branch)
+            g.append(accum)
+
+    combos_r(0, dict())
+    return g
+
+
+def all_boolean_combos(l, cur=None, max_length=20):
+    return combinations(l, (False, True), max_length=max_length)
 
 
 def sorted_term_names(e, var_map = None):
