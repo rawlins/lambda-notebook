@@ -312,7 +312,8 @@ class frozendict(collections.abc.Mapping):
     def compute_hash(self):
         # This is *a* hash function, but I really have no idea if it's any good.
         # could it be better to just use the two lists without zipping?
-        self._hash = hash(zip(list(self._store.keys()), list(self._store.values())))
+        # note: this requires all values to be hashable types...
+        self._hash = hash(tuple(zip(self._store.keys(), self._store.values())))
 
     def __hash__(self):
         if self._hash is None:
