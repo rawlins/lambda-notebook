@@ -312,9 +312,9 @@ class ForallUnary(BindingOp):
     def copy_local(self, var, arg, type_check=True):
         return ForallUnary(var, arg, type_check=type_check)
 
-    def to_conjunction(self):
+    def to_conjunction(self, assignment=None):
         if self[0].type.domain.finite:
-            a = self.scope_assignment()
+            a = self.scope_assignment(assignment=assignment)
             subs = [self[1].under_assignment(a | {self.varname : MetaTerm(elem)})
                     for elem in self[0].type.domain]
             return derived(BinaryAndExpr.join(subs, empty=True),
@@ -322,10 +322,10 @@ class ForallUnary(BindingOp):
                 f"∀{self.varname} => ∧")
         return self
 
-    def eliminate(self, **sopts):
-        return self.to_conjunction()
+    def eliminate(self, assignment=None, **sopts):
+        return self.to_conjunction(assignment=assignment)
 
-    def simplify(self, **sopts):
+    def simplify(self,assignment=None, **sopts):
         # note: not valid if the domain of individuals is completely empty
         # (would return True). We are therefore assuming that this case is
         # ruled out a priori.
@@ -333,8 +333,11 @@ class ForallUnary(BindingOp):
             return derived(self.body.copy(), self, "trivial ∀ elimination")
         elif self.type.domain.cardinality() == 0:
             return derived(true_term, self, "∀ triviality with empty domain")
-        elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.enumerable():
-            a = self.scope_assignment()
+        elif (get_sopt('evaluate', sopts)
+                    and not self.free_terms()
+                    and self[0].type.domain.enumerable()
+                    and self[0].type.domain.finite):
+            a = self.scope_assignment(assignment=assignment)
             for elem in self[0].type.domain:
                 a[self.varname] = MetaTerm(elem)
                 # XX how to handle OutOfDomain
@@ -385,9 +388,9 @@ class ExistsUnary(BindingOp):
     def copy_local(self, var, arg, type_check=True):
         return ExistsUnary(var, arg, type_check=type_check)        
 
-    def to_disjunction(self):
-        if self[0].type.domain.enumerable():
-            a = self.scope_assignment()
+    def to_disjunction(self, assignment=None):
+        if self[0].type.domain.enumerable() and self[0].type.domain.finite:
+            a = self.scope_assignment(assignment=assignment)
             subs = [self[1].under_assignment(a | {self.varname : MetaTerm(elem)})
                     for elem in self[0].type.domain]
             return derived(BinaryOrExpr.join(subs, empty=False),
@@ -395,10 +398,10 @@ class ExistsUnary(BindingOp):
                 f"∃{self.varname} => ∨")
         return self
 
-    def eliminate(self, **sopts):
-        return self.to_disjunction()
+    def eliminate(self, assignment=None, **sopts):
+        return self.to_disjunction(assignment=assignment)
 
-    def simplify(self, **sopts):
+    def simplify(self, assignment=None, **sopts):
         if not self.varname in self.body.free_variables():
             # note: not valid if the domain is completely empty.
             # it's a bit silly to check for this, but let's be exact:
@@ -406,8 +409,11 @@ class ExistsUnary(BindingOp):
                 return derived(false_term, self, "∃ triviality with empty domain")
             else:
                 return derived(self.body.copy(), self, "trivial ∃ elimination")
-        elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.enumerable():
-            a = self.scope_assignment()
+        elif (get_sopt('evaluate', sopts)
+                    and not self.free_terms()
+                    and self[0].type.domain.enumerable()
+                    and self[0].type.domain.finite):
+            a = self.scope_assignment(assignment=assignment)
             for elem in self[0].type.domain:
                 a[self.varname] = MetaTerm(elem)
                 # XX how to handle OutOfDomain
@@ -494,7 +500,7 @@ class ExistsExact(BindingOp):
         result = derived(result, self, "∃! elimination")
         return result
 
-    def simplify(self, **sopts):
+    def simplify(self, assignment=None, **sopts):
         if not self.varname in self.body.free_variables():
             # even sillier to check for than the ∃ case...
             c = self.type.domain.cardinality()
@@ -503,14 +509,17 @@ class ExistsExact(BindingOp):
             else:
                 reason = c == 0 and "empty domain" or "cardinality > 1"
                 return derived(false_term, self, f"∃! triviality ({reason})")
-        elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.enumerable():
-            a = self.scope_assignment()
+        elif (get_sopt('evaluate', sopts)
+                        and not self.free_terms()
+                        and self[0].type.domain.enumerable()
+                        and self[0].type.domain.finite):
+            a = self.scope_assignment(assignment=assignment)
             verifier, counterexample, sub = find_unique_evaluation(
                 self[0].type.domain,
                 self[1],
                 (lambda t : simplify_all(t, **sopts)),
                 self.varname,
-                self.scope_assignment())
+                a)
             if counterexample is self[1]:
                 return self
             elif verifier is not None:
@@ -581,7 +590,7 @@ class IotaUnary(BindingOp):
         result = self.copy_local(sub_var, new_condition)
         return result
 
-    def simplify(self, **sopts):
+    def simplify(self, assignment=None, **sopts):
         if not self.varname in self.body.free_variables():
             c = self.type.domain.cardinality()
             if c == 1:
@@ -589,13 +598,16 @@ class IotaUnary(BindingOp):
             else:
                 # XX what should really happen here?
                 return self
-        elif get_sopt('evaluate', sopts) and not self.free_terms() and self[0].type.domain.enumerable():
+        elif (get_sopt('evaluate', sopts)
+                    and not self.free_terms()
+                    and self[0].type.domain.enumerable()
+                    and self[0].type.domain.finite):
             verifier, counterexample, sub = find_unique_evaluation(
                 self[0].type.domain,
                 self[1],
                 (lambda t : simplify_all(t, **sopts)),
                 self.varname,
-                self.scope_assignment())
+                self.scope_assignment(assignment=assignment))
             if verifier is not None:
                 return derived(MetaTerm(verifier), self, f"unique instantiation for ι",
                     subexpression=sub, force_on_recurse=True)

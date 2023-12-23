@@ -416,6 +416,17 @@ def variable_replace_strict(expr, m):
         return result
     return variable_transform(expr, m.keys(), transform)
 
+def find_constant_name(symbol, m):
+    """Finds (if any) a constant symbol in assignment `m` whose valuation has
+    name `symbol`. If there are multiple such constants, return the
+    lexicographically first. If there are none, returns `None`."""
+    # TODO: this is a bit painful of an implementation, revisit...
+    keys = [k for k in m if symbol_is_constant_symbol(k) and m[k].op == symbol]
+    if keys:
+        return sorted(keys)[0] # better sort?
+    else:
+        return None
+
 def term_replace_unify(expr, m, track_all_names=False):
     from .core import TypedExpr, ts_unify_with
     def transform(e):
@@ -424,6 +435,12 @@ def term_replace_unify(expr, m, track_all_names=False):
             # XX revisit exact conditions under which this is set.
             # should be impossible for e to be a MetaTerm here
             result.assignment_name = e
+            # if we are currently substituting for a variable, see if the
+            # assignment provides a more readable constant term for the result,
+            # and also store that name for later use
+            if (e.variable and (aname2 := find_constant_name(result.op, m))):
+                result.assignment_name = (result.assignment_name, aname2)
+
         if result.type != e.type:
             # note: error reporting from here has a different order than the
             # raise below, so we handle it manually... (unclear to me if this
@@ -572,6 +589,10 @@ def is_symbol(s):
 
 def symbol_is_var_symbol(s):
     return s[0].islower()
+
+
+def symbol_is_constant_symbol(s):
+    return not symbol_is_var_symbol(s)
 
 
 def is_var_symbol(s):

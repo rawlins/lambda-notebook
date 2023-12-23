@@ -33,13 +33,6 @@ class MetaTerm(core.TypedTerm):
                 type_verified = True
             name = name.op
 
-        # enforce a prefixing `_` on the internal representation. This isn't
-        # necessary relative to the type domain code, but it keeps MetaTerms
-        # from comparing as equal to TypedTerms with the same name.
-        # TODO: error messages are a bit confusing with an implicit `_`
-        if isinstance(name, str) and not name.startswith("_"):
-            name = "_" + name
-
         # though super sets this, for various error cases on the type check it
         # is useful to set it in advance and then rely on it in the type check
         self.op = name
@@ -47,6 +40,13 @@ class MetaTerm(core.TypedTerm):
 
         if not type_verified:
             typ = self.check_type_domain(typ=typ, setfun=setfun)
+
+        # this is kind of clunky, but enforce various normalized representations
+        # from the type domain. E.g. this puts a `_` on atomic string values,
+        # wraps dicts/sets with frozendict/frozenset
+        # XX normalization is already happening during the type check, can it
+        # be reused?
+        name = typ.domain.normalize(name)
 
         super().__init__(name, typ=typ, type_check=False, validate_name=False)
         self._variable = False
@@ -192,12 +192,22 @@ class MetaTerm(core.TypedTerm):
             use_aname = True
         if self.latex_op_str is None:
             if use_aname and self.assignment_name is not None:
+                # XX this is a bit ad hoc, could it be better systematized?
+                # maybe a piece of the assignment itself should be saved?
+                if isinstance(self.assignment_name, tuple):
+                    aname, aname2 = self.assignment_name
+                else:
+                    aname = self.assignment_name
+                    aname2 = None
                 if isinstance(self.type, BasicType):
                     superscript = self.op_repr(rich=True, addsf=True)
                 else:
                     # don't try to show the actual value for this case
                     superscript = "\\text{\\textsf{[meta]}}"
-                return self.assignment_name.latex_str(show_types=show_types,
+                if aname2:
+                    # assumption: aname2 is a str
+                    superscript = f"{aname2}/{superscript}"
+                return aname.latex_str(show_types=show_types,
                                             assignment=assignment,
                                             superscript=superscript,
                                             **kwargs)
@@ -205,6 +215,8 @@ class MetaTerm(core.TypedTerm):
                 # render a domain element name as sans serif
                 op_str = self.op_repr(rich=True, addsf=True)
         else:
+            # assumption: this is only used in cases where the op string is
+            # giving an extremely stable constant name (e.g. \bot for False)
             op_str = f"{self.latex_op_str}"
         if not show_types or not self.should_show_type(assignment=assignment):
             return ensuremath(op_str)

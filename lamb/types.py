@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
-import sys, re, random, collections.abc, math, functools, itertools
+import sys, re, random, collections.abc, math, functools, itertools, contextlib
 from numbers import Number
 from lamb import utils, parsing
 from lamb.utils import *
@@ -35,8 +35,9 @@ def curlybraces(x, rich=False):
 # no length, which is required for most stronger types in collections.abc.
 class DomainSet(collections.abc.Container):
     type = None # class variable
-    def __init__(self, finite=True, values=None, typ=None):
+    def __init__(self, finite=True, values=None, typ=None, superdomain=None):
         self.finite = finite
+        self.superdomain = superdomain
         if values is None:
             values = set()
         self.domain = set(values)
@@ -44,11 +45,29 @@ class DomainSet(collections.abc.Container):
             # override class value at the instance level
             self.type = typ
 
+    def __repr__(self):
+        if not self.finite:
+            return "Anonymous non-finite domain" # should not be reachable...
+        if self.superdomain is not None:
+            # this is not a proper repr...
+            return f"Subdomain {repr(self.domain)} of {repr(self.superdomain)}"
+        return f"DomainSet({repr(self.domain)})"
+
+    def normalize(self, x):
+        if self.superdomain is not None:
+            return self.superdomain.normalize(x)
+        return x
+
     def check(self,x):
         if self.finite:
-            return (demeta(x) in self.domain)
+            try:
+                return (demeta(self.normalize(x)) in self.domain)
+            except TypeError:
+                # this is a bit broad, but the aim is catch non-hashable
+                # objects
+                return False
         else:
-            return self.infcheck(demeta(x))
+            return self.infcheck(demeta(self.normalize(x)))
 
     def __contains__(self, x):
         return self.check(x)
@@ -125,6 +144,15 @@ class BooleanSet(DomainSet):
         # check, exclude 0/1 from the domain by checking class directly.
         return isinstance(demeta(x), bool)
 
+    @contextlib.contextmanager
+    def restrict_domain(self, values=None, count=None):
+        # allowing this messes up too many things, and I don't think there's
+        # much of a use case for it
+        raise NotImplementedError("Domain restriction for type t is not supported")
+
+    def normalize(self, x):
+        return bool(x)
+
     def __repr__(self):
         return f"BooleanSet()"
 
@@ -137,11 +165,17 @@ class SimpleInfiniteSet(DomainSet):
         self.prefix = prefix
         # this disallows sequences like 001; an alternative would be to
         # normalize them...
+        # in principle, the _ could be ignored here due to normalization
         self.symbol_re = re.compile(fr'_?({prefix}(?:0|[1-9][0-9]*))$')
         # TODO better error checking
 
-    def infcheck(self,x):
+    def infcheck(self, x):
         return isinstance(x, str) and re.match(self.symbol_re, x)
+
+    def normalize(self, x):
+        if isinstance(x, str) and not x.startswith("_"):
+            return "_" + x
+        return x
 
     def __iter__(self):
         i = 0
@@ -306,6 +340,53 @@ class TypeConstructor(object):
 
     def check(self, x):
         raise NotImplementedError
+
+    def get_subdomain(self, values=None, count=None):
+        """Get a DomainSet object that is a (finite) subdomain of this type's
+        domain. The subdomain can be chosen by value, or (as long as it is
+        enumerable) by count. The latter will pick the first `count` elements
+        of the current domain. The subdomain must be non-empty, and all
+        elements if supplied by value must be in the current domain; the
+        restriction can be trivial. Subdomains are not generally supported
+        for complex types.
+
+        This function does not change the type's domain itself. See also
+        `restrict_domain` for a context manager interface to this function.
+        """
+        if count:
+            if not self.domain.enumerable():
+                raise ValueError(f"Can't get subdomain by count for non-enumerable domain of type {repr(self)}")
+            if self.domain.cardinality() < count:
+                raise ValueError(f"Domain for type {repr(self)} is too small to get {count} elements")
+            values = set(next(itertools.batched(self.domain, count)))
+        if not values or count == 0:
+            raise ValueError("Domain restriction can't be empty")
+        if self.domain.finite:
+            if not self.domain.domain:
+                # finite type that is not implemented via an explicit set,
+                # perhaps something like <t,t> etc. This could be implemented
+                # in principle...
+                raise ValueError(f"Domain for type {repr(self)} does not support restriction")
+            if not values <= self.domain.domain:
+                raise ValueError(f"{repr(values)} is not a subset of domain for type {repr(self)}")
+        else:
+            if not all(x in self.domain for x in values):
+                raise ValueError(f"{repr(values)} is not a subset of domain for type {repr(self)}")
+        values = {self.domain.normalize(x) for x in values}
+        return DomainSet(values=values, typ=self, superdomain=self.domain)
+
+    @contextlib.contextmanager
+    def restrict_domain(self, values=None, count=None):
+        saved = self.domain
+        if values and isinstance(values, DomainSet):
+            # XX this doesn't validate the domain set against self!
+            self.domain = values
+        else:
+            self.domain = self.get_subdomain(values=values, count=count)
+        try:
+            yield self.domain
+        finally:
+            self.domain = saved
 
     def copy_local(self, *parts):
         """Return a copy of the type with any local properties preserved,
@@ -485,6 +566,14 @@ class FunDomainSet(ComplexDomainSet):
             # XX allow some sort of actual python function here
             return False
 
+    def normalize(self, x):
+        if isinstance(x, collections.abc.Set):
+            return frozenset(x)
+        else:
+            return utils.frozendict({
+                self.type.left.domain.normalize(k): self.type.right.domain.normalize(x[k])
+                for k in x})
+
     def __len__(self):
         if not self.finite:
             raise ValueError("Non-finite `FunDomainSet`s do not have a length.")
@@ -645,6 +734,9 @@ class SetDomainSet(ComplexDomainSet):
         else:
             return False
 
+    def normalize(self, x):
+        return frozenset({self.type.content_type.domain.normalize(e) for e in x})
+
     def __repr__(self):
         return f"SetDomainSet({self.type})"
 
@@ -757,6 +849,9 @@ class TupleDomainSet(ComplexDomainSet):
             raise ValueError("Non-finite `TupleDomainSet`s do not have a length.")
         else:
             return functools.reduce(lambda x, y: x*y, (len(t.domain) for t in self.type))
+
+    def normalize(self, x):
+        return tuple(self.type[i].domain.normalize(x[i]) for i in range(len(x)))
 
     def __iter__(self):
         domains = (t.domain for t in self.type)
@@ -1320,6 +1415,8 @@ class DisjunctiveDomainSet(ComplexDomainSet):
             if x in t.domain:
                 return True
         return False
+
+    # XX if this ever becomes instantiatable, a normalize implementation is needed
 
     def __repr__(self):
         return f"DisjunctiveDomainSet({self.type})"
