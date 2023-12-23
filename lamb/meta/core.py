@@ -1629,9 +1629,22 @@ class TypedExpr(object):
                 return False
         return seen_true or None
 
-    def subreduce(self, path, reason=True, force_full=True, use_cache=True):
+    def _do_reduce(self, strict_charfuns=True):
+        from .meta import OutOfDomain
+        try:
+            return self.reduce() # this will add a derivation
+        except OutOfDomain as e:
+            # n.b. this relies on some assumptions about where OutOfDomain
+            # can be thrown from...
+            if self.type == type_t and not strict_charfuns:
+                return from_python(False)
+            else:
+                raise e
+
+    def subreduce(self, path, reason=True, force_full=True, use_cache=True,
+                        strict_charfuns=True):
         if not path:
-            return self.reduce()
+            return self._do_reduce(strict_charfuns=strict_charfuns)
         i = path[0]
         if not use_cache or not self._reduced_cache[i]:
             if force_full:
@@ -2059,7 +2072,7 @@ class ApplicationExpr(TypedExpr):
         # assignment.)
         if (get_sopt('evaluate', sopts)
                         and self.args[0].meta() and self.args[1].meta()):
-            return self.reduce() # this will add a derivation
+            return self._do_reduce(strict_charfuns=get_sopt('strict_charfuns', sopts))
         return self
 
     def calculate_partiality(self, vars=None):

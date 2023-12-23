@@ -15,6 +15,7 @@ _base_default_sopts = dict(
     collect=True,
     eliminate_sets=False,
     eliminate_quantifiers=False,
+    strict_charfuns=True,
     )
 
 
