@@ -4,7 +4,8 @@ import collections, itertools, logging, html, enum
 from lamb import utils, types, meta, display
 from lamb.utils import ensuremath
 from lamb.types import type_e, type_t, type_property, TypeMismatch
-from lamb.meta import  TypedExpr
+from lamb.meta import  TypedExpr, true_term
+from lamb.meta.core import partial, pbody, pcond
 from lamb import tree_mini
 
 from lamb.meta.core import te, tp
@@ -3044,13 +3045,18 @@ def pm_fun(fun1, fun2, assignment=None):
 def presup_fa(f, a):
     f = f.calculate_partiality()
     a = a.calculate_partiality()
-    result = f(a).reduce_all().calculate_partiality()
-    return result
+    return partial(
+        pbody(f)(pbody(a)),
+        pcond(a),
+        pcond(f)).simplify_all(reduce=True, calc_partiality=True)
 
 def presup_pm(p1, p2):
     p1 = p1.calculate_partiality()
     p2 = p2.calculate_partiality()
-    return pm_op(p1)(p2).reduce_all().calculate_partiality()
+    return partial(
+        pm_op(pbody(p1))(pbody(p2)),
+        pcond(p1),
+        pcond(p2)).simplify_all(reduce=True, calc_partiality=True)
 
 def presup_pa(binder, content, assignment=None):
     if not tree_binder_check(binder):

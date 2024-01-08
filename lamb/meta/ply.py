@@ -16,6 +16,7 @@ _base_default_sopts = dict(
     eliminate_sets=False,
     eliminate_quantifiers=False,
     strict_charfuns=True,
+    calc_partiality=True,
     )
 
 
@@ -292,10 +293,15 @@ def multisimplify(e, simplify_fun = None,
             else:
                 es[i] = step
                 del es[i + 1]
-                derivation.add_step(DerivationStep(intermediate(es), subexpression=step))
-                if len(es) > 2 and step.derivation:
-                    # don't collapse the step when showing a `trace()`
-                    step.derivation.force_on_recurse = True
+                if len(es) == 1 and step.derivation:
+                    # XX these can look a bit weird when the derivation was
+                    # showing lists
+                    derivation.add_steps(step.derivation)
+                else:
+                    derivation.add_step(DerivationStep(intermediate(es), subexpression=step))
+                    if len(es) > 2 and step.derivation:
+                        # don't collapse the step when showing a `trace()`
+                        step.derivation.force_on_recurse = True
                 if i > 0:
                     i -= 1
     result = join(cls, es)

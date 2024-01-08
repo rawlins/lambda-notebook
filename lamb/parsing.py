@@ -9,6 +9,7 @@ Tree = utils.get_tree_class()
 
 global eq_transforms
 eq_transforms = dict()
+eq_transforms['reduce'] = lambda x: x.reduce_all()
 
 # wrap some common circular import cases:
 def parsing_ts():

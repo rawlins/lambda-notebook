@@ -13,6 +13,7 @@ from .ply import simplify_all, symbol_is_var_symbol
 from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
 from .ply import term_replace_unify, variable_convert, alpha_variant
 from .ply import commutative, associative, left_commutative, right_commutative
+from .ply import Derivation, DerivationStep
 
 ############### Basic stuff
 
@@ -1535,6 +1536,10 @@ class TypedExpr(object):
         result = self
         if pre:
             result = result.simplify(**sopts)
+            # not very elegant -- if presimplification has generated a Partial,
+            # drop into the Partial implementation of simplify_point instead.
+            if isinstance(result, Partial):
+                return result.simplify_point(sopts)
         for i in range(len(result.args)):
             # simple: go left to right, no repeats.
             new_arg_i = result.args[i].simplify_all(**sopts)
@@ -1583,6 +1588,12 @@ class TypedExpr(object):
             result = result.reduce_all()
             # don't apply `reduce` recursively, it is already recursive
             sopts['reduce'] = False
+
+        if get_sopt('calc_partiality', sopts):
+            # similarly, don't apply calculate_partiality recursively. Note that
+            # calculate_partiality may itself call simplify_all.
+            sopts['calc_partiality'] = False
+            result = result.calculate_partiality(**sopts)
 
         # do this before the normal simplify pass, since it almost guarantees
         # something that will feed the rest of simplification
@@ -1738,23 +1749,32 @@ class TypedExpr(object):
 
         return result
 
-    def calculate_partiality(self, vars=None):
-        condition = from_python(True)
-        new_parts = list()
-        for part in self:
-            part_i = part.calculate_partiality(vars=vars)
-            if isinstance(part_i, Partial):
-                condition = condition & part_i.condition
-                part_i = part_i.body
-            new_parts.append(part_i)
-        new_self = self.copy_local(*new_parts)
-        condition = condition.simplify_all()
-        intermediate = derived(Partial(new_self, condition), self,
-                                            "Recursive simplification of condition")
-        if condition == True:
-            return derived(new_self, intermediate, "Partiality (trivial condition)")
+    def calculate_partiality(self, vars=None, **sopts):
+        from .boolean import BinaryAndExpr, true_term
+        condition = []
+        result = self
+        for i in range(len(self)):
+            part_i = result[i].calculate_partiality(vars=vars, **sopts)
+            while isinstance(part_i, Partial):
+                condition.append(part_i.condition)
+                part_i = derived(part_i.body.copy(),
+                    part_i,
+                    "Partiality (remove conditions from body)")
+
+            if part_i is not result[i]:
+                result = derived(result.subst(i, part_i),
+                    result,
+                    f"Partiality calculation (recursion on {result.name_of(i)})",
+                    subexpression=part_i)
+        if condition:
+            condition = BinaryAndExpr.join(condition, empty=true_term)
+            intermediate = derived(Partial(result, condition), result,
+                                            "Partiality (merge conditions from body)",
+                                            subexpression=condition)
+            # calling Partial.calculate_partiality() may further simplify
+            return intermediate.calculate_partiality(vars=vars, **sopts)
         else:
-            return intermediate
+            return result
 
 
     def __call__(self, *args):
@@ -1782,7 +1802,7 @@ class TypedExpr(object):
         """Return a representation of the TypedExpr suitable for Jupyter
         Notebook display.
 
-        In this case the output should be pure LaTeX."""
+        The output should be pure LaTeX (i.e., no HTML)."""
 
         if not self.args:
             return ensuremath(str(self.op))
@@ -1831,7 +1851,6 @@ class TypedExpr(object):
         Note that there are some special cases to worry about: ListedSets are
         not guaranteed to hash correctly.
         """
-        # TODO: deal with ListedSets
         return hash(self.op) ^ hash(tuple(self.args)) ^ hash(self.type)
 
     def __getitem__(self, i):
@@ -2075,12 +2094,13 @@ class ApplicationExpr(TypedExpr):
             return self._do_reduce(strict_charfuns=get_sopt('strict_charfuns', sopts))
         return self
 
-    def calculate_partiality(self, vars=None):
+    def calculate_partiality(self, vars=None, **sopts):
         # defer calculation of the argument until beta reduction has occurred
-        if isinstance(self.args[0], LFun):
+        # XX is this general enough?
+        if isinstance(self.args[0], LFun) or isinstance(self.args[0], ApplicationExpr):
             return self
         else:
-            return super().calculate_partiality()
+            return super().calculate_partiality(vars=vars, **sopts)
 
     @classmethod
     def random(self, random_ctrl_fun):
@@ -2483,11 +2503,6 @@ class Partial(TypedExpr):
     def __init__(self, body, condition, type_check=True):
         if condition is None:
             condition = from_python(True)
-        if isinstance(body, Partial):
-            condition = condition & body.condition
-            body = body.body
-        while isinstance(condition, Partial):
-            condition = condition.body & condition.condition
         condition = TypedExpr.ensure_typed_expr(condition, types.type_t)
 
         super().__init__("Partial", body, condition)
@@ -2495,25 +2510,97 @@ class Partial(TypedExpr):
         self.condition = condition
         self.body = body
 
-    def calculate_partiality(self, vars=None):
-        new_body = self.body.calculate_partiality(vars=vars)
-        new_condition = self.condition.calculate_partiality(vars=vars)
-        if isinstance(new_condition, Partial):
-            new_condition = new_condition.body & new_condition.condition
-        if isinstance(new_body, Partial):
-            new_condition = new_condition & new_body.condition
-            new_body = new_body.body
-        # XX division of labor with simplify_all?? At least need to pass around
-        # sopts...
-        result = Partial(new_body, new_condition).simplify_all()
-        return derived(Partial(new_body, new_condition), self,
-                                                "Recursive partiality simplification")
+    def undefined(self):
+        # note: returning True doesn't mean defined!
+        if isinstance(self.condition, Partial):
+            return self.condition.undefined()
+        else:
+            return self.condition == False
+
+    def calculate_partiality(self, vars=None, **sopts):
+        result = self
+        new_condition = self.condition
+        new_body = result.body.calculate_partiality(vars=vars, **sopts)
+        # XX this derivation is a bit clunky
+        while isinstance(new_body, Partial):
+            new_condition = derived(new_condition & new_body.condition,
+                new_condition,
+                "Partiality (merge conditions from body)")
+            new_body = derived(new_body.body.copy(), new_body,
+                "Partiality (remove conditions from body)")
+
+        new_condition = new_condition.calculate_partiality(vars=vars)
+        # in the next steps, we make a copy of the condition/body, but use the
+        # uncopied version as a subexpression. This gives the derivation for
+        # simplify_all() below a clean slate and shows the partiality calculation
+        # steps only once.
+        if new_condition is not self.condition:
+            result = derived(result.subst(1, new_condition.copy()), result,
+                    desc=f"Partiality calculation (recursion on {result.name_of(1)})",
+                    subexpression=new_condition)
+
+        if new_body is not result.body:
+            result = derived(result.subst(0, new_body.copy()), result,
+                    desc=f"Partiality calculation (recursion on {result.name_of(0)})",
+                    subexpression=new_body)
+
+        return result.simplify_all(**sopts)
+
+    def __eq__(self, other):
+        if self.undefined() and isinstance(other, Partial):
+            return other.undefined()
+        else:
+            return super().__eq__(other)
+
+    def __hash__(self):
+        if self.undefined():
+            # identical to superclass __hash__, except the dummy None value in
+            # the body slot
+            return hash(self.op) ^ hash((None, false_term)) ^ hash(self.type)
+        else:
+            return super().__hash__()
 
     def simplify(self, **sopts):
         if self.condition == True:
             # the copy here is (apparently) needed to get derivation bookkeeping right...
             return derived(self.body.copy(), self, "Partiality elimination")
         return self
+
+    def name_of(self, i):
+        if i == 0:
+            return "partiality body"
+        else:
+            return "condition"
+
+    def simplify_point(self, pre=False, **sopts):
+        # for Partial, we want to simplify first the condition, then the body.
+
+        result = self
+        new_condition = result[1].simplify_all(**sopts)
+        if new_condition is not result[1]:
+            result = derived(result.subst(1, new_condition), result,
+                    desc=f"Recursive simplification of {result.name_of(1)}",
+                    subexpression=new_condition)
+
+        evaluate = get_sopt('evaluate', sopts)
+
+        if (new_condition == False
+                    or isinstance(new_condition, Partial) and new_condition.undefined()
+                    or new_condition != True):
+            # do not evaluate the body if the expression is undefined, or if
+            # simplifying the condition failed to reach True/False. (Perhaps,
+            # if the condition is False, the body shouldn't even be simplified?
+            # another approach would be to simply replace the body with a
+            # different TyepdExpr that implemented non-simplification.)
+            sopts['evaluate'] = False
+        new_body = result[0].simplify_all(**sopts)
+        if new_body is not result[0]:
+            result = derived(result.subst(0, new_body), result,
+                    desc=f"Recursive simplification of {result.name_of(0)}",
+                    subexpression=new_body)
+        sopts['evaluate'] = evaluate
+        result = result.simplify(**sopts)
+        return result
 
     def term(self):
         return self.body.term()
@@ -2524,6 +2611,9 @@ class Partial(TypedExpr):
     def meta_tuple(self):
         return Tuple(self.args)
     
+    def __repr__(self):
+        return f"Partial({repr(self.body)}, {repr(self.condition)})"
+
     def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
                                                                     env):
         tuple_version = self.meta_tuple()
@@ -2573,7 +2663,80 @@ class Partial(TypedExpr):
         return Partial(body, condition)
 
         
+class Body(TypedExpr):
+    def __init__(self, body, type_check=True):
+        super().__init__("Body", body)
+        self.type = body.type
+
+    def calculate_partiality(self, vars=None, **sopts):
+        result = self[0].calculate_partiality(vars=vars, **sopts)
+        intermediate = derived(Body(result), self, "Partiality calculation (recursion on Body)",
+            subexpression=result)
+        if isinstance(result, Partial):
+            return derived(result.body.copy(), intermediate, "Body extraction")
+        else:
+            return derived(result, intermediate, "Body extraction (trivial)")
+
+    def __repr__(self):
+        return f"Body({repr(self[0])})"
+
+    def latex_str(self, suppress_parens=False, **kwargs):
+        body_str = self[0].latex_str(suppress_parens=True, **kwargs)
+        return ensuremath(f"\\textsf{{Body}}({body_str})")
+
+
+class Condition(TypedExpr):
+    def __init__(self, body, type_check=True):
+        super().__init__("Condition", body)
+        self.type = types.type_t
+
+    def calculate_partiality(self, vars=None, **sopts):
+        from .boolean import true_term
+        result = self[0].calculate_partiality(vars=vars, **sopts)
+        intermediate = derived(Condition(result), self, "Partiality calculation (recursion on Condition)",
+            subexpression=result)
+        if isinstance(result, Partial):
+            return derived(result.condition.copy(), intermediate, "Condition extraction")
+        else:
+            return derived(true_term, intermediate, "Condition extraction (trivial)")
+
+    def __repr__(self):
+        return f"Condition({repr(self[0])})"
+
+    def latex_str(self, suppress_parens=False, **kwargs):
+        body_str = self[0].latex_str(suppress_parens=True, **kwargs)
+        return ensuremath(f"\\textsf{{Condition}}({body_str})")
+
+
+# let these classes be instantiatable in the metalanguage parser
 TypedExpr.add_local("Partial", Partial.from_Tuple)
+TypedExpr.add_local("Body", Body)
+TypedExpr.add_local("Condition", Condition)
+
+
+def pcond(t):
+    from .boolean import true_term
+    if isinstance(t, Partial):
+        return t.condition
+    else:
+        return true_term
+
+
+def pbody(t):
+    if isinstance(t, Partial):
+        return t.body
+    else:
+        return t
+
+
+def partial(body, *conditions, force=False):
+    from .boolean import BinaryAndExpr
+    conditions = [c for c in conditions if c != True]
+    if conditions or force:
+        return Partial(body, BinaryAndExpr.join(conditions))
+    else:
+        return body
+
 
 ###############
 #
@@ -3469,7 +3632,7 @@ class BindingOp(TypedExpr):
                     error="No implemented way of projecting partiality for BindingOp %s"
                     % repr(type(b).__name__))
 
-    def calculate_partiality(self, vars=None):
+    def calculate_partiality(self, vars=None, **sopts):
         if vars is None:
             vars = set()
         if isinstance(self, LFun):
@@ -3478,32 +3641,41 @@ class BindingOp(TypedExpr):
         # defer any further calculation if there are bound variables in the body
         if vars & self.body.free_variables():
             return self
+        result = self
 
-        new_body = self.body.calculate_partiality(vars=vars)
-        if isinstance(new_body, Partial):
-            if new_body.condition == True:
-                return derived(self.copy_local(self.var_instance, new_body),
-                        self, "Partiality (trivial body condition)")
+        new_body = result.body.calculate_partiality(vars=vars, **sopts)
+        if new_body is not result.body:
+            result = derived(result.subst(1, new_body),
+                            result,
+                            f"Partiality calculation (recursion on {self.name_of(1)})",
+                            subexpression=new_body)
+        if isinstance(result[1], Partial):
+            if result[1].condition == True:
+                return derived(self.copy_local(self.var_instance, result[1]),
+                        result,
+                        "Partiality calculation (trivial body condition)")
 
-            if self.varname in new_body.condition.free_variables():
+            if self.varname in result[1].condition.free_variables():
                 if BindingOp.partiality_weak:
                     return derived(
-                        self.project_partiality_weak(new_body.body,
-                                                     new_body.condition),
-                        self, "Partiality (weak projection)")
+                        result.project_partiality_weak(result[1].body,
+                                                     result[1].condition),
+                        result,
+                        "Partiality (weak projection)")
                 else:
                     return derived(
-                        self.project_partiality_strict(new_body.body,
-                                                       new_body.condition),
-                        self, "Partiality (strict projection)")
+                        result.project_partiality_strict(result[1].body,
+                                                       result[1].condition),
+                        result,
+                        "Partiality (strict projection)")
             else:
-                new_condition = new_body.condition
-                new_self = self.copy_local(self.var_instance, new_body.body)
-                return derived(Partial(new_self, new_condition), self,
+                new_condition = result[1].condition
+                new_self = self.copy_local(self.var_instance, result[1].body)
+                return derived(Partial(new_self, new_condition),
+                    result,
                     "Partiality (unquantified condition)")
         else:
-            return derived(self.copy_local(self.var_instance, new_body), self,
-                "Partiality elimination")
+            return result
 
     @classmethod
     def try_parse_header(cls, s, assignment=None, locals=None):

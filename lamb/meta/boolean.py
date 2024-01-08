@@ -2,7 +2,7 @@ import lamb
 from lamb import types
 from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
 from .core import BindingOp, Partial, LFun, get_sopt
-from .meta import MetaTerm
+from .meta import MetaTerm, DomainError
 from .ply import simplify_all, alphanorm
 from lamb.types import type_t
 
@@ -612,10 +612,12 @@ class IotaUnary(BindingOp):
                 return derived(MetaTerm(verifier), self, f"unique instantiation for ι",
                     subexpression=sub, force_on_recurse=True)
             else:
-                # it's extremely unclear what should happen for a real
-                # counterexample for vanilla IotaUnary. Maybe it needs to raise
-                # a python exception (cf. OutOfDomain?)
-                return self
+                # return self
+                if counterexample is None:
+                    extra = ""
+                else:
+                    extra = "uniqueness failure"
+                raise DomainError(self, self[0].type.domain, extra=extra)
         return self
 
 class IotaPartial(IotaUnary):
@@ -635,8 +637,8 @@ class IotaPartial(IotaUnary):
     def copy_local(self, var, arg, type_check=True):
         return IotaPartial(var, arg, type_check=type_check)
 
-    def calculate_partiality(self, vars=None):
-        new_body = self.body.calculate_partiality(vars=vars)
+    def calculate_partiality(self, vars=None, **sopts):
+        new_body = self.body.calculate_partiality(vars=vars, **sopts)
         # defer any further calculation if there are bound variables in the body
         # (probably not technically necessary?)
         if vars is not None:
@@ -659,7 +661,7 @@ class IotaPartial(IotaUnary):
         # (This class is marked with `pre_simplify`.)
         # XX the division of labor between these is weird, and doing this
         # without checking for bound vars could lead to problems?
-        return self.calculate_partiality()
+        return self.calculate_partiality(**sopts)
 
 pure_ops = {UnaryNegExpr, BinaryAndExpr, BinaryOrExpr, BinaryArrowExpr,
             BinaryNeqExpr, BinaryBiarrowExpr}

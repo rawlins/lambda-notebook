@@ -5,21 +5,35 @@ import lamb
 from lamb import types
 
 from . import core, boolean
+from .ply import get_sopt
 from lamb import types, parsing
 from lamb.utils import ensuremath
 from lamb.types import TypeMismatch, type_e, type_t, type_n, BasicType, SetType, TupleType
 
 
-class OutOfDomain(Exception):
-    def __init__(self, f, a):
-        self.f = f
-        self.a = a
+class DomainError(Exception):
+    def __init__(self, element, domain, extra=""):
+        self.element = element
+        self.domain = domain
+        self.extra = extra
 
     def __str__(self):
-        return f"`{self.a}` missing from function domain (`{repr(self.f.op)}`)"
+        extra = self.extra
+        if extra:
+            extra = f" ({extra})"
+        return f"`{self.element}` not present in domain `{repr(self.domain)}`{extra}"
 
     def __repr__(self):
         return self.__str__()
+
+
+class OutOfDomain(DomainError):
+    def __init__(self, f, a):
+        super().__init__(a, f.type.left.domain)
+        self.f = f
+
+    def __str__(self):
+        return f"`{self.element}` missing from function domain (`{repr(self.f.op)}`)"
 
 
 class MetaTerm(core.TypedTerm):
@@ -89,6 +103,16 @@ class MetaTerm(core.TypedTerm):
             # XX it might be possible to handle a type variable here by
             # resolving it as in the `None` case?
             return typ
+
+    def simplify(self, **sopts):
+        # if we are doing an evaluate pass, recheck the domain. This is to
+        # validate expressions that were generated out of the scope of a
+        # domain restriction, relative to one.
+        # currently: only do this for atomic types.
+        if get_sopt('evaluate', sopts) and len(self.type) == 0:
+            if self.op not in self.type.domain:
+                raise DomainError(self.op, self.type.domain)
+        return self
 
     def apply(self, arg):
         if not self.type.functional() or not core.get_type_system().eq_check(self.type.left, arg.type):
