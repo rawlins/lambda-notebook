@@ -464,7 +464,8 @@ def term_replace_unify(expr, m, track_all_names=False):
             elif unify == result.type: # unify consistent with result
                 return result
             else: # unify results in a 3rd type
-                result = result.try_adjust_type(unify, assignment=m)
+                result = result.try_adjust_type(unify)
+                # XX update m?
                 return result
         else:
             if result.term() and not result.meta() and result.op == e.op:

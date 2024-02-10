@@ -107,8 +107,7 @@ class ConditionSet(BindingOp):
 
         return self
 
-    def try_adjust_type_local(self, unified_type, derivation_reason,
-                                                            assignment, env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         inner_type = unified_type.content_type
         char = self.to_characteristic()
         sub_var = TypedTerm(self.varname, inner_type)
@@ -295,8 +294,7 @@ class ListedSet(TypedExpr):
         else:
             return utils.ensuremath(f"\\{{{inner}\\}}")
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
-                                                                        env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         if len(self.args) == 0:
             # handle empty sets directly.
             # no actual type checking here -- this code shouldn't be reachable
@@ -305,8 +303,7 @@ class ListedSet(TypedExpr):
 
         inner_type = unified_type.content_type
         content = [a.try_adjust_type(inner_type,
-                        derivation_reason=derivation_reason,
-                        assignment=assignment) for a in self.args]
+                        derivation_reason=derivation_reason) for a in self.args]
         result = self.copy_local(*content)
         return result
 
@@ -452,13 +449,13 @@ class BinarySetOp(SyncatOpExpr):
         # s2 = ListedSet.random(ctrl, max_type_depth=max_type_depth, typ=typ)
         return cls(ctrl(typ=typ), ctrl(typ=typ))
 
-    def try_adjust_type_local(self, typ, reason, assignment, env):
+    def try_adjust_type_local(self, typ, reason, env):
         if self.type == type_t:
             return super().try_adjust_type_local(unified_type,
-                                            derivation_reason, assignment, env)
+                                            derivation_reason, env)
         return self.copy_local(
-            self.args[0].try_adjust_type(typ, reason, assignment),
-            self.args[1].try_adjust_type(typ, reason, assignment))
+            self.args[0].try_adjust_type(typ, reason),
+            self.args[1].try_adjust_type(typ, reason))
 
 
 class SetUnion(BinarySetOp):

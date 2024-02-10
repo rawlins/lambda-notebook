@@ -732,22 +732,21 @@ class TypedExpr(object):
 
 
     def try_adjust_type_caching(self, new_type, derivation_reason=None,
-                                            assignment=None, let_step=None):
+                                            let_step=None):
         cached = self._type_cache_get(new_type)
         if cached is not False:
             return cached
         if let_step is not None:
             result = let_step.try_adjust_type(new_type,
-                derivation_reason=derivation_reason, assignment=assignment)
+                derivation_reason=derivation_reason)
             # TODO: freshen variables again here?
         else:
             result = self.try_adjust_type(new_type,
-                derivation_reason=derivation_reason, assignment=assignment)
+                derivation_reason=derivation_reason)
         self._type_cache_set(new_type, result)
         return result
 
-    def try_adjust_type(self, new_type, derivation_reason=None,
-                                        assignment=None):
+    def try_adjust_type(self, new_type, derivation_reason=None):
         """Attempts to adjust the type of `self` to be compatible with
         `new_type`.
 
@@ -777,13 +776,11 @@ class TypedExpr(object):
                     return None
                 new_term._type_env = env
                 new_term.type = principal
-                if assignment is not None and new_term.op in assignment:
-                    assignment[new_term.op] = new_term
                 return derived(new_term, self, derivation_reason)
             else:
                 # use the subclass' type adjustment function
                 result = self.try_adjust_type_local(unify_target,
-                                        derivation_reason, assignment, env)
+                                        derivation_reason, env)
                 if result is not None:
                     result = result.under_type_assignment(env.type_mapping)
                     if result is not None:
@@ -799,8 +796,7 @@ class TypedExpr(object):
                 else:
                     return derived(result, self, derivation_reason)
 
-    def try_adjust_type_local(self, unified_type, derivation_reason,
-                                                            assignment, env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         # write an error instead of throwing an exception -- this is easier for
         # the user to handle atm
         logger.error("Unimplemented `try_adjust_type_local` in class '%s'"
@@ -1073,7 +1069,7 @@ class TypedExpr(object):
             # todo: handle conversion to custom
             result = s.copy()
             if typ is not None:
-                result = result.try_adjust_type(typ, assignment=assignment)
+                result = result.try_adjust_type(typ)
             return result
         else:
             if isinstance(s, str) and typ is None and not preparsed:
@@ -1223,7 +1219,7 @@ class TypedExpr(object):
         if typ is None:
             return result
         else:
-            r_adjusted = result.try_adjust_type(typ, assignment=assignment)
+            r_adjusted = result.try_adjust_type(typ)
             if r_adjusted is None:
                 # make the reason a bit more coherent for people who don't
                 # really know about type inference vs type checking
@@ -1980,8 +1976,7 @@ class ApplicationExpr(TypedExpr):
             # assumption: LFun adds its own parens
             return f"{repr(fun)}{arg_str}"
 
-    def try_adjust_type_local(self, new_type, derivation_reason, assignment,
-                                                                        env):
+    def try_adjust_type_local(self, new_type, derivation_reason, env):
         fun = self.args[0]
         arg = self.args[1]
         (new_fun_type, new_arg_type, new_ret_type) = get_type_system().unify_fr(
@@ -1989,13 +1984,11 @@ class ApplicationExpr(TypedExpr):
         if new_fun_type is None:
             return None
         new_fun = fun.try_adjust_type(new_fun_type,
-                                        derivation_reason=derivation_reason,
-                                        assignment=assignment)
+                                        derivation_reason=derivation_reason)
         if new_fun is None:
             return None
         new_arg = arg.try_adjust_type(new_arg_type,
-                                        derivation_reason=derivation_reason,
-                                        assignment=assignment)
+                                        derivation_reason=derivation_reason)
         if new_arg is None:
             return None
         result = self.copy_local(new_fun, new_arg, type_check=False)
@@ -2014,7 +2007,7 @@ class ApplicationExpr(TypedExpr):
                                                         assignment=assignment)
 
         if result is not None:
-            copy = ApplicationExpr(result, self.args[1])
+            copy = ApplicationExpr(result, self.args[1], assignment=assignment)
             if (remove_guessed):
                 result.type_guessed = False
             return copy
@@ -2041,14 +2034,12 @@ class ApplicationExpr(TypedExpr):
 
         if fun.type != f_type:
             fun = fun.try_adjust_type_caching(f_type,
-                                derivation_reason="Type inference (external)",
-                                assignment=assignment)
+                                derivation_reason="Type inference (external)")
             history = True
 
         if a_type != arg.type:
             arg = arg.try_adjust_type_caching(a_type,
-                                derivation_reason="Type inference (external)",
-                                assignment=assignment)
+                                derivation_reason="Type inference (external)")
             history = True
 
         if fun is None or arg is None:
@@ -2164,11 +2155,9 @@ class Tuple(TypedExpr):
         """Return a python `tuple` version of the Tuple object."""
         return tuple(self.args)
 
-    def try_adjust_type_local(self, unified_type, derivation_reason,
-                                                            assignment, env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         content = [self.args[i].try_adjust_type(unified_type[i],
-                                derivation_reason=derivation_reason,
-                                assignment=assignment)
+                                derivation_reason=derivation_reason)
                     for i in range(len(self.args))]
         return self.copy_local(*content)
 
@@ -2227,7 +2216,6 @@ class TypedTerm(TypedExpr):
         self.derivation = None
         self.defer = False
         self.let = False
-        update_a = False
         self._reduced_cache = []
         if typ is None:
             if assignment is not None and self.op in assignment:
@@ -2290,8 +2278,6 @@ class TypedTerm(TypedExpr):
 
         self.args = list()
         self.latex_op_str = latex_op_str
-        if update_a:
-            assignment[self.op] = self
 
     variable = property(operator.attrgetter('_variable'))
     constant = property(operator.attrgetter('_constant'))
@@ -2366,7 +2352,8 @@ class TypedTerm(TypedExpr):
         if not remove_guessed:
             coerced_op.type_guessed = True
         
-        if assignment is not None and self.op in assignment:
+        if coerced_op is not None and assignment is not None and self.op in assignment:
+            # XX this seems like a dubious side effect...
             assignment[self.op] = coerced_op
         return coerced_op
 
@@ -2634,12 +2621,11 @@ class Partial(TypedExpr):
     def __repr__(self):
         return f"Partial({repr(self.body)}, {repr(self.condition)})"
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
-                                                                    env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         tuple_version = self.meta_tuple()
         revised_type = types.TupleType(unified_type, types.type_t)
         result = tuple_version.try_adjust_type(unified_type, derivation_reason,
-                                                                assignment, env)
+                                                                        env)
         return self.copy_local(result[1], result[2])
         
     def latex_str(self, suppress_parens=False, **kwargs):
@@ -2824,16 +2810,14 @@ class Disjunctive(TypedExpr):
                     % (("\\mid{}").join([a.latex_str(**kwargs)
                                                         for a in self.args])))
     
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
-                                                                        env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         ts = get_type_system()
         l = list()
         for a in self.args:
             t = ts.unify(unified_type, a.type)
             if t is None:
                 continue
-            l.append(a.try_adjust_type(t, derivation_reason=derivation_reason,
-                                          assignment=assignment))
+            l.append(a.try_adjust_type(t, derivation_reason=derivation_reason))
         assert len(l) > 0
         if (len(l) == 1):
             return l[0]
@@ -3258,8 +3242,7 @@ class TupleIndex(SyncatOpExpr):
     def copy_local(self, arg1, arg2, type_check=True):
         return TupleIndex(arg1, arg2)
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
-                                                                        env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         if self.args[1].op in types.type_n.domain:
             ttype = list(self.args[0].type)
             ttype[self.args[1].op] = unified_type
@@ -3898,8 +3881,7 @@ class LFun(BindingOp):
         r.let = self.let
         return r
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
-                                                                        env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         vacuous = False
         # env will not start with bound variable in it
         env.add_var_mapping(self.varname, self.argtype)
@@ -3917,8 +3899,7 @@ class LFun(BindingOp):
 
         if self.type.right != unified_type.right:
             new_body = new_body.try_adjust_type(unified_type.right,
-                                            derivation_reason=derivation_reason,
-                                            assignment=assignment)
+                                            derivation_reason=derivation_reason)
         new_fun = self.copy_local(new_var, new_body)
         env.merge(new_body.get_type_env())
         if self.varname in env.var_mapping:

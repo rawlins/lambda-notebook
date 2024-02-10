@@ -582,8 +582,7 @@ class IotaUnary(BindingOp):
         return LFun(self.vartype, self.body, self.varname).apply(x)
 
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, assignment,
-                                                                        env):
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
         sub_var = TypedTerm(self.varname, unified_type)
         # TODO: does this need to pass in assignment?
         new_condition = self.to_test(sub_var)
