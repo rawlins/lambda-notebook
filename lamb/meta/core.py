@@ -2051,6 +2051,9 @@ class ApplicationExpr(TypedExpr):
                                 assignment=assignment)
             history = True
 
+        if fun is None or arg is None:
+            return None
+
         if fun.let or arg.let:
             fun, arg = let_compact_type_vars(fun, arg)
             fun.let = False
