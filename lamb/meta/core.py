@@ -2232,6 +2232,9 @@ class TypedTerm(TypedExpr):
         if typ is None:
             if assignment is not None and self.op in assignment:
                 self.type = assignment[self.op].type
+                # ensure that we inherit the `let` value from the assignment.
+                # this is crucial for term replacement with type variables!
+                self.let = assignment[self.op].let
                 self.type_guessed = False
             else:
                 self.type = default_type(varname)
@@ -2244,7 +2247,21 @@ class TypedTerm(TypedExpr):
             env = self.calc_type_env()
             if assignment is not None:
                 if self.op in assignment and typ is not None:
-                    env.add_var_mapping(self.op, assignment[self.op].type)
+                    constraint = assignment[self.op]
+                    # in this case, we need to resolve `typ` vs the constraint
+                    # imposed from the assignment. Since the assignment can
+                    # have let-bound types, we need to explicitly handle that
+                    # case, otherwise type variable collisions lead to weird
+                    # results. XX not sure this won't also lead to weird
+                    # results...from the constructor at least, it is possible
+                    # for the fresh variables to persist, as in:
+                    #     meta.TypedTerm("x", typ=tp("X"), assignment={"x": te("x_<X,X>")})
+                    # (gives type <?,?>)
+                    # but, recompacting in this code would be wildly unsafe...
+                    if constraint.let:
+                        constraint = assignment[self.op].freshen_type_vars()
+                    env.add_var_mapping(self.op, constraint.type)
+
             self.type = env.var_mapping[self.op]
             self._type_env = env
 
