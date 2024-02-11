@@ -757,7 +757,7 @@ class TypedExpr(object):
             return None
 
         if self.type == unify_target:
-            self._type_cache_set(self.type, self)            
+            self._type_cache_set(self.type, self)
             return self
         else:
             assert not isinstance(self.op, TypedExpr)
@@ -3397,12 +3397,16 @@ class BindingOp(TypedExpr):
         self.init_var(varname, vartype)
         # TODO: consider overriding __eq__ and __hash__.
         if type_check:
-            sassign = self.scope_assignment(assignment=assignment)
+            # note! here we intentionally construct an assignment that includes
+            # only the bound variable; we don't actually want to *do* variable
+            # replacement generally, and type checking for the rest of the
+            # assignment should be handled elsewhere.
+            sassign = self.scope_assignment()
             try:
                 self.init_body(self.ensure_typed_expr(body, body_type,
                                                         assignment=sassign))
             except types.TypeMismatch as e:
-                e.error = f"Failed to ensure body type {body_type} for operator class `{self.canonical_name}`"
+                e.error = f"Failed to ensure body type `{body_type}` for operator class `{self.canonical_name}`"
                 raise e
             body_env = self.body.get_type_env()
             if self.varname in body_env.var_mapping: # binding can be vacuous
