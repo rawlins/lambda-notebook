@@ -220,6 +220,9 @@ def parse_error_wrap(msg, paren_struc=None, wrap_all=True, **kwargs):
         raise e
 
 
+errors_raise = False
+
+
 # generalized context manager for displaying lnb errors in a sensible way. Tries
 # to display them, and if not, falls back on logging.
 @contextmanager
@@ -237,13 +240,15 @@ def error_manager(summary=None):
         except (TypeParseError,
                 TypeMismatch,
                 ParseError) as e:
-            if not display:
-                raise e
             display(e)
+            if errors_raise or not display:
+                raise e
     except Exception as e:
         if summary:
             logger().error(summary)
         logger().error(str(e))
+        if errors_raise:
+            raise e
 
 def magic_opt(optname, line):
     # simple and dumb, maybe improve some day
@@ -256,6 +261,9 @@ def parse_te(line, env=None, use_env=False):
     # implementation of the %te magic
     from lamb.meta import te
     line = remove_comments(line)
+    glob, line = magic_opt("globals", line)
+    if glob:
+        use_env = True
     reduce, line = magic_opt("reduce", line)
     simplify, line = magic_opt("simplify", line)
     if line and line[-1] == ";":
