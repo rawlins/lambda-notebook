@@ -91,6 +91,12 @@ def ts_unify_with(a, b, error=None):
     by the type system.
     """
     try:
+        # note! this function doesn't recompact type variables, because it
+        # doesn't know the context...
+        if a.let:
+            a = a.freshen_type_vars()
+        if b.let:
+            b = b.freshen_type_vars()
         # for the most part, the type system won't actually raise. The case
         # where it does is occurs check failures.
         result = get_type_system().unify(a.type, b.type, allow_raise=True)
