@@ -1380,6 +1380,7 @@ class TypedExpr(object):
     def under_assignment(self, assignment, track_all_names=False):
         """Use `assignment` to replace any appropriate variables in `self`."""
         # do this first so that any errors show up before the recursive step
+        # this does not set a derivation!
         if assignment is None:
             a2 = dict()
         else:
@@ -1935,7 +1936,7 @@ class ApplicationExpr(TypedExpr):
             # bit of a hack: build a derivation with the deferred version as
             # the origin
             old = ApplicationExpr(fun, arg, defer=True)
-            derived(self, old, desc="Type inference")    
+            derived(self, old, desc="Type inference")
         if isinstance(args[0], LFun):
             args[1].type_not_guessed()
         else:

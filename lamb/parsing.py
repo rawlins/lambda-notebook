@@ -310,8 +310,15 @@ def parse_right(left_s, right_s, env, constants=False):
         with parse_error_wrap(f"Parsing of assignment to `{left_s}` failed"):
             right_side = te(right_s.strip(), assignment=env, let=True)
             right_side = right_side.regularize_type_env(env, constants=constants)
-            right_side = right_side.under_assignment(env)
-            right_side = right_side.simplify_all(reduce=True)
+            assigned = right_side.under_assignment(env)
+            if assigned != right_side:
+                from lamb.meta.ply import derived
+                # subsitution via assignment may create derivational steps for
+                # the type inference that aren't compatible with the derivation
+                # we are trying to build; clobber them
+                assigned.derivation = None
+                assigned = derived(assigned, right_side, "Variable substitution from context")
+            right_side = assigned.simplify_all(reduce=True)
 
     return right_side
 
