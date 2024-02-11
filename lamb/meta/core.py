@@ -4,7 +4,7 @@ from numbers import Number
 
 import lamb
 from lamb import types, parsing, utils
-from lamb.utils import ensuremath
+from lamb.utils import ensuremath, dbg_print
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from lamb.types import type_property, type_transitive, BasicType, FunType
 # meta.ply is the only meta module imported by core
@@ -711,25 +711,19 @@ class TypedExpr(object):
         # reset on copy without explicit handling
         self._reduced_cache = [None] * len(self.args)
 
-    def _type_cache_get(self, t):
+    @property
+    def _type_cache(self):
         try:
-            cache = self._type_adjust_cache
+            return self._type_adjust_cache
         except AttributeError:
             self._type_adjust_cache = dict()
-            return False
-        if t in cache:
-            return cache[t] #.deep_copy()
-        else:
-            return False
+            return self._type_adjust_cache
+
+    def _type_cache_get(self, t):
+        return self._type_cache.get(t, False)
 
     def _type_cache_set(self, t, result):
-        try:
-            cache = self._type_adjust_cache
-        except AttributeError:
-            self._type_adjust_cache = dict()
-            cache = self._type_adjust_cache
-        cache[t] = result
-
+        self._type_cache[t] = result
 
     def try_adjust_type_caching(self, new_type, derivation_reason=None,
                                             let_step=None):

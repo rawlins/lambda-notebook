@@ -3,6 +3,7 @@ import re, collections
 
 from lamb import display, types, utils
 from lamb.types import TypeMismatch, BasicType
+from lamb.utils import dbg_print
 
 # code for manipulation and normalization of TypedExprs.
 # this is imported by .core
@@ -473,8 +474,7 @@ def term_replace_unify(expr, m, track_all_names=False):
             else:
                 return result
 
-    r = term_transform_rebuild(expr, m.keys(), transform)
-    return r
+    return term_transform_rebuild(expr, m.keys(), transform)
 
 def variable_convert(expr, m):
     from .core import TypedTerm
@@ -521,8 +521,9 @@ def term_transform_rebuild(expr, dom, fun):
         dirty = False
         for i in range(len(expr.args)):
             seq.append(term_transform_rebuild(expr.args[i], targets, fun))
-            if seq[-1] != expr.args[i]:
+            if not dirty and seq[-1] != expr.args[i]:
                 dirty = True
+
         if dirty:
             expr = expr.copy_local(*seq)
     return expr

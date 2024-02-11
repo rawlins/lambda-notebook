@@ -285,15 +285,17 @@ class ComplexDomainSet(SimpleInfiniteSet):
             "Can't check membership for abstract complex domain sets")
 
 
+# this wrapper class is currently trivial. It could be removed, but it may be
+# useful if smarter cache handling of variable types were to ever return
 class CachableType:
     def __init__(self, t):
         self.t = t
 
     def __eq__(self, other):
-        return self.t._type_eq(other.t, cache=True)
+        return self.t._type_eq(other.t)
 
     def __hash__(self):
-        return self.t._type_hash(cache=True)
+        return self.t._type_hash()
 
     def __repr__(self):
         return repr(self.t)
@@ -318,12 +320,12 @@ class TypeConstructor(object):
     def __hash__(self):
         return self._type_hash()
 
-    def _type_eq(self, other, cache=False):
+    def _type_eq(self, other):
         # in principle, could use the sequence interface to implement this
         # more generically
         raise NotImplementedError
 
-    def _type_hash(self, cache=False):
+    def _type_hash(self):
         raise NotImplementedError
 
     def __len__(self):
@@ -513,13 +515,13 @@ class BasicType(TypeConstructor):
     def copy_local(self):
         return BasicType(self.symbol, self.domain, self.name)
 
-    def _type_eq(self, other, cache=False):
+    def _type_eq(self, other):
         if isinstance(other, BasicType):
             return self.symbol == other.symbol
         else:
             return False
 
-    def _type_hash(self, cache=False):
+    def _type_hash(self):
         return hash(self.symbol)
 
     def __repr__(self):
@@ -682,16 +684,16 @@ class FunType(TypeConstructor):
     def __repr__(self):
         return "<%s,%s>" % (self.left, self.right)
 
-    def _type_eq(self, other, cache=False):
+    def _type_eq(self, other):
         if isinstance(other, FunType):
-            return (self.left._type_eq(other.left, cache=cache)
-                and self.right._type_eq(other.right, cache=cache))
+            return (self.left._type_eq(other.left)
+                and self.right._type_eq(other.right))
         else:
             return False
 
-    def _type_hash(self, cache=False):
-        return (self.left._type_hash(cache=cache)
-                ^ self.right._type_hash(cache=cache))
+    def _type_hash(self):
+        return (self.left._type_hash()
+                ^ self.right._type_hash())
 
     def __call__(self, other):
         return FunType(self, other)
@@ -806,14 +808,14 @@ class SetType(TypeConstructor):
         return ensuremath("\\left\\{%s\\right\\}"
                                             % self.content_type.latex_str())
 
-    def _type_eq(self, other, cache=False):
+    def _type_eq(self, other):
         if isinstance(other, SetType):
-            return self.content_type._type_eq(other.content_type, cache=cache)
+            return self.content_type._type_eq(other.content_type)
         else:
             return False
 
-    def _type_hash(self, cache=False):
-        return hash("Set") ^ self.content_type._type_hash(cache=cache)
+    def _type_hash(self):
+        return hash("Set") ^ self.content_type._type_hash()
 
     @classmethod
     def parse(cls, s, i, parse_control_fun):
@@ -916,7 +918,7 @@ class TupleType(TypeConstructor):
         return iter(self.signature)
 
 
-    def _type_eq(self, other, cache=False):
+    def _type_eq(self, other):
         if not isinstance(other, TupleType):
             return False
         if len(self.signature) != len(other.signature):
@@ -924,10 +926,10 @@ class TupleType(TypeConstructor):
         return all((self.signature[i]._type_eq(other.signature[i])
                                         for i in range(len(self.signature))))
 
-    def _type_hash(self, cache=False):
+    def _type_hash(self):
         # converting to tuple is necessary: generators hash but their hash
         # is not determined by (what would be their) content!
-        return hash(tuple(t._type_hash(cache=cache) for t in self.signature))
+        return hash(tuple(t._type_hash() for t in self.signature))
 
     def __call__(self, other):
         return FunType(self, other)
@@ -1281,7 +1283,7 @@ class VariableType(TypeConstructor):
         else:
             return self
 
-    def _type_eq(self, other, cache=False):
+    def _type_eq(self, other):
         """This implements token equality.  This is _not_ semantic equality due
         to type variable binding.
         """
@@ -1293,9 +1295,12 @@ class VariableType(TypeConstructor):
     def sort_key(self):
         return (self.symbol, self.number)
 
-    def _type_hash(self, cache=False):
+    def _type_eq(self, other):
+        return isinstance(other, VariableType) and self._key_str == other._key_str
+
+    def _type_hash(self):
         return hash(self._key_str)
-    
+
     def is_fresh(self):
         return False
 
@@ -1363,24 +1368,12 @@ class UnknownType(VariableType):
         return True
 
     def __repr__(self):
+        if utils._debug_indent:
+            return f"?{self.identifier}"
         return "?"
 
     def latex_str(self):
         return ensuremath("?")
-
-    def _type_eq(self, other, cache=False):
-        # unknown types hash together for caching purposes:
-        if isinstance(other, UnknownType) and cache:
-            return True
-        else:
-            return super()._type_eq(other, cache=cache)
-
-    def _type_hash(self, cache=False):
-        if cache:
-            # hash any ? variables together for cache purposes
-            return hash('?')
-        else:
-            return super()._type_hash(cache=cache)
 
     def internal(self):
         # n.b. the return value compares equal to `self`; this can be used to
@@ -1462,14 +1455,14 @@ class DisjunctiveType(TypeConstructor):
         super().__init__()
         self.store_functional_info()
         
-    def _type_eq(self, other, cache=False):
+    def _type_eq(self, other):
         # no variable types allowed, it is safe to ignore `cache`
         if isinstance(other, DisjunctiveType):
             return self.disjuncts == other.disjuncts
         else:
             return False
 
-    def _type_hash(self, cache=False):
+    def _type_hash(self):
         # no variable types allowed, it is safe to ignore `cache`
         return hash(tuple(self.type_list))
         
@@ -2067,10 +2060,8 @@ class UnificationResult(object):
         self.mapping = mapping
         self.trivial = injective(mapping) and not strengthens(mapping)
 
-        # in principle it's certainly possible to handle the case where the
-        # principal type has ? variables, but it's very complicated to get
-        # right, and (so far) it doesn't seem important to optimize
-        # (XX does ? ever show up in mapping?)
+        # XX possibly not  worth caching when any of the ingredients have
+        # fresh variables. Compacting might work?
         if update_cache and not self.principal.has_fresh_variables():
             update_unify_cache(self)
 
@@ -2211,6 +2202,8 @@ class PolyTypeSystem(TypeSystem):
         # is guaranteed. (Polymorphic unification is only symmetric up to
         # alphabetic variants.)
         if self.type_ranking[t1.__class__] <= self.type_ranking[t2.__class__]:
+            # XX if t1=t2, the recursion could be short-circuited, but I'm
+            # unclear if this is a useful optimization
             return t2.unify(t1, self._unify_r_swap, assignment=assignment)
         else:
             return t1.unify(t2, self._unify_r, assignment=assignment)

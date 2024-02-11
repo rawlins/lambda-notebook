@@ -11,6 +11,26 @@ use_nltk = False # for the moment this is off by default: subprocess in
                  # interface.  I'm not sure what's going on.
 # to turn on full nltk support, call reload_lamb(use_nltk_tree=True)
 
+
+# output debugging utilities for dealing with recursive calls via indentation
+# the following could be made more elegant in various ways, but it gets the
+# job done...
+_debug_indent = 0
+_debug_suppress = False
+
+# reset/decrease applies before the print, increase after
+def dbg_print(*args, increase=False, decrease=False, reset=False):
+    global _debug_indent, _debug_suppress
+    if reset:
+        _debug_indent = 0
+    if decrease and _debug_indent > 0:
+        _debug_indent -= 4
+    if args and not _debug_suppress:
+        print(" " * _debug_indent, *args)
+    if increase:
+        _debug_indent += 4
+
+
 def get_tree_class():
     if not use_nltk:
         from lamb.tree_mini import Tree
