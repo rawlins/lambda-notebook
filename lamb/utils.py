@@ -277,8 +277,8 @@ def set_latex_repr(d):
     return "{" + ", ".join(r) + "}"
 
 
-def parens(s):
-    if len(s) > 0 and (not s[0] == "(" or not s[-1] == ")"):
+def parens(s, force=False):
+    if force or len(s) > 0 and (not s[0] == "(" or not s[-1] == ")"):
         return f"({s})"
     else:
         return s

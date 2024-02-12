@@ -1969,7 +1969,9 @@ class ApplicationExpr(TypedExpr):
 
     def __repr__(self):
         fun = self.args[0]
-        arg_str = utils.parens(repr(self.args[1]))
+        # ApplicationExpr can get things like ()(). (Any other cases?)
+        arg_str = utils.parens(repr(self.args[1]),
+            force=isinstance(self.args[1], ApplicationExpr))
 
         if isinstance(fun, CustomTerm):
             return fun.custom_appl(arg_str) # TODO: ???
