@@ -1724,7 +1724,7 @@ class TypedExpr(object):
         """Maximally reduce function-argument combinations in `self`."""
 
         # uncomment this to see how bad this function is...
-        # print("reduce_all on '%s'" % repr(self))
+        # dbg_print(f"reduce_all on '{repr(self)}'")
         result = self
 
         # `subreducible` calls will build a chart for subexpressions they
@@ -2062,9 +2062,10 @@ class ApplicationExpr(TypedExpr):
 
     def reducible(self):
         if (isinstance(self.args[0], LFun)
-                        or isinstance(self.args[0], Disjunctive)
-                        or self.args[0].type.functional()
-                            and self.args[0].meta() and self.args[1].meta()):
+                or isinstance(self.args[0], Disjunctive)
+                or self.args[0].type.functional()
+                        and self.args[0].meta()
+                        and self.args[1].meta()):
             return True
         return False
 

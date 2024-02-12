@@ -367,6 +367,10 @@ def beta_reduce_ts(t, varname, subst):
             return t
         # we will be changing something in this expression, but not at this
         # level of recursion.
+
+        # We check subreducible early so that the chart gets filled in as
+        # needed before substitution.
+        subst_reducible = subst.subreducible() is not None
         rcache = t._reduced_cache
         parts = [beta_reduce_ts(p, varname, subst) for p in t]
         t = t.copy_local(*parts)
@@ -390,13 +394,11 @@ def beta_reduce_ts(t, varname, subst):
         # (etc)
 
         # conditional chart modification. These are exactly the two cases where
-        # an existing `True` in the chart may need to be revised. Note that
-        # the subreducible() call forces the chart for `subst` to be at least
-        # partialy filled in.
-        if isinstance(subst, LFun) or subst.subreducible() is not None:
+        # an existing `True` in the chart may need to be revised.
+        if isinstance(subst, LFun) or subst_reducible:
             for i in range(len(rcache)):
                 if (rcache[i] == False # unchanged, reduction won't cause a subreduction
-                        # checks t[i].reducible():
+                        # checks cache generated earlier and t[i].reducible():
                         or t[i]._is_reduced_caching() == False):
                     t._reduced_cache[i] = False
                 else:
