@@ -343,7 +343,7 @@ class Assignment(MutableMapping):
 
     def text(self):
         if isinstance(self.base, Assignment):
-            a_strs = [("%s/%s" % (self.store[k][0], k))
+            a_strs = [("%s/%s" % (self.store[k], k))
                                                     for k in self.store.keys()]
             return "%s[%s]" % (self.base.text(), ",".join(a_strs))
         else:

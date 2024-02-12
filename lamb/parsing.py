@@ -445,8 +445,12 @@ def parse_line(s, env=None, transforms=None, ambiguity=False):
         else:
             return (dict(), env)
     except Exception as e:
+        global errors_raise
+
         logger().error("Parsing failed with exception:")
         logger().error(e)
+        if errors_raise:
+            raise e
         
         return (dict(), env)
 

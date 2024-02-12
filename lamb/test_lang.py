@@ -3,6 +3,8 @@ import unittest
 import lamb
 from . import lang, parsing, meta
 
+parsing.errors_raise = True
+
 # used across multiple tests
 basic_testcases = [
     "||test1|| = L x_e : P_<e,t>(x)",
