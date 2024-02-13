@@ -246,7 +246,9 @@ def error_manager(summary=None):
     except Exception as e:
         if summary:
             logger().error(summary)
-        logger().error(str(e))
+        # putting the class name may be redundant, but sometimes str doesn't
+        # give it (example: `KeyError`)
+        logger().error(f"[{e.__class__.__name__}] {str(e)}")
         if errors_raise:
             raise e
 
