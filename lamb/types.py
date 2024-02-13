@@ -2016,6 +2016,7 @@ def freshen_type_set(types):
     return {t: UnknownType() for t in types}
 
 
+enable_cache = True
 _unify_cache = {}
 
 
@@ -2043,6 +2044,8 @@ def reset_unify_cache():
 
 
 def get_unify_cached(t1, t2):
+    if not enable_cache:
+        return None
     t1 = CachableType(t1)
     if t1 not in _unify_cache:
         return None
@@ -2062,6 +2065,7 @@ class UnificationResult(object):
 
         # XX possibly not  worth caching when any of the ingredients have
         # fresh variables. Compacting might work?
+        update_cache = update_cache and enable_cache
         if update_cache and not self.principal.has_fresh_variables():
             update_unify_cache(self)
 
