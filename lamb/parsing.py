@@ -279,6 +279,8 @@ def parse_te(line, env=None, use_env=False):
         result = te(line, assignment=var_env)
         if is_te(result):
             result = result.regularize_type_env(var_env, constants=True)
+            if glob:
+                result = under_assignment(result, var_env)
             # TODO: should calling simplify_all simply entail reduce_all in the
             # first place?
             if reduce or simplify:
@@ -313,6 +315,18 @@ def try_parse_item_name(s, env=None, ambiguity=False):
         index = int(index_str[1:-1])
     return (lex_name, index)
 
+# used both here and for %te
+def under_assignment(right_side, env):
+    assigned = right_side.under_assignment(env)
+    if assigned != right_side:
+        from lamb.meta.ply import derived
+        # subsitution via assignment may create derivational steps for
+        # the type inference that aren't compatible with the derivation
+        # we are trying to build; clobber them
+        assigned.derivation = None
+        assigned = derived(assigned, right_side, "Variable substitution from context")
+    return assigned
+
 def parse_right(left_s, right_s, env, constants=False):
     from lamb.meta import te
     right_side = None
@@ -320,15 +334,8 @@ def parse_right(left_s, right_s, env, constants=False):
         with parse_error_wrap(f"Parsing of assignment to `{left_s}` failed"):
             right_side = te(right_s.strip(), assignment=env, let=True)
             right_side = right_side.regularize_type_env(env, constants=constants)
-            assigned = right_side.under_assignment(env)
-            if assigned != right_side:
-                from lamb.meta.ply import derived
-                # subsitution via assignment may create derivational steps for
-                # the type inference that aren't compatible with the derivation
-                # we are trying to build; clobber them
-                assigned.derivation = None
-                assigned = derived(assigned, right_side, "Variable substitution from context")
-            right_side = assigned.simplify_all(reduce=True)
+            right_side = under_assignment(right_side, env)
+            right_side = right_side.simplify_all(reduce=True)
 
     return right_side
 
