@@ -71,7 +71,7 @@ class MetaTerm(core.TypedTerm):
             self.suppress_type = True
 
         # not set by superclass with type_check=False
-        self._type_env = self.calc_type_env()
+        self.set_type_env(self.calc_type_env())
         self.assignment_name = None
 
     def check_type_domain(self, typ=None, setfun=False):

@@ -93,10 +93,8 @@ def ts_unify_with(a, b, error=None):
     try:
         # note! this function doesn't recompact type variables, because it
         # doesn't know the context...
-        if a.let:
-            a = a.freshen_type_vars()
-        if b.let:
-            b = b.freshen_type_vars()
+        a = a.freshen_type_vars()
+        b = b.freshen_type_vars()
         # for the most part, the type system won't actually raise. The case
         # where it does is occurs check failures.
         result = get_type_system().unify(a.type, b.type, allow_raise=True)
@@ -441,15 +439,14 @@ def op_expr_factory(op, *args):
 
 class TypeEnv(object):
     def __init__(self, var_mapping=None, type_mapping=None):
-        self.type_var_set = set()
-        if type_mapping is None:
-            self.type_mapping = dict()
-        else:
-            self.type_mapping = type_mapping
         if var_mapping is None:
-            self.var_mapping = dict()
-        else:
-            self.var_mapping = var_mapping
+            var_mapping = dict()
+        if type_mapping is None:
+            type_mapping = dict()
+
+        self.type_var_set = set()
+        self.type_mapping = type_mapping
+        self.var_mapping = var_mapping
         self.update_var_set()
 
     def _repr_html_(self):
@@ -490,18 +487,17 @@ class TypeEnv(object):
 
     def try_add_var_mapping(self, vname, typ):
         if vname in self.var_mapping:
-            principal = self.try_unify(self.var_mapping[vname], typ,
-                                                        update_mapping=True)
+            target_type = self.var_mapping[vname]
+            # XX probably no need to store mappings for fresh var specializations?
+            principal = self.try_unify(target_type, typ, update_mapping=True)
             if principal is None:
                 return None
-            
-            assert principal is not None
             self.var_mapping[vname] = principal
             self.update_type_vars()
         else:
-            assert typ is not None
             self.var_mapping[vname] = typ
             principal = typ
+
         self.add_type_to_var_set(principal)
         return principal
 
@@ -548,8 +544,13 @@ class TypeEnv(object):
     def add_type_mapping(self, type_var, typ, defer=False):
         principal = self.try_add_type_mapping(type_var, typ, defer=defer)
         if principal is None:
-            raise TypeMismatch(self.type_mapping[type_var], typ,
-                error="Failed to unify type variable %s across contexts" % type_var)
+            if type_var in self.type_mapping:
+                raise TypeMismatch(self.type_mapping[type_var], typ,
+                    error=f"Failed to unify type variable {type_var} across contexts")
+            else:
+                # XX better error message here
+                raise TypeMismatch(type_var, typ,
+                    error=f"Failed to unify type variable across contexts")
         return principal
           
 
@@ -575,7 +576,7 @@ class TypeEnv(object):
 
     def copy(self):
         env = TypeEnv(self.var_mapping.copy(), self.type_mapping.copy())
-        env.type_var_set = self.type_var_set.copy()
+        env.type_var_set = self.type_var_set.copy() # redundant with constructor?
         return env
 
     def __repr__(self):
@@ -774,7 +775,7 @@ class TypedExpr(object):
                 principal = env.try_add_var_mapping(new_term.op, new_type)
                 if principal is None:
                     return None
-                new_term._type_env = env
+                new_term.set_type_env(env)
                 new_term.type = principal
                 return derived(new_term, self, derivation_reason)
             else:
@@ -784,7 +785,7 @@ class TypedExpr(object):
                 if result is not None:
                     result = result.under_type_assignment(env.type_mapping)
                     if result is not None:
-                        result._type_env = env
+                        result.set_type_env(env)
                 if result is None:
                     # TODO: can this arise in current versions? Maybe convert
                     # to an exception? (This error is pretty old...)
@@ -803,14 +804,21 @@ class TypedExpr(object):
                                                         % type(self).__name__)
         return None
 
-    def get_type_env(self, force_recalc=False):
-        if force_recalc:
-            self._type_env = self.calc_type_env(recalculate=force_recalc)
+    @property
+    def _type_env(self):
         try:
-            return self._type_env
+            return self._type_env_store
         except AttributeError:
-            self._type_env = self.calc_type_env(recalculate=force_recalc)
-            return self._type_env
+            self._type_env_store = None
+            return self._type_env_store
+
+    def set_type_env(self, env):
+        self._type_env_store = env
+
+    def get_type_env(self, force_recalc=False):
+        if force_recalc or self._type_env is None:
+            self.set_type_env(self.calc_type_env(recalculate=force_recalc))
+        return self._type_env
 
     def calc_type_env(self, recalculate=False):
         env = TypeEnv()
@@ -1242,7 +1250,7 @@ class TypedExpr(object):
     def copy(self):
         """Make a copy of the expression.  Will not produce a deep copy.
 
-        Relies on correctly implement `copy_local`.
+        Relies on a correctly implemented `copy_local`.
         """
         return self.copy_local(*self)
 
@@ -1263,14 +1271,6 @@ class TypedExpr(object):
                 accum.append(p)
         return self.copy_local(*accum, type_check=False)
 
-    def type_env(self, constants=False, target=None, free_only=True):
-        env = dict()
-        for part in self:
-            if isinstance(part, TypedExpr):
-                env = merge_type_envs(env, part.type_env(constants=constants,
-                                            target=target, free_only=free_only))
-        return env
-
     def regularize_type_env(self, assignment=None, constants=False,
                                                                 target=None):
         if assignment is None:
@@ -1285,8 +1285,12 @@ class TypedExpr(object):
                                             store_mapping=store_mapping)
 
 
-    def freshen_type_vars(self, target=None, used_vars_only=False,
-                                                        store_mapping=False):
+    def freshen_type_vars(self, target=None,
+                                used_vars_only=False,
+                                store_mapping=False,
+                                force=False):
+        if not self.let and not force:
+            return self
         history_env = self.get_type_env()
         if len(history_env.type_var_set) == 0:
             return self
@@ -1368,11 +1372,11 @@ class TypedExpr(object):
         if reset:
             result.get_type_env(force_recalc=True)
         if merge_intersect:
-            result._type_env = result.get_type_env().intersect_merge(
-                                                TypeEnv(type_mapping=mapping))
+            result.set_type_env(result.get_type_env().intersect_merge(
+                                                TypeEnv(type_mapping=mapping)))
         else:
-            result._type_env = result.get_type_env().merge(
-                                                TypeEnv(type_mapping=mapping))
+            result.set_type_env(result.get_type_env().merge(
+                                                TypeEnv(type_mapping=mapping)))
         # need to set a derivation step for this in the calling function.
         result.derivation = self.derivation
         return result
@@ -1388,8 +1392,6 @@ class TypedExpr(object):
                                                         for key in assignment}
         return term_replace_unify(self, a2, track_all_names=track_all_names)
 
-    # TODO: can the type env be used instead? It is effectively already
-    # memoizing a superset of this information
     def free_terms(self, var_only=False):
         """Find the set of variables that are free in the typed expression.
         """
@@ -2020,10 +2022,8 @@ class ApplicationExpr(TypedExpr):
 
     @classmethod
     def fa_type_inference(cls, fun, arg, assignment):
-        if fun.let:
-            fun = fun.freshen_type_vars()
-        if arg.let:
-            arg = arg.freshen_type_vars()
+        fun = fun.freshen_type_vars()
+        arg = arg.freshen_type_vars()
         history = False
         try:
             (f_type, a_type, out_type) = get_type_system().unify_fa(fun.type, arg.type)
@@ -2049,6 +2049,7 @@ class ApplicationExpr(TypedExpr):
             return None
 
         if fun.let or arg.let:
+            # XX this looks very risky when dealing with substitutions?
             fun, arg = let_compact_type_vars(fun, arg)
             fun.let = False
             arg.let = False
@@ -2220,13 +2221,15 @@ class TypedTerm(TypedExpr):
         self.derivation = None
         self.defer = False
         self.let = False
+        self.from_assignment = None
         self._reduced_cache = []
         if typ is None:
             if assignment is not None and self.op in assignment:
-                self.type = assignment[self.op].type
+                self.from_assignment = assignment[self.op]
+                self.type = self.from_assignment.type
                 # ensure that we inherit the `let` value from the assignment.
                 # this is crucial for term replacement with type variables!
-                self.let = assignment[self.op].let
+                self.let = self.from_assignment.let
                 self.type_guessed = False
             else:
                 self.type = default_type(varname)
@@ -2238,8 +2241,11 @@ class TypedTerm(TypedExpr):
                                               # place safely with this code here
             env = self.calc_type_env()
             if assignment is not None:
+                # the assignment check here is non-overlapping with the above
+                # code, dependent on whether a type was or wasn't locally
+                # specified. (TODO: could be cleaner?)
                 if self.op in assignment and typ is not None:
-                    constraint = assignment[self.op]
+                    self.from_assignment = assignment[self.op]
                     # in this case, we need to resolve `typ` vs the constraint
                     # imposed from the assignment. Since the assignment can
                     # have let-bound types, we need to explicitly handle that
@@ -2250,12 +2256,11 @@ class TypedTerm(TypedExpr):
                     #     meta.TypedTerm("x", typ=tp("X"), assignment={"x": te("x_<X,X>")})
                     # (gives type <?,?>)
                     # but, recompacting in this code would be wildly unsafe...
-                    if constraint.let:
-                        constraint = assignment[self.op].freshen_type_vars()
+                    constraint = self.from_assignment.freshen_type_vars()
                     env.add_var_mapping(self.op, constraint.type)
 
             self.type = env.var_mapping[self.op]
-            self._type_env = env
+            self.set_type_env(env)
 
         self.suppress_type = False
         from .meta import MetaTerm
@@ -2287,28 +2292,22 @@ class TypedTerm(TypedExpr):
     constant = property(operator.attrgetter('_constant'))
 
     def copy(self):
-        return TypedTerm(self.op, typ=self.type)
+        return self.copy_local()
 
     def copy_local(self, type_check=True):
         result = TypedTerm(self.op, typ=self.type,
                                     latex_op_str=self.latex_op_str,
                                     type_check=type_check)
         if not type_check:
-            result._type_env = self._type_env.copy()
+            result.set_type_env(self.get_type_env().copy())
         result.type_guessed = self.type_guessed
+        result.from_assignment = self.from_assignment
         return result
 
     def calc_type_env(self, recalculate=False):
         env = TypeEnv()
         env.add_var_mapping(self.op, self.type)
         return env
-
-    def type_env(self, constants=False, target=None, free_only=True):
-        if self._constant and not constants:
-            return set()
-        if not target or self.op in target:
-            return {self.op: self}
-        return set()
 
     def free_terms(self, var_only=False):
         if not var_only or self._variable:
@@ -2441,6 +2440,9 @@ class CustomTerm(TypedTerm):
                                    suppress_type=self.suppress_type,
                                    small_caps=self.sc,
                                    typ=self.type)
+
+    def copy_local(self):
+        return self.copy()
 
     def copy(self, op):
         return CustomTerm(op, custom_english=self.custom,
@@ -3593,14 +3595,6 @@ class BindingOp(TypedExpr):
         if self.varname in sub_env.var_mapping:
             del sub_env.var_mapping[self.varname]
         return sub_env
-
-    def type_env(self, constants=False, target=None, free_only=True):
-        sub_env = self.body.type_env(constants=constants, target=target,
-                                                        free_only=free_only)
-        if free_only and self.varname in sub_env: # binding can be vacuous
-            del sub_env[self.varname]
-        return sub_env
-
 
     def vacuous(self):
         """Return true just in case the operator's variable is not free in the

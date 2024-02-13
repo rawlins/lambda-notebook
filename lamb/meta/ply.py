@@ -1005,10 +1005,9 @@ def derived(result, origin,
     elif isinstance(result, TypedTerm) and result.derivation is None:
         try:
             # need to manually copy the typeenv??  TODO: double check...
-            tenv = result._type_env
-            # avoid mixing up derivations on terms.  TODO: how bad is this?
+            tenv = result._type_env_store
             result = result.copy()
-            result._type_env = tenv
+            result._type_env_store = tenv
         except AttributeError: # no _type_env set
             result = result.copy()
     trivial = False
