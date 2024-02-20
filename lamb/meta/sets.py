@@ -197,14 +197,11 @@ class ListedSet(TypedExpr):
         self.type = SetType(typ)
         self.set_simplified = False
 
-    def copy(self):
-        return self.copy_local(*self.args)
-
     def copy_local(self, *args, type_check=True):
         # explicit handling of empty sets in order to get the type right
         if len(args) == 0:
             return emptyset(self.type)
-        return ListedSet(args)
+        return self.copy_core(ListedSet(args))
 
     @classmethod
     def join(self, l):
@@ -357,12 +354,6 @@ class SetContains(SyncatOpExpr):
         arg1 = self.ensure_typed_expr(arg1, arg2.type.content_type)
         super().__init__(type_t, arg1, arg2, tcheck_args=False)
 
-    def copy(self):
-        return SetContains(self.args[0], self.args[1])
-
-    def copy_local(self, arg1, arg2, type_check=True):
-        return SetContains(arg1, arg2)
-
     def simplify(self, **sopts):
         if isinstance(self.args[1], ConditionSet):
             derivation = self.derivation
@@ -430,13 +421,6 @@ class BinarySetOp(SyncatOpExpr):
         if len(args) != 2:
             return False
         return check_set_types(args[0], args[1]) is not None
-
-    def copy(self):
-        return self.copy_local(*self.args)
-
-    def copy_local(self, *args, type_check=True):
-        # can this technique be pushed into TypedExpr?
-        return self.__class__(*args)
 
     @classmethod
     def random(cls, ctrl, max_type_depth=1, typ=None):

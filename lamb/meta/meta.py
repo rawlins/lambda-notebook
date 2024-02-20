@@ -140,12 +140,12 @@ class MetaTerm(core.TypedTerm):
         return self.copy_local()
 
     def copy_local(self, type_check=True):
-        r = MetaTerm(self.op, typ=self.type)
+        r = self.copy_core(MetaTerm(self.op, typ=self.type))
         r.latex_op_str = self.latex_op_str
         r.assignment_name = self.assignment_name
         return r
 
-    def under_assignment(self, assignment):
+    def under_assignment(self, assignment, **kwargs):
         # ensure that these terms are completely inert to assignments
         return self
 

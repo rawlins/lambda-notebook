@@ -1368,12 +1368,17 @@ class UnknownType(VariableType):
         return True
 
     def __repr__(self):
+        # TODO: this is still handled badly. For the sake of user-facing `?`
+        # types, we can't print the identifier (as the parser calls repr), but
+        # once these types are out in the wild, the identifier might matter.
+        # it's more or less a bug if the user ever sees a ? type...
         if utils._debug_indent:
             return f"?{self.identifier}"
         return "?"
 
     def latex_str(self):
-        return ensuremath("?")
+        # always print identifier here -- no need to worry about it parsing
+        return ensuremath(f"?_{{{self.identifier}}}")
 
     def internal(self):
         # n.b. the return value compares equal to `self`; this can be used to
@@ -1925,7 +1930,7 @@ def safe_vars(typ, var_list):
     return result
 
 def vars_in_env(type_env, keys=False):
-    """Where `type_env` is a mapping to types, return all type varaibles found
+    """Where `type_env` is a mapping to types, return all type variables found
     in the mapping. If `keys` is true, collect all keys."""
     unsafe = set()
     for k in type_env:

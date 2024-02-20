@@ -440,7 +440,12 @@ def find_constant_name(symbol, m):
 def term_replace_unify(expr, m, track_all_names=False):
     from .core import TypedExpr, ts_unify_with
     def transform(e):
-        result = TypedExpr.factory(m[e.op])
+        # XX the `freshen` call here ensures that `let` substitutions will
+        # work into a context where nothing will be locally `let` bound
+        # (because the parsing pass already handled type inference).
+        # This is something of a temporary measure, until assignments
+        # support full let-polymorphism...
+        result = TypedExpr.factory(m[e.op]).freshen_type_vars()
         if result.meta() and e.constant or track_all_names:
             # XX revisit exact conditions under which this is set.
             # should be impossible for e to be a MetaTerm here

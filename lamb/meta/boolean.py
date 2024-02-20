@@ -307,10 +307,10 @@ class ForallUnary(BindingOp):
                                 assignment=assignment, type_check=type_check)
 
     def copy(self):
-        return ForallUnary(self.vartype, self.body, self.varname)
+        return self.copy_core(ForallUnary(self.vartype, self.body, self.varname))
 
     def copy_local(self, var, arg, type_check=True):
-        return ForallUnary(var, arg, type_check=type_check)
+        return self.copy_core(ForallUnary(var, arg, type_check=type_check))
 
     def to_conjunction(self, assignment=None):
         if self[0].type.domain.finite:
@@ -383,10 +383,10 @@ class ExistsUnary(BindingOp):
                     assignment=assignment, type_check=type_check)
 
     def copy(self):
-        return ExistsUnary(self.vartype, self.body, self.varname)
+        return self.copy_core(ExistsUnary(self.vartype, self.body, self.varname))
 
     def copy_local(self, var, arg, type_check=True):
-        return ExistsUnary(var, arg, type_check=type_check)        
+        return self.copy_core(ExistsUnary(var, arg, type_check=type_check))
 
     def to_disjunction(self, assignment=None):
         if self[0].type.domain.enumerable() and self[0].type.domain.finite:
@@ -487,10 +487,10 @@ class ExistsExact(BindingOp):
                                 assignment=assignment, type_check=type_check)
 
     def copy(self):
-        return ExistsExact(self.vartype, self.body, self.varname)
+        return self.copy_core(ExistsExact(self.vartype, self.body, self.varname))
 
     def copy_local(self, var, arg, type_check=True):
-        return ExistsExact(var, arg, type_check=type_check)        
+        return self.copy_core(ExistsExact(var, arg, type_check=type_check))
 
     def eliminate(self, **sopts):
         var1 = self[0].copy()
@@ -572,10 +572,10 @@ class IotaUnary(BindingOp):
         self.type = self.vartype
 
     def copy(self):
-        return IotaUnary(self.vartype, self.body, self.varname)
+        return self.copy_core(IotaUnary(self.vartype, self.body, self.varname))
 
     def copy_local(self, var, arg, type_check=True):
-        return IotaUnary(var, arg, type_check=type_check)
+        return self.copy_core(IotaUnary(var, arg, type_check=type_check))
 
     def to_test(self, x):
         """Return a LFun based on the condition used to describe the set."""
@@ -631,10 +631,10 @@ class IotaPartial(IotaUnary):
         super().__init__(var_or_vtype, body, varname, assignment, type_check)
 
     def copy(self):
-        return IotaPartial(self.vartype, self.body, self.varname)
+        return self.copy_core(IotaPartial(self.vartype, self.body, self.varname))
 
     def copy_local(self, var, arg, type_check=True):
-        return IotaPartial(var, arg, type_check=type_check)
+        return self.copy_core(IotaPartial(var, arg, type_check=type_check))
 
     def calculate_partiality(self, vars=None, **sopts):
         new_body = self.body.calculate_partiality(vars=vars, **sopts)

@@ -274,7 +274,7 @@ def parse_te(line, env=None, use_env=False):
     if env is None or not use_env:
         env = dict()
     var_env = vars_only(env)
-    result = None
+    final_r = None
     with error_manager("Parsing of typed expression failed with exception:"):
         result = te(line, assignment=var_env)
         if is_te(result):
@@ -289,11 +289,13 @@ def parse_te(line, env=None, use_env=False):
                 result = result.simplify_all()
         else:
             pass # warning here?
+        # error before here leads to final_r == None
+        final_r = result
 
     accum = dict()
-    if result is not None:
-        accum["_llast"] = result
-    return (result, accum)
+    if final_r is not None:
+        accum["_llast"] = final_r
+    return (final_r, accum)
 
 def try_parse_item_name(s, env=None, ambiguity=False):
     match = re.match(
@@ -317,7 +319,7 @@ def try_parse_item_name(s, env=None, ambiguity=False):
 
 # used both here and for %te
 def under_assignment(right_side, env):
-    assigned = right_side.under_assignment(env)
+    assigned = right_side.under_assignment(env, compact=True)
     if assigned != right_side:
         from lamb.meta.ply import derived
         # subsitution via assignment may create derivational steps for
@@ -336,8 +338,8 @@ def parse_right(left_s, right_s, env, constants=False):
             right_side = right_side.regularize_type_env(env, constants=constants)
             right_side = under_assignment(right_side, env)
             right_side = right_side.simplify_all(reduce=True)
-
-    return right_side
+            return right_side
+    return None
 
 def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
     from lamb.lang import get_system, Item, Items
@@ -636,8 +638,8 @@ def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
             # run, this should do proper tokenizing of terms.
             typ, end = type_sys.type_parser_recursive(s, i+1)
             assert(typ is not None)
-            # oh good god
-            accum += repr(typ)
+            # this is unfortunate...
+            accum += s[i+1:end]
             i = end
         elif s[i] in brackets.keys():
             stack.append(s[i])

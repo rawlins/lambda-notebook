@@ -91,10 +91,6 @@ def ts_unify_with(a, b, error=None):
     by the type system.
     """
     try:
-        # note! this function doesn't recompact type variables, because it
-        # doesn't know the context...
-        a = a.freshen_type_vars()
-        b = b.freshen_type_vars()
         # for the most part, the type system won't actually raise. The case
         # where it does is occurs check failures.
         result = get_type_system().unify(a.type, b.type, allow_raise=True)
@@ -199,7 +195,7 @@ def default_type(s):
         raise NotImplementedError
 
 
-def let_compact_type_vars(*args, unsafe=None, store_mapping=False):
+def let_compact_type_vars(*args, unsafe=None, store_mapping=False, all_vars=False):
     """Compact the type variables on expressions in `args` into X
     variables with a low number. This is primarily intended for
     returning freshened types to a human-readable form. Elements
@@ -212,9 +208,15 @@ def let_compact_type_vars(*args, unsafe=None, store_mapping=False):
         else:
             return args
     envs = [a.get_type_env() for a in args]
-    tenv = set().union(*[e.used_vars() for e in envs])
+    used_vars = set().union(*[e.used_vars() for e in envs])
+    if not all_vars:
+        if unsafe is None:
+            unsafe = set()
+        unsafe = unsafe | set([e for e in used_vars if not e.is_fresh()])
+        # compact only fresh vars
+        used_vars = [e for e in used_vars if e.is_fresh()]
 
-    compacted_map = types.compact_type_set(tenv, unsafe=unsafe)
+    compacted_map = types.compact_type_set(used_vars, unsafe=unsafe)
     # `under_type_injection` copies
     results = [a.under_type_injection(compacted_map) for a in args]
     for i in range(len(results)):
@@ -226,6 +228,37 @@ def let_compact_type_vars(*args, unsafe=None, store_mapping=False):
         return results[0]
     else:
         return results
+
+
+def let_freshen(*args):
+    lets = [a.let for a in args]
+    result = [a for a in args]
+    result_let = False
+    if any(lets):
+        if all(lets):
+            # freshen only [1:]
+            # could also check for collisions and freshen only those
+            r = range(1, len(result))
+            # for this case, we can safely apply `let` to the result
+            result_let = True
+        else:
+            # in this case, we don't know the context, and so must freshen
+            # everything
+            r = range(len(result))
+        for i in r:
+            # this call checks let
+            # XX derivations?
+            result[i] = result[i].freshen_type_vars()
+    # else: no adjustment to `result`
+    return result_let, result
+
+
+def handle_lets(fun, *args, **kwargs):
+    result_let, inter = let_freshen(*args)
+    result = fun(*inter, **kwargs)
+    if result_let or result.let:
+        result = let_wrapper(result)
+    return result
 
 
 class MiniOp(object):
@@ -430,6 +463,12 @@ class OperatorRegistry(object):
 global registry
 registry = OperatorRegistry()
 
+
+def is_op_symbol(op):
+    global registry
+    return op in registry.ops
+
+
 def op_expr_factory(op, *args):
     global registry
     return registry.expr_factory(op, *args)
@@ -481,7 +520,7 @@ class TypeEnv(object):
     def add_var_mapping(self, vname, typ):
         result = self.try_add_var_mapping(vname, typ)
         if result is None:
-            raise TypeMismatch(self.term_by_name(vname), typ,
+            raise TypeMismatch(typ, self.var_mapping[vname],
                 error=f"instances of term `{vname}` have distinct types")
         return result
 
@@ -1112,6 +1151,55 @@ class TypedExpr(object):
                 return TypedTerm(v, typ=typ, assignment=assignment)
 
     @classmethod
+    def _construct_op(cls, op,  *args):
+        # XX simplify to have only either this or op_expr_factory?
+        def _op_factory(*args):
+            return op_expr_factory(op, *args)
+        return handle_lets(_op_factory, *args)
+
+    @classmethod
+    def _construct_appl(cls, *appl_args, assignment=None):
+        def _appl_factory(f, *args):
+            if len(args) > 1:
+                arg = Tuple(args)
+            else:
+                arg = args[0]
+            if (not f.type.functional()) and f.type_guessed:
+                # special case: see if the type of the operator is guessed and
+                # coerce accordingly
+
+                # prevent future coercion of the argument
+                arg.type_not_guessed()
+                coerced_f = f.try_coerce_new_argument(arg.type,
+                                                        assignment=assignment)
+                if coerced_f is not None:
+                    logger.info(
+                        "Coerced guessed type for '%s' into %s, "
+                        "to match argument '%s'"
+                        % (repr(f), coerced_f.type, repr(arg)))
+                    f = coerced_f
+                else:
+                    logger.warning(
+                        "Unable to coerce guessed type %s for '%s' "
+                        "to match argument '%s' (type %s)"
+                        % (f.type, repr(f), repr(arg), arg.type))
+            return ApplicationExpr(f, arg, assignment=assignment)
+        return handle_lets(_appl_factory, *appl_args)
+
+    @classmethod
+    def _composite_factory(cls, *args, assignment=None):
+        # assumption: len(args) > 1
+        op = args[0]
+        remainder = [cls.ensure_typed_expr(a) for a in args[1:]]
+        if is_op_symbol(op):
+            return cls._construct_op(op, *remainder)
+
+        # the only kind of operator-expression generated after this point is
+        # an ApplicationExpr.
+        op = cls.ensure_typed_expr(op)
+        return cls._construct_appl(op, *remainder, assignment=assignment)
+
+    @classmethod
     def factory(cls, *args, assignment=None):
         """Factory method for TypedExprs.  Will return a TypedExpr or subclass.
 
@@ -1133,11 +1221,13 @@ class TypedExpr(object):
                 assignment = dict()
             else:
                 assignment = _parser_assignment # not remotely thread-safe
+
         if len(args) == 1 and isinstance(args[0], TypedExpr):
             # handing this a single TypedExpr always returns a copy of the
             # object.  I set this case aside for clarity. subclasses must
             # implement copy() for this to work right.
             return args[0].copy()
+
         if len(args) == 0:
             return None #TODO something else?
         elif len(args) == 1:
@@ -1163,52 +1253,7 @@ class TypedExpr(object):
             # This code path is for constructing complex TypedExprs where
             # args[0] must be a function / operator. Will potentially recurse
             # via ensure_typed_expr on all arguments.
-
-            # this is redundant with the constructor, but I can't currently find
-            # a way to simplify. After this point, all elements of args will be
-            # TypedExprs.
-            remainder = tuple([cls.ensure_typed_expr(a) for a in args[1:]])
-
-            if isinstance(args[0], str):
-                global registry
-                if args[0] in registry.ops:
-                    # args[0] is a special-cased operator symbol
-                    return op_expr_factory(*((args[0],) + remainder))
-
-            # the only kind of operator-expression generated after this point is
-            # an ApplicationExpr.
-            operator = cls.ensure_typed_expr(args[0])
-
-            # package longer arg lengths in Tuples.  After this point, there are
-            # only two elements under consideration.
-            if len(remainder) > 1:
-                arg = Tuple(args[1:])
-            else:
-                arg = remainder[0]
-            if (not operator.type.functional()) and operator.type_guessed:
-                # special case: see if the type of the operator is guessed and
-                # coerce accordingly
-
-                # prevent future coercion of the argument
-                arg.type_not_guessed()
-                coerced_op = operator.try_coerce_new_argument(arg.type,
-                                                        assignment=assignment)
-                if coerced_op is not None:
-                    logger.info(
-                        "Coerced guessed type for '%s' into %s, "
-                        "to match argument '%s'"
-                        % (repr(operator), coerced_op.type, repr(arg)))
-                    operator = coerced_op
-                else:
-                    logger.warning(
-                        "Unable to coerce guessed type %s for '%s' "
-                        "to match argument '%s' (type %s)"
-                        % (operator.type, repr(operator), repr(arg), arg.type))
-            result = ApplicationExpr(operator, arg, assignment=assignment)
-            if result.let:
-                result = derived(result.compact_type_vars(), result,
-                                                            "Let substitution")
-            return result
+            return cls._composite_factory(*args, assignment=assignment)
 
     @classmethod
     def ensure_typed_expr(cls, s, typ=None, assignment=None):
@@ -1254,13 +1299,18 @@ class TypedExpr(object):
         """
         return self.copy_local(*self)
 
+    def copy_core(self, other):
+        # copy anything that is independent of self.args
+        other.let = self.let
+        return other
+
     def copy_local(self, *args, type_check=True):
         """
         Make a copy of the element preserving everything *except* the AST.
 
         The default implementation calls the constructor with `args`, so if this
         isn't appropriate, you must override."""
-        return type(self)(*args)
+        return self.copy_core(type(self)(*args))
 
     def deep_copy(self):
         accum = list()
@@ -1276,6 +1326,9 @@ class TypedExpr(object):
         if assignment is None:
             assignment = dict()
         env = self.get_type_env()
+        # note: this will cut off any derivations without handling from the
+        # caller. But we typically do want the immediately prior version in the
+        # record, since the types could be quite messy.
         return self.under_type_assignment(env.type_mapping,
                                                         merge_intersect=False)
 
@@ -1310,6 +1363,7 @@ class TypedExpr(object):
         result._type_env_history = history_env
         if not store_mapping:
             result.get_type_env(force_recalc=True)
+        result.let = False
         return result
 
     def let_type(self, typ):
@@ -1317,7 +1371,7 @@ class TypedExpr(object):
         if result is None:
             return None
         if result.let:
-            result = result.compact_type_vars()
+            result = let_wrapper(result)
         return result
 
     def has_type_vars(self):
@@ -1381,7 +1435,7 @@ class TypedExpr(object):
         result.derivation = self.derivation
         return result
 
-    def under_assignment(self, assignment, track_all_names=False):
+    def under_assignment(self, assignment, track_all_names=False, compact=False):
         """Use `assignment` to replace any appropriate variables in `self`."""
         # do this first so that any errors show up before the recursive step
         # this does not set a derivation!
@@ -1390,7 +1444,10 @@ class TypedExpr(object):
         else:
             a2 = {key: self.ensure_typed_expr(assignment[key])
                                                         for key in assignment}
-        return term_replace_unify(self, a2, track_all_names=track_all_names)
+        r = term_replace_unify(self, a2, track_all_names=track_all_names)
+        if r.let and compact:
+            r = let_wrapper(r)
+        return r
 
     def free_terms(self, var_only=False):
         """Find the set of variables that are free in the typed expression.
@@ -1931,8 +1988,6 @@ class ApplicationExpr(TypedExpr):
                 # placeholder.
                 self.type = types.UnknownType()
         super().__init__(op, *args, defer=defer)
-        if fun.let or arg.let:
-            self.let = True
 
         if history:
             # bit of a hack: build a derivation with the deferred version as
@@ -1944,13 +1999,9 @@ class ApplicationExpr(TypedExpr):
         else:
             self.type_guessed = args[0].type_guessed
 
-    def copy(self):
-        return self.copy_local(self.args[0], self.args[1])
-
     def copy_local(self, fun, arg, type_check=True):
-        result = ApplicationExpr(fun, arg, defer=self.defer,
-                                                    type_check=type_check)
-        result.let = self.let
+        result = self.copy_core(
+            ApplicationExpr(fun, arg, defer=self.defer, type_check=type_check))
         result.type_guessed = self.type_guessed
         return result
 
@@ -2022,8 +2073,6 @@ class ApplicationExpr(TypedExpr):
 
     @classmethod
     def fa_type_inference(cls, fun, arg, assignment):
-        fun = fun.freshen_type_vars()
-        arg = arg.freshen_type_vars()
         history = False
         try:
             (f_type, a_type, out_type) = get_type_system().unify_fa(fun.type, arg.type)
@@ -2047,13 +2096,6 @@ class ApplicationExpr(TypedExpr):
 
         if fun is None or arg is None:
             return None
-
-        if fun.let or arg.let:
-            # XX this looks very risky when dealing with substitutions?
-            fun, arg = let_compact_type_vars(fun, arg)
-            fun.let = False
-            arg.let = False
-            # history?
 
         # assumption: by now, fun.type supports indexing to get the output type
         return (fun, arg, fun.type[1], history)
@@ -2131,6 +2173,7 @@ class Tuple(TypedExpr):
     within a parenthetical. `args` is a list containing the elements of the
     tuple."""
     def __init__(self, args, typ=None, type_check=True):
+        # XX why doesn't this accept *args syntax...
         new_args = list()
         type_accum = list()
         for i in range(len(args)):
@@ -2145,10 +2188,10 @@ class Tuple(TypedExpr):
         common_tuple_type(self) # ensure that there is a usable common type
 
     def copy(self):
-        return Tuple(self.args)
+        return self.copy_core(Tuple(self.args))
 
     def copy_local(self, *args, type_check=True):
-        return Tuple(args, typ=self.type)
+        return self.copy_core(Tuple(args, typ=self.type))
 
     def index(self, i):
         return self.args[i]
@@ -2255,7 +2298,6 @@ class TypedTerm(TypedExpr):
                     # for the fresh variables to persist, as in:
                     #     meta.TypedTerm("x", typ=tp("X"), assignment={"x": te("x_<X,X>")})
                     # (gives type <?,?>)
-                    # but, recompacting in this code would be wildly unsafe...
                     constraint = self.from_assignment.freshen_type_vars()
                     env.add_var_mapping(self.op, constraint.type)
 
@@ -2298,6 +2340,7 @@ class TypedTerm(TypedExpr):
         result = TypedTerm(self.op, typ=self.type,
                                     latex_op_str=self.latex_op_str,
                                     type_check=type_check)
+        result = self.copy_core(result)
         if not type_check:
             result.set_type_env(self.get_type_env().copy())
         result.type_guessed = self.type_guessed
@@ -2436,19 +2479,19 @@ class CustomTerm(TypedTerm):
         # TODO: check type against custom string
 
     def copy(self):
-        return CustomTerm(self.op, custom_english=self.custom,
+        return self.copy_core(CustomTerm(self.op, custom_english=self.custom,
                                    suppress_type=self.suppress_type,
                                    small_caps=self.sc,
-                                   typ=self.type)
+                                   typ=self.type))
 
     def copy_local(self):
         return self.copy()
 
     def copy(self, op):
-        return CustomTerm(op, custom_english=self.custom,
+        return self.copy_core(CustomTerm(op, custom_english=self.custom,
                               suppress_type=self.suppress_type,
                               small_caps=self.sc,
-                              typ=self.type)
+                              typ=self.type))
 
     def latex_str(self, show_types=True, **kwargs):
         s = ""
@@ -2795,11 +2838,8 @@ class Disjunctive(TypedExpr):
         self.type = types.DisjunctiveType(*t_adjust)
         super().__init__("Disjunctive", *disjuncts)
         
-    def copy(self):
-        return Disjunctive(*self.args)
-    
     def copy_local(self, *disjuncts, type_check=True):
-        return Disjunctive(*disjuncts)
+        return self.copy_core(Disjunctive(*disjuncts))
     
     def term(self):
         return False
@@ -2935,7 +2975,7 @@ class SyncatOpExpr(TypedExpr):
         """This must be overriden by classes that are not produced by the
         factory."""
         # TODO: is this necessary?
-        return op_expr_factory(self.op, *args)
+        return self.copy_core(op_expr_factory(self.op, *args))
 
     def name_of(self, i):
         return f"operand {i}"
@@ -3242,11 +3282,10 @@ class TupleIndex(SyncatOpExpr):
             output_type = common_tuple_type(arg1)
         super().__init__(output_type, arg1, arg2, tcheck_args=False)
 
-    def copy(self):
-        return TupleIndex(self.args[0], self.args[1])
-
-    def copy_local(self, arg1, arg2, type_check=True):
-        return TupleIndex(arg1, arg2)
+    def copy_local(self, arg1, arg2):
+        # because `[]` isn't handled like a normal operator, this needs to be
+        # manually implemented
+        return self.copy_core(TupleIndex(arg1, arg2))
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
         if self.args[1].op in types.type_n.domain:
@@ -3435,7 +3474,7 @@ class BindingOp(TypedExpr):
         self._reduced_cache = [None] * len(self.args)
 
     def copy_local(self, *args, type_check=True):
-        return type(self)(*args, type_check=type_check)
+        return self.copy_core(type(self)(*args, type_check=type_check))
 
     def name_of(self, i):
         if i == len(self) - 1:
@@ -3874,14 +3913,11 @@ class LFun(BindingOp):
         return True # no need to do any calculations
 
     def copy(self):
-        r = LFun(self.argtype, self.body, self.varname, type_check=False)
-        r.let = self.let
-        return r
+        # XX is there a reason this uses the old syntax?
+        return self.copy_core(LFun(self.argtype, self.body, self.varname, type_check=False))
 
     def copy_local(self, var, arg, type_check=True):
-        r = LFun(var, arg, type_check=type_check)
-        r.let = self.let
-        return r
+        return self.copy_core(LFun(var, arg, type_check=type_check))
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
         vacuous = False
