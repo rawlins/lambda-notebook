@@ -194,7 +194,7 @@ class MetaTerm(core.TypedTerm):
 
     def calc_type_env(self, recalculate=False):
         # currently, MetaTerms are not represented at all in the type
-        # environment. They definitely need to be absent from var_mapping, but
+        # environment. They definitely need to be absent from term_mapping, but
         # should they be present in some form?
         return core.TypeEnv()
 
@@ -345,15 +345,6 @@ def all_boolean_combos(l, cur=None, max_length=20):
     return combinations(l, (False, True), max_length=max_length)
 
 
-def sorted_term_names(e, var_map = None):
-    if var_map is None:
-        var_map = e.get_type_env().var_mapping
-    terms = list(var_map.keys())
-    # TODO: better sort orders?
-    terms.sort()
-    return terms
-
-
 def truthtable_repr(t):
     # this is maybe a bit misleading to use, since `0` and `1` in the
     # metalanguage are not convertable to False/True. But I find these
@@ -375,11 +366,11 @@ class Evaluations(collections.abc.Sequence):
         self.display_assignment = display_assignment
 
         self.expression = expression
-        var_map = expression.get_type_env().var_mapping
-        self.terms = sorted_term_names(expression, var_map=var_map)
+        env = expression.get_type_env()
+        self.terms = env.terms(sort=True)
         # slightly weird, but we need to reconstruct the terms for display
         # purposes, and all we have right now is strings
-        self.term_exprs = [core.term(t, typ=var_map[t]) for t in self.terms]
+        self.term_exprs = [core.term(t, typ=env.term_type(t)) for t in self.terms]
         self.update_evals(assignments)
 
     def update_evals(self, assignments):
@@ -442,9 +433,8 @@ class Evaluations(collections.abc.Sequence):
 def truthtable_valuations(e, max_terms=12):
     """Calculate all possible valuations for type `t` terms in `e`. No other
     terms are valued."""
-    var_map = e.get_type_env().var_mapping
-    terms = sorted_term_names(e, var_map=var_map)
-    terms = [t for t in terms if var_map[t] == types.type_t]
+    env = e.get_type_env()
+    terms = [t for t in env.terms(sort=True) if env.term_type(t) == types.type_t]
     # 12 here is once again just chosen as a default heuristic
     if len(terms) > max_terms:
         raise ValueError(f"Tried to calculate truthtable for an overlong sequence: {repr(e)}")
@@ -473,7 +463,7 @@ def extract_boolean(*exprs):
     # ensure the types are actually mergeable...
     for e in exprs:
         env.merge(e.get_type_env())
-    used_vars = set(env.var_mapping.keys())
+    used_vars = set(env.terms())
     i = 0
 
     def fresh():

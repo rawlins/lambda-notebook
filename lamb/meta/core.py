@@ -477,21 +477,21 @@ def op_expr_factory(op, *args):
 ############### Type unification-related code
 
 class TypeEnv(object):
-    def __init__(self, var_mapping=None, type_mapping=None):
-        if var_mapping is None:
-            var_mapping = dict()
+    def __init__(self, term_mapping=None, type_mapping=None):
+        if term_mapping is None:
+            term_mapping = dict()
         if type_mapping is None:
             type_mapping = dict()
 
         self.type_var_set = set()
         self.type_mapping = type_mapping
-        self.var_mapping = var_mapping
+        self.term_mapping = term_mapping
         self.update_var_set()
 
     def _repr_html_(self):
         s = "<table>"
         s += ("<tr><td>Term mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" %
-                                    utils.dict_latex_repr(self.var_mapping))
+                                    utils.dict_latex_repr(self.term_mapping))
         s += ("<tr><td>Type mappings:&nbsp;&nbsp; </td><td>%s</td></tr>" %
                                     utils.dict_latex_repr(self.type_mapping))
         s += ("<tr><td>Type variables:&nbsp;&nbsp; </td><td>%s</td></tr>" %
@@ -500,7 +500,7 @@ class TypeEnv(object):
         return s
 
     def update_var_set(self):
-        s = types.vars_in_env(self.var_mapping)
+        s = types.vars_in_env(self.term_mapping)
         s = s | set(self.type_mapping.keys())
         for m in self.type_mapping:
             s  = s | self.type_mapping[m].bound_type_vars()
@@ -510,35 +510,42 @@ class TypeEnv(object):
         # requires up-to-date var set...
         return self.type_var_set - set(self.type_mapping.keys())
 
-    def term_by_name(self, vname):
-        if vname in self.var_mapping:
-            return TypedTerm(vname, self.var_mapping[vname],
-                                                        defer_type_env=True)
-        else:
-            return None
+    def terms(self, sort=True):
+        r = self.term_mapping.keys()
+        if sort:
+            # forces `r` to be a list
+            # TODO: better sort orders?
+            r = sorted(r)
+        return r
 
-    def add_var_mapping(self, vname, typ):
-        result = self.try_add_var_mapping(vname, typ)
+    def term_type(self, t):
+        return self.term_mapping[t]
+
+    def add_term_mapping(self, vname, typ):
+        result = self.try_add_term_mapping(vname, typ)
         if result is None:
-            raise TypeMismatch(typ, self.var_mapping[vname],
+            raise TypeMismatch(typ, self.term_mapping[vname],
                 error=f"instances of term `{vname}` have distinct types")
         return result
 
-    def try_add_var_mapping(self, vname, typ):
-        if vname in self.var_mapping:
-            target_type = self.var_mapping[vname]
+    def try_add_term_mapping(self, vname, typ):
+        if vname in self.term_mapping:
+            target_type = self.term_mapping[vname]
             # XX probably no need to store mappings for fresh var specializations?
             principal = self.try_unify(target_type, typ, update_mapping=True)
             if principal is None:
                 return None
-            self.var_mapping[vname] = principal
+            self.term_mapping[vname] = principal
             self.update_type_vars()
         else:
-            self.var_mapping[vname] = typ
+            self.term_mapping[vname] = typ
             principal = typ
 
         self.add_type_to_var_set(principal)
         return principal
+
+    def remove_term(self, t):
+        del self.term_mapping[t]
 
     def try_unify(self, t1, t2, update_mapping=False):
         ts = get_type_system()
@@ -560,11 +567,11 @@ class TypeEnv(object):
         self.type_var_set = self.type_var_set | typ.bound_type_vars()
 
     def update_type_vars(self):
-        for k in self.var_mapping:
+        for k in self.terms():
             # note that the following is not generally safe, but here we are
             # working with TypedTerms that have no TypeEnv
-            new_type = self.var_mapping[k].sub_type_vars(self.type_mapping)
-            self.var_mapping[k] = new_type
+            new_type = self.term_mapping[k].sub_type_vars(self.type_mapping)
+            self.term_mapping[k] = new_type
 
     def try_add_type_mapping(self, type_var, typ, defer=False):
         if isinstance(typ, types.VariableType):
@@ -597,8 +604,8 @@ class TypeEnv(object):
         for v in tenv.type_mapping:
             self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
         self.update_type_vars()
-        for v in tenv.var_mapping:
-            self.add_var_mapping(v, tenv.var_mapping[v])
+        for v in tenv.term_mapping:
+            self.add_term_mapping(v, tenv.term_mapping[v])
         self.type_var_set |= tenv.type_var_set
         return self
 
@@ -609,18 +616,18 @@ class TypeEnv(object):
                                                 & self.type_var_set) > 0):
                 self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
         self.update_type_vars()
-        for v in tenv.var_mapping:
-            self.add_var_mapping(v, tenv.var_mapping[v])
+        for v in tenv.term_mapping:
+            self.add_term_mapping(v, tenv.term_mapping[v])
         return self
 
     def copy(self):
-        env = TypeEnv(self.var_mapping.copy(), self.type_mapping.copy())
+        env = TypeEnv(self.term_mapping.copy(), self.type_mapping.copy())
         env.type_var_set = self.type_var_set.copy() # redundant with constructor?
         return env
 
     def __repr__(self):
-        return ("[TypeEnv: Variables: "
-            + repr(self.var_mapping)
+        return ("[TypeEnv: Terms: "
+            + repr(self.term_mapping)
             + ", Type mapping: "
             +  repr(self.type_mapping)
             + ", Type variables: "
@@ -811,7 +818,7 @@ class TypedExpr(object):
                 derivation_reason = "Type adjustment"
             if self.term():
                 new_term = self.copy()
-                principal = env.try_add_var_mapping(new_term.op, new_type)
+                principal = env.try_add_term_mapping(new_term.op, new_type)
                 if principal is None:
                     return None
                 new_term.set_type_env(env)
@@ -1452,16 +1459,10 @@ class TypedExpr(object):
     def free_terms(self, var_only=False):
         """Find the set of variables that are free in the typed expression.
         """
-        v = set(self.get_type_env().var_mapping.keys())
+        v = set(self.get_type_env().terms())
         if var_only:
             v = {var for var in v if symbol_is_var_symbol(var)}
         return v
-
-        result = set()
-        # term case handled in subclass
-        for a in self.args:
-            result.update(a.free_terms(var_only=var_only))
-        return result
 
     def free_variables(self):
         return self.free_terms(var_only=True)
@@ -2299,9 +2300,9 @@ class TypedTerm(TypedExpr):
                     #     meta.TypedTerm("x", typ=tp("X"), assignment={"x": te("x_<X,X>")})
                     # (gives type <?,?>)
                     constraint = self.from_assignment.freshen_type_vars()
-                    env.add_var_mapping(self.op, constraint.type)
+                    env.add_term_mapping(self.op, constraint.type)
 
-            self.type = env.var_mapping[self.op]
+            self.type = env.term_type(self.op)
             self.set_type_env(env)
 
         self.suppress_type = False
@@ -2349,7 +2350,7 @@ class TypedTerm(TypedExpr):
 
     def calc_type_env(self, recalculate=False):
         env = TypeEnv()
-        env.add_var_mapping(self.op, self.type)
+        env.add_term_mapping(self.op, self.type)
         return env
 
     def free_terms(self, var_only=False):
@@ -2671,11 +2672,14 @@ class Partial(TypedExpr):
         return f"Partial({repr(self.body)}, {repr(self.condition)})"
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
+        # the trick: convert to a Tuple of type (X,t), adjust type, and
+        # convert back again. Not well tested.
         tuple_version = self.meta_tuple()
         revised_type = types.TupleType(unified_type, types.type_t)
-        result = tuple_version.try_adjust_type(unified_type, derivation_reason,
+        result = tuple_version.try_adjust_type(revised_type, derivation_reason,
                                                                         env)
-        return self.copy_local(result[1], result[2])
+        # XX this should raise on None?
+        return self.copy_local(result[0], result[1])
         
     def latex_str(self, suppress_parens=False, **kwargs):
         body_str = self.body.latex_str(suppress_parens=True, **kwargs)
@@ -3459,10 +3463,10 @@ class BindingOp(TypedExpr):
                 e.error = f"Failed to ensure body type `{body_type}` for operator class `{self.canonical_name}`"
                 raise e
             body_env = self.body.get_type_env()
-            if self.varname in body_env.var_mapping: # binding can be vacuous
-                if body_env.var_mapping[self.varname] != self.vartype:
+            if self.varname in body_env.terms(): # binding can be vacuous
+                if body_env.term_type(self.varname) != self.vartype:
                     # propagate type inference to binding expression
-                    new_vartype = body_env.var_mapping[self.varname]
+                    new_vartype = body_env.term_type(self.varname)
                     assert new_vartype is not None
                     self.init_var(self.varname, new_vartype)
             self.init_body(self.body.regularize_type_env())
@@ -3627,12 +3631,19 @@ class BindingOp(TypedExpr):
         return super().bound_variables() | {self.varname}
 
     def calc_type_env(self, recalculate=False):
+        # general code for almost all BindingOp subclasses. The once case that
+        # needs to be more complicated is LFun.
+
+        # start with the type environment from the body
         sub_env = self.body.get_type_env(force_recalc=recalculate).copy()
         # ensure any variable types introduced by the variable show up even if
-        # they are not present in the subformula
+        # the variable does not appear in the subformula
         sub_env.add_type_to_var_set(self.var_instance.type)
-        if self.varname in sub_env.var_mapping:
-            del sub_env.var_mapping[self.varname]
+        # the variable does not locally appear, because it is not free in this
+        # expression -- so if it is there (probably) we remove the term itself.
+        # its impact on type inference remains.
+        if self.varname in sub_env.terms():
+            sub_env.remove_term(self.varname)
         return sub_env
 
     def vacuous(self):
@@ -3920,13 +3931,14 @@ class LFun(BindingOp):
         return self.copy_core(LFun(var, arg, type_check=type_check))
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        vacuous = False
-        # env will not start with bound variable in it
-        env.add_var_mapping(self.varname, self.argtype)
-        # update mapping with new type
-        left_principal = env.try_add_var_mapping(self.varname,
+        # `env` will not start with bound variable in it, initialize with the
+        # current type
+        env.add_term_mapping(self.varname, self.argtype)
+        # update mapping for the variable with new type
+        left_principal = env.try_add_term_mapping(self.varname,
                                                             unified_type.left)
         if left_principal is None:
+            env.remove_term(self.varname)
             return None
         new_body = self.body
         if self.argtype != left_principal:
@@ -3940,8 +3952,11 @@ class LFun(BindingOp):
                                             derivation_reason=derivation_reason)
         new_fun = self.copy_local(new_var, new_body)
         env.merge(new_body.get_type_env())
-        if self.varname in env.var_mapping:
-            del env.var_mapping[self.varname]
+        # now that type inference has succeeded, we remove the bound variable
+        # from the type environment, since type environments store only free
+        # terms
+        # if self.varname in env.terms():
+        env.remove_term(self.varname)
         new_fun = new_fun.under_type_assignment(env.type_mapping)
         return new_fun     
 
