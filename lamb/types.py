@@ -422,15 +422,17 @@ class TypeConstructor(object):
         return self._type_vars
 
     def is_polymorphic(self):
-        return len(self._type_vars) > 0
+        return len(self._type_vars) > 0 or self._sublet
 
     def has_fresh_variables(self):
         return any(v.is_fresh() for v in self._type_vars)
 
     def init_type_vars(self):
         accum = set()
+        self._sublet = False
         for part in iter(self):
             accum.update(part._type_vars)
+            self._sublet = self._sublet or part._sublet
         self._type_vars = accum
 
     def sub_type_vars(self, assignment, trans_closure=False):
@@ -439,7 +441,7 @@ class TypeConstructor(object):
 
         This does only one-place substitutions, so it won't follow chains if
         there are any."""
-        if len(self._type_vars) == 0:
+        if len(self.bound_type_vars()) == 0:
             return self
         l = list()
         dirty = False
@@ -1131,6 +1133,141 @@ def union_assignments(a1, a2):
         union_assignment(a1, m, a2[m])
     return a1
 
+
+class Forall(TypeConstructor):
+    """Unary type constructor that indicates explicit unselective binding of
+    any type variables in its scope."""
+
+    def __init__(self, arg):
+        self.arg = compact_type_vars(arg, fresh_only=True)
+        TypeConstructor.__init__(self)
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, i):
+        return (self.arg,)[i]
+
+    def __iter__(self):
+        return iter((self.arg,))
+
+    def init_type_vars(self):
+        self._type_vars = set()
+        self._sublet = True
+
+    def bound_type_vars(self):
+        return set()
+
+    def trivial(self):
+        return not self.arg.bound_type_vars()
+
+    def normalize(self):
+        r = self
+        # XX could remove any embedded ∀s? Would have to potentially rename
+        # vars, but e.g. ∀<∀X,X> is equivalent to ∀<X',X>
+        while (isinstance(r, Forall)
+                        and (isinstance(r.arg, Forall) or r.trivial())):
+            r = r.arg
+        return r
+
+    def functional(self):
+        return self.arg.functional()
+
+    @property
+    def left(self):
+        return self.arg.left
+
+    @property
+    def right(self):
+        return self.arg.right
+
+    def copy_local(self, arg):
+        return Forall(arg)
+
+    def check(self, x):
+        raise self.arg.check(x)
+
+    def sugar(self):
+        return False
+        # syntactic sugar: ∀X (for any X) reprs as `?` (and parses)
+        return isinstance(self.arg, VariableType)
+
+    def __repr__(self):
+        if self.sugar():
+            return "?"
+        return f"∀{repr(self.arg)}"
+
+    def _type_eq(self, other):
+        if isinstance(other, Forall):
+            return self.arg._type_eq(other.arg)
+        else:
+            return False
+
+    def _type_hash(self):
+        return (hash("∀") ^ self.arg._type_hash())
+
+    def latex_str(self):
+        if self.sugar():
+            return ensuremath("?")
+        return ensuremath(f"\\forall{{}}{self.arg.latex_str()}")
+
+    def _repr_latex_(self):
+        return self.latex_str()
+
+    def unify(self, t2, unify_control_fun, assignment=None):
+        rebind = False
+        left = freshen_type(self.arg)
+        to_compact = left.bound_type_vars()
+        if isinstance(t2, Forall):
+            # in principle, we could let recursion handle this
+            right = freshen_type(t2.arg)
+            to_compact = to_compact | right.bound_type_vars()
+            # in principle, for this case, we could optimize the rebinding a
+            # bit (since it is guaranteed safe on result)
+        else:
+            right = t2
+        # to get this result we have to override AST ordering (!). The reason
+        # is that we have to prioritize variables in the `right` argument now,
+        # unconditionally. The default behavior will prioritize variables that
+        # are on the right relative to the global ast, which may be the left
+        # or the right here.
+        # this is a bit like calling the main `unify` function instead of the
+        # recursive one, especially given the finalization below.
+        result, assignment = unify_control_fun(left, right, assignment=assignment, swap=False)
+        if result is None:
+            return (None, assignment)
+
+        # finalize any local type mappings inferred during recursion. XX code
+        # dup with `unify_details`...
+        result = result.sub_type_vars(assignment, trans_closure=True)
+
+        # also attempt to compact any fresh variables introduced by unification
+        # that were not present in t2
+        to_compact = to_compact | {assignment[v]
+                for v in to_compact
+                if v in assignment and isinstance(assignment[v], VariableType)
+                                   and assignment[v].is_fresh()
+                                   and assignment[v] not in t2.bound_type_vars()}
+
+        return convex_rebind(result, to_compact), assignment
+
+    @classmethod
+    def parse(cls, s, i, parse_control_fun):
+        next = parsing.consume_char(s, i, "∀")
+        if next is None:
+            return (None, i)
+        else:
+            i = next
+            (arg, i) = parse_control_fun(s, i)
+            # maybe a bit hacky to do this in parsing: if there are no type
+            # variables at all, get rid of the ∀.
+            return (Forall(arg).normalize(), i)
+
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        return Forall(random_ctrl_fun()).normalize()
+
+
 class VariableType(TypeConstructor):
     """A type variable.  Variables are named with X, Y, Z followed by a number
     (or prime symbols).
@@ -1182,8 +1319,12 @@ class VariableType(TypeConstructor):
         safe from side-effects on the input assignment.  If The return value
         has `None` as the right element, the input should be discarded.
         """
+
+        # pre-check: if we are token identical, it doesn't matter what gets
+        # returned
         if self == t2:
             return (self, assignment)
+
         # 1. find the principal type in the equivalence class identified by
         #    self.  May return self if there's a loop.
         #    (Other sorts of loops should be ruled out?)
@@ -1257,6 +1398,7 @@ class VariableType(TypeConstructor):
         # need to defer
         if self.number is not None:
             self._type_vars = set((self,))
+        self._sublet = False
     
     def sub_type_vars(self, assignment, trans_closure=False):
         """find the principal type, if any, determined by the `assignment` for
@@ -1335,6 +1477,7 @@ class VariableType(TypeConstructor):
 
     @classmethod
     def fresh(cls):
+        # currently unused
         return VariableType("I", number=cls.max_id + 1)
 
 
@@ -1342,11 +1485,7 @@ class VariableType(TypeConstructor):
 VariableType.max_id = 0
 
 class UnknownType(VariableType):
-    """Special case of a variable type where the type variable is guaranteed to
-    be free, i.e. where the identity just doesn't matter.
-
-    Something like <?,?> amounts to <X,Y> where X,Y are free no matter what.
-    """
+    """Class used internally for fresh types."""
     max_identifier = 0
     def __init__(self, force_num=None):
         if force_num is None:
@@ -1368,16 +1507,9 @@ class UnknownType(VariableType):
         return True
 
     def __repr__(self):
-        # TODO: this is still handled badly. For the sake of user-facing `?`
-        # types, we can't print the identifier (as the parser calls repr), but
-        # once these types are out in the wild, the identifier might matter.
-        # it's more or less a bug if the user ever sees a ? type...
-        if utils._debug_indent:
-            return f"?{self.identifier}"
-        return "?"
+        return f"?{self.identifier}"
 
     def latex_str(self):
-        # always print identifier here -- no need to worry about it parsing
         return ensuremath(f"?_{{{self.identifier}}}")
 
     def internal(self):
@@ -1390,11 +1522,17 @@ class UnknownType(VariableType):
     
     @classmethod
     def parse(cls, s, i, parse_control_fun):
-        new_i = parsing.consume_char(s, i, "?")
-        if new_i is None:
-            return (None, i)
-        else:
-            return (UnknownType(), new_i)
+        next = parsing.consume_char(s, i, "?")
+        if next is not None:
+            num, next2 = parsing.consume_number(s, next)
+            if num is None:
+                # syntactic sugar: `?` parses to ∀X. It's a bit annoying to
+                # handle it here, but the `?` prefix makes it hard to do
+                # elsewhere
+                return Forall(VariableType("X", 0)), next
+            else:
+                return UnknownType(force_num=num), next2
+        return None, i
 
     @classmethod
     def random(cls, random_ctrl_fun):
@@ -1442,11 +1580,11 @@ class DisjunctiveType(TypeConstructor):
         for t in type_list:
             if isinstance(t, DisjunctiveType):
                 disjuncts.update(t.disjuncts)
-            elif len(t.bound_type_vars()) > 0:
+            elif t.is_polymorphic():
                 # this constraint is somewhat arbitrary, and could be
                 # generalized. But, then unification would be more complicated.
                 raise TypeParseError(
-                    "Variable types can't be used disjunctively.",
+                    "Polymorphic types can't be used disjunctively.",
                     raise_s, raise_i)
             else:
                 disjuncts.add(t)
@@ -1788,13 +1926,13 @@ class TypeSystem(object):
             return None
         return r.principal
 
-    def unify_details(self, t1, t2, assignment=None):
+    def unify_details(self, t1, t2, assignment=None, show_failure=False):
         # assignment is unused here
-        if (cached := get_unify_cached(t1, t2)) is not None:
+        if not show_failure and (cached := get_unify_cached(t1, t2)) is not None:
             return cached
 
         result = self._unify_r(t1, t2)
-        if result is None:
+        if result is None and not show_failure:
             return None
         # unification in this system is very straightforward: if a type is
         # found, it is the principal type.
@@ -1989,8 +2127,8 @@ def make_safe(typ1, typ2, unsafe=None):
     assignment = safe_vars(typ2, list(typ1.bound_type_vars()) + unsafe)
     return typ1.sub_type_vars(assignment)
 
-def compact_type_set(types, unsafe=None):
-    """Given some set of types `types`, produce a mapping to more compact
+def compact_type_set(types, unsafe=None, fresh_only=False):
+    """Given some set of variables `types`, produce a mapping to more compact
     variable names. Try to keep any lower-numbered type variables.
 
     If `unsafe` is set, avoid types in `unsafe`.
@@ -2001,7 +2139,8 @@ def compact_type_set(types, unsafe=None):
     keep = set()
     mapping = dict()
     for t in types:
-        if t.number > 3 or t.symbol == "I" or t.symbol == "?":
+        # XX this will probably crash on non-variables, more sensible handling?
+        if t.is_fresh() or not fresh_only and t.number > 3:
             remap.append(t)
         else:
             keep.add(t)
@@ -2013,12 +2152,88 @@ def compact_type_set(types, unsafe=None):
         keep.add(m)
     return mapping
 
+
 def freshen_type_set(types):
     """Produce a mapping from variables in `types` to fresh type variables."""
 
     # XX it would be nice to move away from using this method for fresh vars,
     # but it is extremely tricky to get anything more minimal right
     return {t: UnknownType() for t in types}
+
+
+def freshen_type(t):
+    return t.sub_type_vars(freshen_type_set(t.bound_type_vars()))
+
+
+def compact_type_vars(t, unsafe=None, fresh_only=False):
+    """Compact the type variables in `t` so as to make them more
+    readable."""
+
+    return t.sub_type_vars(compact_type_set(t.bound_type_vars(), unsafe,
+                                            fresh_only=fresh_only))
+
+
+# given some type var set, if there is a segment of `t` that contains only
+# vars from that set, and no other part of `t` contains such vars, then bind
+# that segment universally.
+def convex_rebind(t, to_compact):
+    if not t.bound_type_vars():
+        return t
+    elif all(v in to_compact for v in t.bound_type_vars()):
+        # if t contains all and only vars from `to_compact`, we have found
+        # something to rebind.
+        return Forall(compact_type_vars(t)).normalize()
+    elif not len(t):
+        # if t is a relevant type var, the prior clause will have handled it
+        return t
+
+    # are there parts of `t` that have subsets of the targeted type vars that
+    # are present only in that part?
+    # a part is potentially compactable if it has some of the targeted type
+    # vars at all. But, binding all of these unselectively would produce the
+    # wrong result in some cases. Example: <?1,<X,?1>> where to_compact={?1}.
+    # This example isn't expressible with purely unselective binding, since
+    # <∀X,<X,∀X>> is a weaker type, but ∀<Y,<X,Y>> binds a non-targeted
+    # variable (that the caller may need). For cases like this, we will leave
+    # the ? variables to the mercy of global binding.
+    # However, we can and should still do something with cases like
+    # t=<?1,<X,?2>> with to_compact={?1, ?2}.
+    # (specific case to look at: `unify(tp('<∀X,<Y,∀X>>'), tp('∀<X,<Y,X>>'))`)
+    # Here, the type *is* equivalent to <∀X,<X,∀X>>. Since t[0] and t[1] contain
+    # fully disjoint subsets of to_compact, we can recurse to find the individual
+    # type variables. On the recursive call, binding only happens if the part
+    # is completely convex wrt to_compact. (If a type variable occurs only
+    # once, this at least can happen when you get to the individual variable.)
+    # this step does *not* check other type vars, just convexity; the check on
+    # other variables is handled immediately on recursion (above).
+    could_compact = [(to_compact & p.bound_type_vars()) for p in t]
+    disjoint = [None] * len(could_compact)
+    # for any i,j check whether t[i] and t[j] are disjoint on vars in `to_compact`
+    # this is somewhat annoying to do in a general way, and the below uses a
+    # dynamic programming approach to fill in `disjoint`. In practice, we are
+    # mostly dealing with len 2 types, for which this approach is
+    # over-complicated, but tuple types can be arbitrary length.
+    for i in range(len(could_compact)):
+        if disjoint[i] is not None and not disjoint[i] or not could_compact[i]:
+            continue
+        for j in range(i+1, len(could_compact)):
+            if len(could_compact[i] & could_compact[j]):
+                # mark both i and j as overlapping with something
+                disjoint[i] = disjoint[j] = False
+        if disjoint[i] is None:
+            # we've found no overlaps for i
+            disjoint[i] = True
+
+    if any(disjoint):
+        l = list(t)
+        dirty = False
+        for i in range(len(disjoint)):
+            if disjoint[i]:
+                l[i] = convex_rebind(t[i], to_compact)
+                dirty = dirty or l[i] is not t[i]
+        if dirty:
+            return t.copy_local(*l)
+    return t
 
 
 enable_cache = True
@@ -2071,7 +2286,7 @@ class UnificationResult(object):
         # XX possibly not  worth caching when any of the ingredients have
         # fresh variables. Compacting might work?
         update_cache = update_cache and enable_cache
-        if update_cache and not self.principal.has_fresh_variables():
+        if update_cache and principal is not None and not self.principal.has_fresh_variables():
             update_unify_cache(self)
 
     def cache_values(self):
@@ -2084,13 +2299,15 @@ class UnificationResult(object):
         return self.principal is not None and self.principal.is_polymorphic()
 
     def _repr_html_(self):
-        s = "<table>"
-        s += ("<tr><td>Principal type:&nbsp;&nbsp; </td><td>%s</td></tr>"
-                                % self.principal.latex_str())
-        s += ("<tr><td>Inputs: </td><td>%s and %s</td></tr>"
-                                % (self.t1.latex_str(), self.t2.latex_str()))
-        s += ("<tr><td>Mapping: </td><td>%s</td></tr>"
-                                % utils.dict_latex_repr(self.mapping))
+        s = "<table><tr><td>Principal type:&nbsp;&nbsp; </td>"
+        if self.principal is None:
+            # XX this formatting might not work right in colab
+            s += "<td><span style=\"color:red\">Unification failure!</span></td></tr>"
+        else:
+            s += f"<td>{self.principal.latex_str()}</td></tr>"
+        s += f"<tr><td>Inputs: </td><td>{self.t1.latex_str()} and {self.t2.latex_str()}</td></tr>"
+        if self.principal is not None:
+            s += f"<tr><td>Mapping: </td><td>{utils.dict_latex_repr(self.mapping)}</td></tr>"
         s += "</table>"
         return s
 
@@ -2107,8 +2324,12 @@ class PolyTypeSystem(TypeSystem):
     def __init__(self, atomics=None, nonatomics=None):
         self.type_ranking = dict()
         super().__init__("polymorphic", atomics=atomics, nonatomics=nonatomics)
-        self.add_nonatomic(VariableType, 10)
+        # n.b. it is important that these two have exactly the same priority;
+        # this allows unify input order to deterministically relate to output
+        # order in certain key cases
         self.add_nonatomic(UnknownType, 10)
+        self.add_nonatomic(VariableType, 10)
+        self.add_nonatomic(Forall, 20)
 
     def add_nonatomic(self, t, ranking=0):
         super().add_nonatomic(t)
@@ -2152,7 +2373,7 @@ class PolyTypeSystem(TypeSystem):
             return t2 in t1.bound_type_vars()
         return False
 
-    def unify_details(self, t1, t2, assignment=None):
+    def unify_details(self, t1, t2, assignment=None, show_failure=False):
         """Find the principal type, if any, for `t1` and `t2`.
 
         If this succeeds, return a UnificationResult."""
@@ -2163,7 +2384,7 @@ class PolyTypeSystem(TypeSystem):
 
         # for now, no caching for calls that are under some type assignment;
         # we would need to factor this in to the caching
-        use_cache = not assignment
+        use_cache = not assignment and not show_failure
         if use_cache and (cached := get_unify_cached(t1, t2)) is not None:
             return cached
 
@@ -2171,24 +2392,32 @@ class PolyTypeSystem(TypeSystem):
         (result, r_assign) = self._unify_r(t1, t2, assignment=assignment)
 
         if result is None:
+            if show_failure:
+                # assignment is not informative in the case of a failure
+                return UnificationResult(result, t1, t2)
             return None
         # a principal type has been found, but may not be fully represented by
         # result. This will happen if later parts of one type forced some
         # strengthening of assumptions, and we need to apply the stronger
         # assumption everywhere.
-        l = list()
-        for i in range(len(result)):
-            l.append(result[i].sub_type_vars(r_assign, trans_closure=True))
-        result = result.copy_local(*l)
+        result = result.sub_type_vars(r_assign, trans_closure=True)
         return UnificationResult(result, t1, t2, r_assign, update_cache=use_cache)
 
+    def _unify_r_control(self, t1, t2, assignment, swap=False):
+        # this setup is a bit convoluted, but the swap named parameter in this
+        # and in _unify_r_swap is intended to let the controllee reset this
+        # argument
+        if swap:
+            try:
+                return self._unify_r(t2, t1, assignment=assignment)
+            except TypeMismatch as e:
+                e.swap_order()
+                raise e
+        else:
+            return self._unify_r(t1, t2, assignment=assignment)
 
-    def _unify_r_swap(self, t1, t2, assignment):
-        try:
-            return self._unify_r(t2, t1, assignment=assignment)
-        except TypeMismatch as e:
-            e.swap_order()
-            raise e
+    def _unify_r_swap(self, t1, t2, assignment, swap=True):
+        return self._unify_r_control(t1, t2, assignment, swap=swap)
 
     def _unify_r(self, t1, t2, assignment):
         """Recursive unification of `t1` and `t2` given some assignment.
@@ -2215,7 +2444,7 @@ class PolyTypeSystem(TypeSystem):
             # unclear if this is a useful optimization
             return t2.unify(t1, self._unify_r_swap, assignment=assignment)
         else:
-            return t1.unify(t2, self._unify_r, assignment=assignment)
+            return t1.unify(t2, self._unify_r_control, assignment=assignment)
 
     def unify_fr(self, fun, ret, assignment=None):
         """Find principal types if `ret` is a return value for `fun`.  
@@ -2256,6 +2485,7 @@ class PolyTypeSystem(TypeSystem):
         # and X does not appear at all. A naive implementation (e.g. using
         # fresh_for here) could end up generating X, accidentally having an
         # impact on this context.
+        # XX: maybe this should be `∀X` instead of an immediately fresh type?
         output_var = UnknownType()
         hyp_fun = FunType(arg, output_var)
         try:
@@ -2295,11 +2525,10 @@ class PolyTypeSystem(TypeSystem):
     def compact_type_vars(self, t1, unsafe=None):
         """Compact the type variables in `t1` so as to make them more
         readable."""
-        types = t1.bound_type_vars()
-        mapping = compact_type_set(types, unsafe)
-        return t1.sub_type_vars(mapping)
 
-    def unify_sym_check(self, t1, t2):
+        return compact_type_vars(t1, unsafe=unsafe)
+
+    def unify_sym_check(self, t1, t2, require_unify=False):
         """Utility function for testing that unification obeys symmetry.
 
         Return true if `t1` and `t2` produce the same unification result
@@ -2311,12 +2540,14 @@ class PolyTypeSystem(TypeSystem):
         r2 = self.unify(t2, t1)
         logger.setLevel(oldlevel)
         if ((r1 is None) and (r2 is None)):
-            return True
+            return not require_unify
         if ((r1 is None) or (r2 is None)):
             logger.error("Unify failed in one direction, results '%s' and '%s'"
                                                     % (repr(r1), repr(r2)))
             return False
         result = self.alpha_equiv(r1, r2)
+        if result and require_unify:
+            return r1 # return r1 as a principal type for this case
         return result
 
     def random_from_class(self, cls, max_depth=2, p_terminate_early=0.2,
@@ -2543,21 +2774,16 @@ class TypeTest(unittest.TestCase):
                 t1 = poly_system.random_variable_type(depth, 0.2)
                 t2 = poly_system.random_variable_type(depth, 0.2)
                 result = poly_system.unify_sym_check(t1, t2)
-                if (not result):
-                    print(
-                        "Symmetry check failed: '%s' and '%s'."
-                        % (repr(t1), repr(t2)))
-                self.assertTrue(result)
+                self.assertTrue(result,
+                    f"Symmetry check failed: tp('{repr(t1)}'), tp('{repr(t2)}').")
         for depth1 in range (1,2):
             for depth2 in range (1,2):
                 for i in range(0, 500):
                     t1 = poly_system.random_variable_type(depth1, 0.2)
                     t2 = poly_system.random_variable_type(depth2, 0.2)
                     result = poly_system.unify_sym_check(t1, t2)
-                    if (not result):
-                        print("Symmetry check failed: '%s' and '%s'."
-                                % (repr(t1), repr(t2)))
-                    self.assertTrue(result)
+                    self.assertTrue(result,
+                        f"Symmetry check failed: tp('{repr(t1)}'), tp('{repr(t2)}').")
 
     def test_symmetry_general(self):
         for depth1 in range (1,2):
@@ -2566,10 +2792,8 @@ class TypeTest(unittest.TestCase):
                     t1 = poly_system.random_type(depth1, 0.2)
                     t2 = poly_system.random_type(depth2, 0.2)
                     result = poly_system.unify_sym_check(t1, t2)
-                    if (not result):
-                        print("Symmetry check failed: '%s' and '%s'."
-                                % (repr(t1), repr(t2)))
-                    self.assertTrue(result)
+                    self.assertTrue(result,
+                        f"Symmetry check failed: tp('{repr(t1)}'), tp('{repr(t2)}').")
 
 
     def test_disjunctive_cases(self):
@@ -2652,4 +2876,35 @@ class TypeTest(unittest.TestCase):
                             tp("<X',X''>"))
                         == None)
         logger.setLevel(oldlevel)
+
+    def test_forall_cases(self):
+        def tp(x):
+            return poly_system.parse(x, require_exact_type=True)
+        def u(x,y):
+            return poly_system.unify_sym_check(tp(x), tp(y), require_unify=True)
+        self.assertEqual(tp('∀<X,Y>'), tp('∀∀<X,Y>'))
+        self.assertEqual(tp('<e,?>'), tp('∀<e,∀X>')) # X is implementation-dependent
+        self.assertTrue(u('∀X', '∀X'))
+        self.assertTrue(u('∀Y', '∀<X,Y>'))
+        self.assertEqual(u('∀X', '∀X'), tp('∀X'))
+        self.assertEqual(u('∀X', 'X'), tp('X'))
+        self.assertEqual(u("<∀X,Y>", "∀<X,Y>"), tp("<∀X,Y>"))
+        # assumption here: ?1,?2 are safe from being used as fresh types during
+        # this computation. (True on the current implementation)
+        self.assertEqual(u('∀X', '?1'), tp('?1'))
+        self.assertEqual(u("<?1,?2>", "∀<X,Y>"), tp('<?1,?2>'))
+        self.assertEqual(u("<X,Y>", "∀<X,Y>"), tp("<X,Y>"))
+        self.assertEqual(u("<X,Y>", "<∀X,∀Y>"), tp("<X,Y>"))
+        self.assertEqual(u("<X,Y>", "∀<X,Y>"), tp("<X,Y>"))
+        self.assertEqual(u("<X,Y>", "∀<X,X>"), tp("<Y,Y>")) # the Y here is implementation dependent
+        self.assertEqual(u("∀<e,X>", "<X,∀Y>"), tp("∀<e,X>"))
+        self.assertEqual(u("<e,?1>", "<X,∀Y>"), tp("<e,?1>"))
+        self.assertEqual(u('<X2,Z2>','<<Z2,Y2>,∀X>'), tp('<<Z2,Y2>,Z2>'))
+
+        # this unification result can't be represented with an unselective
+        # binder while retaining the variable name `Y`
+        r = u('<∀X,<Y,∀X>>', '∀<X,<Y,X>>')
+        self.assertTrue(len(r.bound_type_vars()) == 2)
+        self.assertTrue(r[0].is_fresh())
+        self.assertEqual(compact_type_vars(r), tp("<X,<Y,X>>"))
 

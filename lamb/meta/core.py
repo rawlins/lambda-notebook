@@ -2099,7 +2099,7 @@ class ApplicationExpr(TypedExpr):
             return None
 
         # assumption: by now, fun.type supports indexing to get the output type
-        return (fun, arg, fun.type[1], history)
+        return (fun, arg, fun.type.right, history)
 
     def _reduction_order(self):
         # prefer to reduce the argument before the function, in case the

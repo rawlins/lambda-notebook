@@ -167,6 +167,15 @@ def consume_pattern(s, i, regex, error=None, return_match=False):
         else:
             raise ParseError(error, s, i)
 
+
+# non-negative integers only
+def consume_number(s, i, error=None):
+    m, i = consume_pattern(s, i, r'[0-9]+', error=error)
+    if m is not None:
+        m = int(m)
+    return m, i
+
+
 def find_pattern_locations(re, s, i=0, end=None):
     matches = list()        
     next = i

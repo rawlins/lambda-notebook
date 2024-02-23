@@ -542,16 +542,26 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(g.try_adjust_type(tp("<<e,t>,<<e,e>,?>>")),
             te("(λ g_<e,t>: (λ f_<e,e>: (λ x_e: g_<e,t>(f_<e,e>(x_e)))))"))
 
-        # note: the choice of variables here is implementation-dependent; because
-        # of the let, in the current implementation `Y` gets renamed to `X`
-        # (which is distinct from the `X` in `g`). TODO: this function should
-        # really be testing equivalence under alpha conversion of type vars...
+        # note: the choice of variables here is implementation-dependent.
+        # TODO: this function should really be testing equivalence under alpha
+        # conversion of type vars...
         self.assertEqual(g.let_type(tp("<?,<<<e,t>,?>,?>>")),
-            te("(λ g_<X,Z>: (λ f_<<e,t>,X>: (λ x_<e,t>: g_<X,Z>(f_<<e,t>,X>(x_<e,t>)))))"))
+            te("(λ g_<Y,Z>: (λ f_<<e,t>,Y>: (λ x_<e,t>: g_<Y,Z>(f_<<e,t>,Y>(x_<e,t>)))))"))
         # z combinator test
         z = te("(λ f_<X,<e,Z>>: (λ g_<e,X>: (λ x_e: f(g(x))(x))))")
         self.assertEqual(z.try_adjust_type(tp("<<e,<e,t>>,?>")),
             te("(λ f_<e,<e,t>>: (λ g_<e,e>: (λ x_e: f_<e,<e,t>>(g_<e,e>(x_e))(x_e))))"))
+
+        # quick check of type inference in lambda expressions
+        f = te("L q_X : p_t & f_<Y,Y>(q)")
+        self.assertEqual(f[0].type, type_t)
+        self.assertEqual(f, te("L q_X : p_t & f_<Y,Y>(q_X)")) # vs hinted q
+        self.assertEqual(f, te("L q_X : p_t & f_<Y,Y>(q_∀X)")) # vs ∀ hinted q
+        # do the same thing again with a ∀<Y,Y> hint
+        f = te("L q_X : p_t & f_∀<Y,Y>(q)")
+        self.assertEqual(f[0].type, type_t)
+        self.assertEqual(f, te("L q_X : p_t & f_∀<Y,Y>(q_X)")) # vs hinted q
+        self.assertEqual(f, te("L q_X : p_t & f_∀<Y,Y>(q_∀X)")) # vs ∀ hinted q
 
     def test_boolean_simplify(self):
         # negation
