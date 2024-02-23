@@ -1451,8 +1451,11 @@ class TypedExpr(object):
         else:
             a2 = {key: self.ensure_typed_expr(assignment[key])
                                                         for key in assignment}
+        # if an expression consisting of just a term name is replaced, we may
+        # lose the current let state
+        let = self.let
         r = term_replace_unify(self, a2, track_all_names=track_all_names)
-        if r.let and compact:
+        if (let or r.let) and compact:
             r = let_wrapper(r)
         return r
 
