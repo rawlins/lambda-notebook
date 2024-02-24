@@ -1170,16 +1170,21 @@ class Forall(TypeConstructor):
             r = r.arg
         return r
 
+    def debind(self):
+        return freshen_type(self.arg)
+
     def functional(self):
         return self.arg.functional()
 
     @property
     def left(self):
-        return self.arg.left
+        # ensure any variables get rebound
+        return Forall(self.arg.left).normalize()
 
     @property
     def right(self):
-        return self.arg.right
+        # ensure any variables get rebound
+        return Forall(self.arg.right).normalize()
 
     def copy_local(self, arg):
         return Forall(arg)
@@ -1249,6 +1254,13 @@ class Forall(TypeConstructor):
                                    and assignment[v].is_fresh()
                                    and assignment[v] not in t2.bound_type_vars()}
 
+        # rebind any mapped types in the assignment. Example: Unifying
+        # ∀<X,Y> + X would end up with X mapped to fresh variables from
+        # instantiating the ∀ type; we want a resulting ∀ type in the map.
+        # XX are there cases where fresh variables appear purely on the right
+        # side of the map?
+        assignment = {k: convex_rebind(assignment[k], to_compact) for k in assignment
+                            if k not in to_compact}
         return convex_rebind(result, to_compact), assignment
 
     @classmethod
@@ -2478,16 +2490,13 @@ class PolyTypeSystem(TypeSystem):
         if not fun.is_polymorphic() and not arg.is_polymorphic():
             return super().unify_fa(fun, arg)
 
-        # note: your instinct here may be to pick a type var that's fresh for
-        # fun/arg. However, it needs to be fresh for the entire context in a
-        # way that is not a pure type-based calculation.
-        # Example: `f_Y(y_<Y,X>(g(X,Z)))`. The inner expression is type <Y,Z>
-        # and X does not appear at all. A naive implementation (e.g. using
-        # fresh_for here) could end up generating X, accidentally having an
-        # impact on this context.
-        # XX: maybe this should be `∀X` instead of an immediately fresh type?
-        output_var = UnknownType()
-        hyp_fun = FunType(arg, output_var)
+        if isinstance(arg, Forall):
+            # for this case, we can safely scope ∀ over the whole thing (and
+            # the results are better if we do so)
+            hyp_fun = Forall(FunType(arg.debind(), UnknownType())).normalize()
+        else:
+            # otherwise, construct a type that is <arg,∀X>
+            hyp_fun = FunType(arg, Forall(VariableType('X', 0)))
         try:
             # order matters here (why?)
             result = self.unify_details(hyp_fun, fun, assignment=assignment)
