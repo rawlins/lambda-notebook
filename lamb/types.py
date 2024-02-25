@@ -2465,54 +2465,40 @@ class PolyTypeSystem(TypeSystem):
         else:
             return t1.unify(t2, self._unify_r_control, assignment=assignment)
 
-    def unify_fr(self, fun, ret, assignment=None):
-        """Find principal types if `ret` is a return value for `fun`.  
-
-        Returns a triple of the principal types of the function, its left type,
-        and its right type.  Returns (None, None, None) on failure."""
-
-        input_var = UnknownType()
-        hyp_fun = FunType(input_var, ret)
-        try:
-            # order probably matters here
-            # XX adjust to match unify_fa...
-            result = self.unify_details(hyp_fun, fun, assignment=assignment)
-        except OccursCheckFailure as e:
-            e.error = f"Occurs check failure while trying to infer function type given return type {ret}"
-            e.swap_order()
-            raise e
-        if result is None: # `fun` is not a function or cannot be made into one
-            return (None, None, None)
-        else:
-            return (result.principal, result.principal.left,
-                                                    result.principal.right)
-
-    def unify_fa(self, fun, arg, assignment=None):
-        """Find principal types if `ret` is a return value for `fun`.  
-
-        Returns a triple of the principal types of the function, its left type,
-        and its right type.  Returns (None, None, None) on failure."""
-
-        # the code below works for non-polymorphic types, but uses much
-        # heavier infrastructure
-        if not fun.is_polymorphic() and not arg.is_polymorphic():
-            return super().unify_fa(fun, arg)
-
-        if isinstance(arg, Forall):
+    def _build_hyp_fun(self, arg, ret):
+        if arg is None:
+            arg = Forall(VariableType('X', 0))
+        if ret is None:
+            ret = Forall(VariableType('X', 0))
+        if isinstance(ret, Forall) and isinstance(arg, Forall):
             # for this case, we can safely scope ∀ over the whole thing (and
             # the results are better if we do so)
-            hyp_fun = Forall(FunType(arg.debind(), UnknownType())).normalize()
+            return Forall(FunType(arg.debind(), ret.debind())).normalize()
         else:
-            # otherwise, construct a type that is <arg,∀X>
-            hyp_fun = FunType(arg, Forall(VariableType('X', 0)))
+            return FunType(arg, ret)
+
+    def unify_fun(self, fun, arg, ret, assignment=None):
+        # the code below works for non-polymorphic types, but uses much
+        # heavier infrastructure
+        if not fun.is_polymorphic():
+            if arg is not None and not arg.is_polymorphic() and ret is None:
+                return super().unify_fa(fun, arg)
+            elif ret is not None and not ret.is_polymorphic() and arg is None:
+                return super().unify_fr(fun, ret)
+
+        hyp_fun = self._build_hyp_fun(arg, ret)
         try:
-            # order matters here (why?)
+            # order matters here
             result = self.unify_details(hyp_fun, fun, assignment=assignment)
         except OccursCheckFailure as e:
-            e.error = f"Occurs check failure while trying to infer function type given argument `{arg}`"
-            # the other order makes more sense
+            if arg is None:
+                e.error = f"Occurs check failure while trying to infer function type given return type {ret}"
+            else:
+                # assumption: one or the other is not None if we have reached here
+                e.error = f"Occurs check failure while trying to infer function type given argument `{arg}`"
             e.swap_order()
             raise e
+
         if result is None: # `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:
@@ -2524,8 +2510,24 @@ class PolyTypeSystem(TypeSystem):
                 principal = principal.debind()
             return (principal, principal.left, principal.right)
 
+    def unify_fr(self, fun, ret, assignment=None):
+        """Find principal types if `ret` is a return value for `fun`.
+
+        Returns a triple of the principal types of the function, its left type,
+        and its right type.  Returns (None, None, None) on failure."""
+
+        return self.unify_fun(fun, None, ret, assignment=assignment)
+
+    def unify_fa(self, fun, arg, assignment=None):
+        """Find principal types if `ret` is a return value for `fun`.
+
+        Returns a triple of the principal types of the function, its left type,
+        and its right type.  Returns (None, None, None) on failure."""
+
+        return self.unify_fun(fun, arg, None, assignment=assignment)
+
     def fun_arg_check_bool(self, fun, arg):
-        f, l, r = self.unify_fa(fun.type, arg.type)
+        f, a, r = self.unify_fun(fun.type, arg.type, None)
         return f is not None
 
     # There's really got to be a better way to do this...
