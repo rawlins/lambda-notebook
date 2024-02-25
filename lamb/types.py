@@ -1179,11 +1179,14 @@ class Forall(TypeConstructor):
     @property
     def left(self):
         # ensure any variables get rebound
+        # XX this gets a weaker constraint than the type encodes, should this
+        # and `right` just error?
         return Forall(self.arg.left).normalize()
 
     @property
     def right(self):
         # ensure any variables get rebound
+        # XX note on `left`
         return Forall(self.arg.right).normalize()
 
     def copy_local(self, arg):
@@ -2472,6 +2475,7 @@ class PolyTypeSystem(TypeSystem):
         hyp_fun = FunType(input_var, ret)
         try:
             # order probably matters here
+            # XX adjust to match unify_fa...
             result = self.unify_details(hyp_fun, fun, assignment=assignment)
         except OccursCheckFailure as e:
             e.error = f"Occurs check failure while trying to infer function type given return type {ret}"
@@ -2512,8 +2516,13 @@ class PolyTypeSystem(TypeSystem):
         if result is None: # `fun` is not a function or cannot be made into one
             return (None, None, None)
         else:
-            return (result.principal, result.principal.left,
-                                                        result.principal.right)
+            principal = result.principal
+            if isinstance(principal, Forall):
+                # we can't sensibly access left/right, there's nothing for it
+                # but to go to fresh types. (XX: refactor so that this is on
+                # the caller to handle)
+                principal = principal.debind()
+            return (principal, principal.left, principal.right)
 
     def fun_arg_check_bool(self, fun, arg):
         f, l, r = self.unify_fa(fun.type, arg.type)
