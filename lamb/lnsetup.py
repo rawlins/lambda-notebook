@@ -58,26 +58,31 @@ def inject_into_ipython():
 def reload_lamb(use_nltk_tree=None):
     # should this reload the magics?
     import importlib
-    importlib.reload(lamb.utils)
-    if use_nltk_tree is not None:
-        # inherit default from currently running version. TODO: too confusing?
-        lamb.utils.use_nltk = use_nltk_tree
-    lamb.magics.reset_envs()
-    importlib.reload(lamb.types)
-    importlib.reload(lamb.meta.ply)
-    importlib.reload(lamb.meta.core)
-    importlib.reload(lamb.meta.meta)
-    importlib.reload(lamb.meta.boolean)
-    importlib.reload(lamb.meta.number)
-    importlib.reload(lamb.meta.sets)
-    importlib.reload(lamb.meta)
-    importlib.reload(lamb.lang)
-    importlib.reload(lamb.parsing)
-    importlib.reload(lamb.display)
-    colab_setup()
-    importlib.reload(lamb.combinators)
-    lamb.reload_all = reload_lamb
-    inject_into_ipython()
+    dbg_suppress = lamb.utils._debug_suppress
+    try:
+        importlib.reload(lamb.utils)
+        lamb.utils._debug_suppress = True
+        if use_nltk_tree is not None:
+            # inherit default from currently running version. TODO: too confusing?
+            lamb.utils.use_nltk = use_nltk_tree
+        lamb.magics.reset_envs()
+        importlib.reload(lamb.types)
+        importlib.reload(lamb.meta.ply)
+        importlib.reload(lamb.meta.core)
+        importlib.reload(lamb.meta.meta)
+        importlib.reload(lamb.meta.boolean)
+        importlib.reload(lamb.meta.number)
+        importlib.reload(lamb.meta.sets)
+        importlib.reload(lamb.meta)
+        importlib.reload(lamb.lang)
+        importlib.reload(lamb.parsing)
+        importlib.reload(lamb.display)
+        colab_setup()
+        importlib.reload(lamb.combinators)
+        lamb.reload_all = reload_lamb
+        inject_into_ipython()
+    finally:
+        lamb.utils._debug_suppress = dbg_suppress
 
 
 def ipython_setup():
