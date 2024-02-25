@@ -2170,6 +2170,10 @@ def freshen_type_set(types):
 
     # XX it would be nice to move away from using this method for fresh vars,
     # but it is extremely tricky to get anything more minimal right
+
+    # we need to sort in order to get a deterministic freshening order
+    # XX should this use AST position?
+    types = sorted(types, key=lambda x: (x.symbol, x.number))
     return {t: UnknownType() for t in types}
 
 
