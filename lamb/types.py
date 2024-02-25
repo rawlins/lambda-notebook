@@ -2156,7 +2156,7 @@ def compact_type_set(types, unsafe=None, fresh_only=False):
             remap.append(t)
         else:
             keep.add(t)
-    remap.sort(key=lambda x : x._key_str) # for deterministic behavior
+    remap.sort(key=lambda x : (x.symbol, x.number)) # for deterministic behavior
     for t in remap:
         m = safe_var_in_set(keep | unsafe)
         assert t not in m
