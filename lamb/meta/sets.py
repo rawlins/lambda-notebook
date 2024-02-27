@@ -64,6 +64,12 @@ class ConditionSet(BindingOp):
                 type_check=type_check)
         self.type = SetType(self.vartype)
 
+    def apply_var_constraints(self):
+        # allow polymorphic variables. These don't exactly work simply,
+        # but we do currently use {∀X} as the type for an empty set when
+        # nothing else is known...
+        pass
+
     def term(self):
         return False
 

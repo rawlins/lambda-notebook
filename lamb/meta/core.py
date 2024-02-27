@@ -207,7 +207,7 @@ def let_compact_type_vars(*args, unsafe=None, store_mapping=False, all_vars=Fals
             return args[0]
         else:
             return args
-    envs = [a.get_type_env() for a in args]
+    envs = [a.copy() for a in history_env]
     used_vars = set().union(*[e.used_vars() for e in envs])
     if not all_vars:
         if unsafe is None:
@@ -231,31 +231,53 @@ def let_compact_type_vars(*args, unsafe=None, store_mapping=False, all_vars=Fals
 
 
 def let_freshen(*args):
+    """Freshen any let-bound types in `args`"""
     lets = [a.let for a in args]
     result = [a for a in args]
     result_let = False
     if any(lets):
         if all(lets):
-            # freshen only [1:]
-            # could also check for collisions and freshen only those
-            r = range(1, len(result))
-            # for this case, we can safely apply `let` to the result
+            # special case: if every element in `args` is let-bound, we can
+            # do pretty much what we want with the variables as long as
+            # collisions are avoided, and rebind everything. The code here
+            # is a little more complicated in order to try to get nicer
+            # results that don't replace too many variables.
+            freshen = [False] * len(result)
+            for i in range(len(freshen)):
+                if freshen[i] is True:
+                    continue
+                for j in range(i, len(freshen)):
+                    if (result[i].get_type_env().type_var_set &
+                                    result[j].get_type_env().type_var_set):
+                        freshen[i] = freshen[j] = True
+            # it's always safe to leave one unfreshened, because we will `let`
+            # the result. (This could be more sophisticated depending on
+            # the actual overlaps)
+            for i in range(len(result)):
+                if freshen[i]:
+                    freshen[i] = False
+                    break
+            for i in range(len(result)):
+                if freshen[i]:
+                    result[i] = result[i].freshen_type_vars()
+            # if everything is `let`-marked, we should `let` the result
             result_let = True
         else:
-            # in this case, we don't know the context, and so must freshen
-            # everything
-            r = range(len(result))
-        for i in r:
-            # this call checks let
-            # XX derivations?
-            result[i] = result[i].freshen_type_vars()
+            # in this case, we don't know the context, and so must call freshen
+            # on everything. (Reminder: this call still checks `let`.)
+            for i in range(len(result)):
+                # this call checks let
+                # XX derivations?
+                result[i] = result[i].freshen_type_vars()
     # else: no adjustment to `result`
     return result_let, result
 
 
-def handle_lets(fun, *args, **kwargs):
+def combine_with_type_envs(fun, *args, **kwargs):
+    """Combine some sequence of arguments using `fun`, while handling type
+    variables correctly."""
     result_let, inter = let_freshen(*args)
-    result = fun(*inter, **kwargs)
+    result = fun(*inter, **kwargs).regularize_type_env()
     if result_let or result.let:
         result = let_wrapper(result)
     return result
@@ -476,6 +498,217 @@ def op_expr_factory(op, *args):
 
 ############### Type unification-related code
 
+class TermTypeMapping(object):
+    """Holds a type mapping for a single term."""
+    def __init__(self, term_name, principal, specializations=None):
+        self.term_name = term_name
+        self.principal = principal
+        if principal.is_let_polymorphic() and specializations is None:
+            specializations = set()
+        self.specializations = specializations
+
+    @property
+    def let_polymorphic(self):
+        return self.specializations is not None
+
+    def get_type(self, specific=False):
+        if specific and self.let_polymorphic and len(self.specializations) == 1:
+            r, = self.specializations
+            return r
+        else:
+            # multiple or 0 specializations, return the most general type
+            # XX, in principle this should handle a sequence of more specific
+            # types
+            return self.principal
+
+    def __repr__(self):
+        # reprs do not show term names, because this is displayed in a
+        # dict context
+        if not self.specializations:
+            return repr(self.principal)
+        else:
+            return f"{repr(self.principal)}[{", ".join(repr(s) for s in self.specializations)}]"
+
+    def latex_str(self, **kwargs):
+        if not self.specializations:
+            return self.principal.latex_str()
+        else:
+            return f"{self.principal.latex_str()}[Specializations: {", ".join(s.latex_str() for s in self.specializations)}]"
+
+    def __str__(self):
+        return f"{self.term_name}: {repr(self)}"
+
+    def clean_copy(self, principal):
+        if self.let_polymorphic:
+            return TermTypeMapping(self.term_name, self.principal, {principal})
+        else:
+            return TermTypeMapping(self.term_name, principal)
+
+    def copy(self):
+        if self.let_polymorphic:
+            return TermTypeMapping(self.term_name, self.principal, self.specializations.copy())
+        else:
+            return TermTypeMapping(self.term_name, self.principal)
+
+    def sub_type_vars(self, mapping):
+        # n.b. difference from a type object: this operates by side effect!
+        if not mapping:
+            return self
+        self.principal = self.principal.sub_type_vars(mapping)
+        if self.let_polymorphic:
+            self.specializations = {t.sub_type_vars(mapping) for t in self.specializations}
+        return self
+
+    def bound_type_vars(self):
+        r = self.principal.bound_type_vars()
+        if self.let_polymorphic:
+            for s in self.specializations:
+                r = r | s.bound_type_vars()
+        return r
+
+    def _polymorphic_merge(self, typ, env):
+        # assumption: either self or type is let-polymorphic
+        principal = env.try_unify(self.principal, typ, update_mapping=False)
+        if principal is None:
+            return None
+        ts = get_type_system()
+        if self.let_polymorphic:
+            # we have an existing polymorphic mapping, and will try to
+            # update it, either changing the primary polymorphic type or
+            # adding a specialization. The unify call above will find the
+            # strongest of the two types if there is a difference.
+            # there are basically four cases:
+            # 1 principal == self.principal == typ: do nothing
+            # 2 principal == self.principal, principal != typ: this means
+            #   that typ should become the primary polymorphic type
+            # 3 principal != self.principal, principal == typ: this means
+            #   that typ should be added as a specialization
+            # 4 principal != self.principal != typ: we would need a new
+            #   primary polymorphic type and won't infer it, so failure.
+            #   see note below.
+            #
+            # equality here is modulo alpha equivalence!
+            # XX could call unify_details and check `trivial` for the
+            # first case?
+
+            # the unify call above will substitute type vars in the env, so
+            # we need to match that
+            princ_equiv = ts.alpha_equiv(principal,
+                self.principal.sub_type_vars(env.type_mapping)) # XX is this needed?
+            typ_equiv = ts.alpha_equiv(principal,
+                typ.sub_type_vars(env.type_mapping))
+            if princ_equiv and typ_equiv:
+                # no new specialization
+                pass
+            elif princ_equiv and not typ_equiv:
+                assert typ.is_let_polymorphic()
+                self.specializations.add(self.principal)
+                self.principal = typ
+                # return self.principal
+            elif not princ_equiv and typ_equiv:
+                self.specializations.add(typ)
+                # return typ
+            else: # not princ_equiv and not typ_equiv:
+                # unification succeeded, but the principal type is neither
+                # equivalent to self.principal or to typ. This means that we do
+                # not know what the primary let-polymorphic type actually is!
+                # merging should fail in this case.
+                #
+                # Example:
+                #     %te P_∀<<e,<X,Y>>,t>(x_Z) & P_∀<<Y,<X,e>>,t>(x_Z)
+                # Here, without further info, we cannot infer a single
+                # intended primary polymorphic type. E.g. is it
+                # `∀X`, `∀<X,Y>`, ∀`<<X,<Y,Z>>`, `∀<<Y,<X,Y>>`, ...?
+                # The last of these is for this case the strongest
+                # possible polymorphic type, but we don't try to infer
+                # this for the user. They'll need to specify it
+                # somehow. (XX is it possible in principle to do this
+                # inference in H-M?)
+                return None
+        else: # not self.let_polymorphic
+            assert typ.is_let_polymorphic()
+            # we are lifting self to be let-polymorphic with `typ` as the new
+            # primary polymorphic type
+            self.specializations = {self.principal}
+            self.principal = typ
+        env.update_vars_in_terms() # XX side-effect-y
+        return principal
+
+    def merge(self, typ, env):
+        principal = env.try_unify(self.principal, typ, update_mapping=True)
+        if principal is None:
+            return None
+
+        if self.let_polymorphic or typ.is_let_polymorphic():
+            if self.let_polymorphic:
+                # we have an existing polymorphic mapping, and will try to
+                # update it, either changing the primary polymorphic type or
+                # adding a specialization. The unify call above will find the
+                # strongest of the two types if there is a difference.
+                # there are basically four cases:
+                # 1 principal == self.principal == typ: do nothing
+                # 2 principal == self.principal, principal != typ: this means
+                #   that typ should become the primary polymorphic type
+                # 3 principal != self.principal, principal == typ: this means
+                #   that typ should be added as a specialization
+                # 4 principal != self.principal != typ: we would need a new
+                #   primary polymorphic type and won't infer it, so failure.
+                #   see note below.
+                #
+                # equality here is modulo alpha equivalence!
+                # XX could call unify_details and check `trivial` for the
+                # first case?
+
+                # the unify call above will substitute type vars in the env, so
+                # we need to match that
+                ts = get_type_system()
+                princ_equiv = ts.alpha_equiv(principal,
+                    self.principal.sub_type_vars(env.type_mapping)) # XX is this needed?
+                typ_equiv = ts.alpha_equiv(principal,
+                    typ.sub_type_vars(env.type_mapping))
+                if princ_equiv and typ_equiv:
+                    # no new specialization
+                    pass
+                elif princ_equiv and not typ_equiv:
+                    assert typ.is_let_polymorphic()
+                    self.specializations.add(self.principal)
+                    self.principal = typ
+                elif not princ_equiv and typ_equiv:
+                    self.specializations.add(typ)
+                else: # not princ_equiv and not typ_equiv:
+                    # unification succeeded, but the principal type is neither
+                    # equivalent to self.principal or to typ. This means that we do
+                    # not know what the primary let-polymorphic type actually is!
+                    # merging should fail in this case.
+                    #
+                    # Example:
+                    #     %te P_∀<<e,<X,Y>>,t>(x_Z) & P_∀<<Y,<X,e>>,t>(x_Z)
+                    # Here, without further info, we cannot infer a single
+                    # intended primary polymorphic type. E.g. is it
+                    # `∀X`, `∀<X,Y>`, ∀`<<X,<Y,Z>>`, `∀<<Y,<X,Y>>`, ...?
+                    # The last of these is for this case the strongest
+                    # possible polymorphic type, but we don't try to infer
+                    # this for the user. They'll need to specify it
+                    # somehow. (XX is it possible in principle to do this
+                    # inference in H-M?)
+                    return None
+            else: # not self.let_polymorphic
+                assert typ.is_let_polymorphic()
+                # we are lifting self to be let-polymorphic with `typ` as the new
+                # primary polymorphic type
+                self.specializations = {self.principal}
+                self.principal = typ
+        else: # not (self.let_polymorphic or typ.is_let_polymorphic())
+            # no polymorphism, just replace `principal` if unification succeeds
+
+            assert not principal.is_let_polymorphic() # should be impossible...
+            self.principal = principal
+
+        # final cleanup and return
+        env.update_vars_in_terms() # XX side-effect-y
+        return principal
+
+
 class TypeEnv(object):
     def __init__(self, term_mapping=None, type_mapping=None):
         if term_mapping is None:
@@ -518,27 +751,29 @@ class TypeEnv(object):
             r = sorted(r)
         return r
 
-    def term_type(self, t):
-        return self.term_mapping[t]
+    def term_type(self, t, specific=True):
+        return self.term_mapping[t].get_type(specific=specific)
 
     def add_term_mapping(self, vname, typ):
         result = self.try_add_term_mapping(vname, typ)
         if result is None:
-            raise TypeMismatch(typ, self.term_mapping[vname],
-                error=f"instances of term `{vname}` have distinct types")
+            # XX possibly error could be better set in term mapping code
+            if self.term_mapping[vname].let_polymorphic:
+                error = f"instances of term `{vname}` have mutually unresolvable polymorphism; can't infer primary polymorphic type"
+                t2 = self.term_mapping[vname]
+            else:
+                error=f"instances of term `{vname}` have incompatible types"
+                t2 = self.term_mapping[vname].principal
+            raise TypeMismatch(typ, t2, error=error)
         return result
 
     def try_add_term_mapping(self, vname, typ):
         if vname in self.term_mapping:
-            target_type = self.term_mapping[vname]
-            # XX probably no need to store mappings for fresh var specializations?
-            principal = self.try_unify(target_type, typ, update_mapping=True)
+            principal = self.term_mapping[vname].merge(typ, self)
             if principal is None:
                 return None
-            self.term_mapping[vname] = principal
-            self.update_type_vars()
         else:
-            self.term_mapping[vname] = typ
+            self.term_mapping[vname] = TermTypeMapping(vname, typ)
             principal = typ
 
         self.add_type_to_var_set(principal)
@@ -566,12 +801,9 @@ class TypeEnv(object):
     def add_type_to_var_set(self, typ):
         self.type_var_set = self.type_var_set | typ.bound_type_vars()
 
-    def update_type_vars(self):
+    def update_vars_in_terms(self):
         for k in self.terms():
-            # note that the following is not generally safe, but here we are
-            # working with TypedTerms that have no TypeEnv
-            new_type = self.term_mapping[k].sub_type_vars(self.type_mapping)
-            self.term_mapping[k] = new_type
+            self.term_mapping[k].sub_type_vars(self.type_mapping)
 
     def try_add_type_mapping(self, type_var, typ, defer=False):
         if isinstance(typ, types.VariableType):
@@ -584,7 +816,7 @@ class TypeEnv(object):
         else:
             principal = self.try_unify(type_var, typ, update_mapping=True)
         if principal is not None and not defer:
-            self.update_type_vars()
+            self.update_vars_in_terms()
         return principal
 
     def add_type_mapping(self, type_var, typ, defer=False):
@@ -598,14 +830,19 @@ class TypeEnv(object):
                 raise TypeMismatch(type_var, typ,
                     error=f"Failed to unify type variable across contexts")
         return principal
-          
+
+    def _merge_term_mapping(self, v, m):
+        self.add_term_mapping(v, m.principal)
+        if m.specializations:
+            for t in m.specializations:
+                self.add_term_mapping(v, t)
 
     def merge(self, tenv):
         for v in tenv.type_mapping:
             self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
-        self.update_type_vars()
+        self.update_vars_in_terms()
         for v in tenv.term_mapping:
-            self.add_term_mapping(v, tenv.term_mapping[v])
+            self._merge_term_mapping(v, tenv.term_mapping[v])
         self.type_var_set |= tenv.type_var_set
         return self
 
@@ -615,13 +852,15 @@ class TypeEnv(object):
                     or len(tenv.type_mapping[v].bound_type_vars()
                                                 & self.type_var_set) > 0):
                 self.add_type_mapping(v, tenv.type_mapping[v], defer=True)
-        self.update_type_vars()
+        self.update_vars_in_terms()
         for v in tenv.term_mapping:
-            self.add_term_mapping(v, tenv.term_mapping[v])
+            self._merge_term_mapping(v, tenv.term_mapping[v])
         return self
 
     def copy(self):
-        env = TypeEnv(self.term_mapping.copy(), self.type_mapping.copy())
+        # ensure that copy is called on individual mappings
+        m = {term: self.term_mapping[term].copy() for term in self.term_mapping}
+        env = TypeEnv(m, self.type_mapping.copy())
         env.type_var_set = self.type_var_set.copy() # redundant with constructor?
         return env
 
@@ -634,38 +873,6 @@ class TypeEnv(object):
             + repr(self.type_var_set)
             + "]")
 
-def merge_type_envs(env1, env2, target=None):
-    """Merge two type environments.  A type environment is simply an assignment,
-    where the mappings to terms are used to define types. Other mappings are
-    ignored.
-
-    If `target` is set, it specifies a set of variable names to specifically
-    target; anything not in it is ignored.
-
-    If `target` is None, all mappings are merged."""
-    ts = get_type_system()
-    result = dict()
-    for k1 in env1:
-        if target and not k1 in target:
-            continue
-        if (not env1[k1].term()):
-            continue
-        if k1 in env2:
-            unify = ts_unify_with(env1[k1], env2[k1],
-                error="Failed to unify types across distinct instances of term")
-            # if the previous call succeeds, it should be impossible to get
-            # an adjustment failure here...
-            result[k1] = env1[k1].try_adjust_type(unify)
-        else:
-            result[k1] = env1[k1]
-    for k2 in env2:
-        if target and not k2 in target:
-            continue
-        if not env2[k2].term():
-            continue
-        if k2 not in env1:
-            result[k2] = env2[k2]
-    return result
 
 def merge_tes(te1, te2, symmetric=True):
     """Produce a TypedExpr that is the result of 'merging' `te1` and `te2`.
@@ -1162,7 +1369,7 @@ class TypedExpr(object):
         # XX simplify to have only either this or op_expr_factory?
         def _op_factory(*args):
             return op_expr_factory(op, *args)
-        return handle_lets(_op_factory, *args)
+        return combine_with_type_envs(_op_factory, *args)
 
     @classmethod
     def _construct_appl(cls, *appl_args, assignment=None):
@@ -1191,7 +1398,7 @@ class TypedExpr(object):
                         "to match argument '%s' (type %s)"
                         % (f.type, repr(f), repr(arg), arg.type))
             return ApplicationExpr(f, arg, assignment=assignment)
-        return handle_lets(_appl_factory, *appl_args)
+        return combine_with_type_envs(_appl_factory, *appl_args)
 
     @classmethod
     def _composite_factory(cls, *args, assignment=None):
@@ -1334,8 +1541,8 @@ class TypedExpr(object):
             assignment = dict()
         env = self.get_type_env()
         # note: this will cut off any derivations without handling from the
-        # caller. But we typically do want the immediately prior version in the
-        # record, since the types could be quite messy.
+        # caller. But we typically don't want the immediately prior version in
+        # the record, since the types could be quite messy.
         return self.under_type_assignment(env.type_mapping,
                                                         merge_intersect=False)
 
@@ -2268,44 +2475,32 @@ class TypedTerm(TypedExpr):
         self.derivation = None
         self.defer = False
         self.let = False
-        self.from_assignment = None
         self._reduced_cache = []
-        if typ is None:
-            if assignment is not None and self.op in assignment:
-                self.from_assignment = assignment[self.op]
-                self.type = self.from_assignment.type
-                # ensure that we inherit the `let` value from the assignment.
-                # this is crucial for term replacement with type variables!
-                self.let = self.from_assignment.let
-                self.type_guessed = False
-            else:
-                self.type = default_type(varname)
-                self.type_guessed = True
-        else:
-            self.type_guessed = False
-            self.type = typ
-        if type_check and not defer_type_env: # note: cannot change type in
-                                              # place safely with this code here
-            env = self.calc_type_env()
-            if assignment is not None:
-                # the assignment check here is non-overlapping with the above
-                # code, dependent on whether a type was or wasn't locally
-                # specified. (TODO: could be cleaner?)
-                if self.op in assignment and typ is not None:
-                    self.from_assignment = assignment[self.op]
-                    # in this case, we need to resolve `typ` vs the constraint
-                    # imposed from the assignment. Since the assignment can
-                    # have let-bound types, we need to explicitly handle that
-                    # case, otherwise type variable collisions lead to weird
-                    # results. XX not sure this won't also lead to weird
-                    # results...from the constructor at least, it is possible
-                    # for the fresh variables to persist, as in:
-                    #     meta.TypedTerm("x", typ=tp("X"), assignment={"x": te("x_<X,X>")})
-                    # (gives type <?,?>)
-                    constraint = self.from_assignment.freshen_type_vars()
-                    env.add_term_mapping(self.op, constraint.type)
+        self.type_guessed = False
 
-            self.type = env.term_type(self.op)
+        # if the assignment provides some information about this term, we will
+        # need to factor that in.
+        if assignment is not None and self.op in assignment:
+            self.from_assignment = assignment[self.op]
+            self.let = self.from_assignment.let
+        else:
+            self.from_assignment = None
+
+        if typ is None and self.from_assignment is None:
+            # if there's no annotation on the term name, and no info from the
+            # assignment, we can fall back on some default types for various
+            # term names
+            self.type = default_type(varname)
+            self.type_guessed = True
+        else:
+            self.type = typ
+
+        if type_check and not defer_type_env:
+            # initialize a type environment based on self.type
+            env = self.calc_type_env()
+
+            # re-set the type, based on its value in the type env
+            self.type = env.term_type(self.op, specific=True)
             self.set_type_env(env)
 
         self.suppress_type = False
@@ -2340,20 +2535,41 @@ class TypedTerm(TypedExpr):
     def copy(self):
         return self.copy_local()
 
-    def copy_local(self, type_check=True):
+    def copy_core(self, other):
+        other = super().copy_core(other)
+        other.type_guessed = self.type_guessed
+        other.from_assignment = self.from_assignment
+        return other
+
+    def copy_local(self, type_check=False):
         result = TypedTerm(self.op, typ=self.type,
                                     latex_op_str=self.latex_op_str,
                                     type_check=type_check)
         result = self.copy_core(result)
         if not type_check:
             result.set_type_env(self.get_type_env().copy())
-        result.type_guessed = self.type_guessed
-        result.from_assignment = self.from_assignment
         return result
 
     def calc_type_env(self, recalculate=False):
         env = TypeEnv()
-        env.add_term_mapping(self.op, self.type)
+
+        if recalculate:
+            # return a clean env with a copy of the old term mapping; this skips
+            # type inference and removes all type var mappings from the picture
+            env.term_mapping[self.op] = self.get_type_env().term_mapping[self.op].clean_copy(self.type)
+            env.update_var_set()
+            return env
+        elif self.from_assignment is not None:
+            a_constraint = self.from_assignment.type
+            if self.from_assignment.let:
+                # if the assignment object is let-bound, explicitly add a type
+                # binder to the constraint. This enables let-polymorphism via
+                # the assignment
+                a_constraint = types.Forall(a_constraint).normalize()
+            env.add_term_mapping(self.op, a_constraint)
+
+        if self.type is not None:
+            env.add_term_mapping(self.op, self.type)
         return env
 
     def free_terms(self, var_only=False):
@@ -2378,7 +2594,9 @@ class TypedTerm(TypedExpr):
     def should_show_type(self, assignment=None):
         if (assignment and suppress_bound_var_types
                         and not self.meta() and self.op in assignment):
-            return False
+            if self.type == assignment[self.op].type:
+                return False
+            # the false case can arise with let-polymorphism
         if self.suppress_type:
             return False
         if suppress_constant_type and self.constant and not self.meta():
@@ -3467,11 +3685,14 @@ class BindingOp(TypedExpr):
                 raise e
             body_env = self.body.get_type_env()
             if self.varname in body_env.terms(): # binding can be vacuous
-                if body_env.term_type(self.varname) != self.vartype:
+                body_var_t = body_env.term_type(self.varname, specific=True)
+                if body_var_t != self.vartype:
                     # propagate type inference to binding expression
-                    new_vartype = body_env.term_type(self.varname)
-                    assert new_vartype is not None
-                    self.init_var(self.varname, new_vartype)
+                    new_vartype = body_var_t
+                    assert body_var_t is not None
+                    self.init_var(self.varname, body_var_t)
+            # we call regularize here in case there's any mappings involving
+            # the bound variable that need to be finalized
             self.init_body(self.body.regularize_type_env())
             self.init_var_by_instance(
                 self.var_instance.under_type_assignment(body_env.type_mapping,
@@ -3507,6 +3728,15 @@ class BindingOp(TypedExpr):
             self.args = list([None, None])
         assert len(self.args) == 2
 
+    def apply_var_constraints(self):
+        # it's tempting to fully disallow polymorphic variables for classical
+        # operators. However, currently, Set is supposed to support these, and
+        # therefore set simplification (which uses quantifiers) also needs to
+        # support them.
+        if self.vartype.is_let_polymorphic():
+            raise parsing.ParseError(
+                f"operator class `{self.canonical_name}` disallows let-polymorphic bound variables (got `{repr(self.var_instance)}`)")
+
     def init_var(self, name=None, typ=None):
         self.init_args()
         if name is None:
@@ -3521,7 +3751,7 @@ class BindingOp(TypedExpr):
                 var_instance = TypedTerm(name, typ)
         self.args[0] = var_instance
         self.op = "%s:" % (self.canonical_name)
-
+        self.apply_var_constraints()
 
     def init_var_by_instance(self, v):
         self.init_var(v.op, v.type)
@@ -3884,7 +4114,7 @@ class BindingOp(TypedExpr):
     @classmethod
     def random(cls, ctrl, body_type=type_t, max_type_depth=1):
         from . import test
-        var_type = get_type_system().random_type(max_type_depth, 0.5)
+        var_type = get_type_system().random_type(max_type_depth, 0.5, allow_variables=False)
         variable = test.random_term(var_type, usedset=test.random_used_vars,
                                                 prob_used=0.2, prob_var=1.0)
         test.random_used_vars |= {variable}
@@ -3914,6 +4144,9 @@ class LFun(BindingOp):
             type_check=type_check)
         self.type = FunType(self.vartype, body.type)
         self.let = let
+
+    def apply_var_constraints(self):
+        pass
 
     @property
     def argtype(self):

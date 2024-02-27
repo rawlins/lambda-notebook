@@ -326,7 +326,7 @@ def try_parse_item_name(s, env=None, ambiguity=False):
         index = int(index_str[1:-1])
     return (lex_name, index)
 
-# used both here and for %te
+# used both in %(%)lamb and in %te
 def under_assignment(right_side, env):
     assigned = right_side.under_assignment(env, compact=True)
     if assigned != right_side:

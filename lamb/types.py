@@ -421,8 +421,12 @@ class TypeConstructor(object):
         are bound. So in practice, this gives all type variables."""
         return self._type_vars
 
+    def is_let_polymorphic(self):
+        return self._sublet
+
     def is_polymorphic(self):
-        return len(self._type_vars) > 0 or self._sublet
+        # doesn't count disjunctive types
+        return len(self.bound_type_vars()) > 0 or self.is_let_polymorphic()
 
     def has_fresh_variables(self):
         return any(v.is_fresh() for v in self._type_vars)
@@ -1012,13 +1016,7 @@ def transitive_add(v, end, assignment):
     """
     visited = set()
     while v in assignment:
-        if v in visited or v == end:
-            from lamb import meta
-            from lamb.meta import logger
-            logger.error(
-                "breaking loop (v: '%s', end: '%s', visited: '%s', assignment: '%s')"
-                % (v, end, visited, assignment))
-            break
+        assert not (v in visited or v == end)
         visited |= {v}
         next_v = assignment[v]
         assignment[v] = end
@@ -1027,19 +1025,11 @@ def transitive_add(v, end, assignment):
 
 def transitive_find_end(v, assignment):
     """Find the end of an existing chain starting with `v`."""
-    # TODO: delete the loop checking from these functions once it's solid
-    start_v = v
     visited = set()
     last_v = None
     while isinstance(v, VariableType) and v in assignment:
-        if v in visited:
-            from lamb import meta
-            from lamb.meta import logger
-            logger.error(
-                "breaking loop (start_v: '%s', v: '%s', visited: '%s', assignment: '%s')"
-                % (start_v, v, visited, assignment))
-            break
-        visited |= {v}
+        assert v not in visited
+        visited.add(v)
         last_v = v
         v = assignment[v]
     return (v, last_v)
@@ -1054,8 +1044,7 @@ def replace_in_assign(var, value, assign):
     """
     if var in assign:
         if isinstance(value, VariableType):
-            if value in assign:
-                print("%s already in assignment %s?" % (value, assign))
+            assert value not in assign
             if value != assign[var]:
                 assign[value] = assign[var]
             else:
@@ -2050,14 +2039,14 @@ class TypeSystem(object):
 # first some more basic functions for manipulating and testing assignments.
 
 def injective(d):
-    """Is `d` an injective assignment?  I.e. does it map any keys onto the same
-    value?"""
-    v = d.values()
-    v_set = set(v)
-    return len(v) == len(v_set)
+    """Is `d` an injective assignment?  I.e. does it map all keys onto
+    distinct values? `d` must map to hashable values."""
+
+    # implementation: count the unique mappings.
+    return len(d.keys()) == len(set(d.values()))
 
 def invert(d):
-    """Try to invert the assignment `d`.  Will throw an exception of the
+    """Try to invert the assignment `d`.  Will throw an exception if the
     assignment is not injective."""
     i = dict()
     for k in d.keys():
@@ -2070,6 +2059,8 @@ def strengthens(d):
     """Check for any strengthening assignments in `d`.  A strengthening
     assignment is one that maps a variable to a non-variable."""
     for key in d:
+        # XX bound types are a bit weird here, but the behavior still seems
+        # right?
         if not isinstance(d[key], VariableType):
             return True
     return False
@@ -2319,6 +2310,8 @@ class UnificationResult(object):
         self.t1 = t1
         self.t2 = t2
         self.mapping = mapping
+        # currently unused, but this would allows for checking of alpha
+        # equivalence during unification
         self.trivial = injective(mapping) and not strengthens(mapping)
 
         # XX possibly not  worth caching when any of the ingredients have
@@ -2549,21 +2542,66 @@ class PolyTypeSystem(TypeSystem):
         f, a, r = self.unify_fun(fun.type, arg.type, None)
         return f is not None
 
-    # There's really got to be a better way to do this...
-    def alpha_equiv(self, t1, t2):
+    def alpha_equiv(self, t1, t2, mapping=None):
         """Are `t1` and `t2` alpha equivalents of each other?"""
-        assignment = dict()
-        t1safe = make_safe(t1, t2, set(assignment.keys())
-                                                    | set(assignment.values()))
-        try:
-            (result, r_assign) = self._unify_r(t1safe, t2, assignment=assignment)
-            if r_assign is None:
-                r_assign = dict()
-        except OccursCheckFailure:
-            # only used in a test context, so we don't need to make occurs
-            # checks presentable..
+
+        # two types t1 and t2 are alpha equivalents just in case they have
+        # identical ASTs, and there's surjective+injective mapping from
+        # variable types in t1 to types in t2 that preserves AST identity
+
+        # note: there's a unify-based alternative that is arguably more general,
+        # but also more costly (because it potentially involves a *lot* more
+        # variable juggling). This would be to alpha rename any variable
+        # collisions in t1 vs t2, run unify_details, and then check if the
+        # resulting assignment is injective and non-strengthening (which
+        # entails bijectivity). see UnificationResult.trivial.
+
+        if mapping is None:
+            # providing a mapping is primarily to let the caller see it if
+            # desired
+            mapping = {}
+
+        if len(t1.bound_type_vars()) != len(t2.bound_type_vars()):
+            # easy optimization: if t1 and t2 don't have the same number of
+            # variables, there's no way for them to be alpha equivalents.
             return False
-        return result is not None and injective(r_assign) and not strengthens(r_assign)
+
+        def alpha_equiv_r(t1, t2):
+            if not t1.is_polymorphic() and not t2.is_polymorphic():
+                return t1 == t2
+            elif isinstance(t1, VariableType) and isinstance(t2, VariableType):
+                if t1 not in mapping:
+                    mapping[t1] = t2
+                elif t1 in mapping and mapping[t1] != t2:
+                    return False
+                return True
+            else:
+                # XX code dup with _type_eq
+                if t1.__class__ != t2.__class__ or len(t1) != len(t2):
+                    return False
+                if isinstance(t1, Forall):
+                    # intentional call to the outer alpha_equiv function! Any
+                    # variables in these subtypes live in their own namespace,
+                    # so we want to do this check independent of the current
+                    # mapping.
+                    # XX should X vs ∀X (etc) satisfy alpha equivalence??
+                    return self.alpha_equiv(t1.arg, t2.arg)
+
+                # for anything else, recurse to look for more type variables
+                for i in range(len(t1)):
+                    if not alpha_equiv_r(t1[i], t2[i]):
+                        return False
+            return True
+        if alpha_equiv_r(t1, t2):
+            # final check: did all variables get uniquely mapped?
+            # we're guaranteed to have every variable in t1 present in the
+            # mapping at this point, and the initial length check means that
+            # we don't need to worry about missing any types in t2 (surjectivity
+            # failures) as long as the mapping is injective.
+            return injective(mapping)
+        else:
+            return False
+
 
     def compact_type_vars(self, t1, unsafe=None):
         """Compact the type variables in `t1` so as to make them more
@@ -2618,7 +2656,10 @@ class PolyTypeSystem(TypeSystem):
         else:
             # choose a non-atomic type and generate a random instantiation of it
             ctrl_fun = lambda *a: self.random_type(max_depth - 1,
-                                            p_terminate_early, allow_variables)
+                                            p_terminate_early,
+                                            allow_variables=allow_variables,
+                                            allow_disjunction=allow_disjunction,
+                                            nonatomics=nonatomics)
             options = nonatomics - {UnknownType}
             if not allow_variables:
                 options -= {VariableType}
@@ -2632,7 +2673,8 @@ class PolyTypeSystem(TypeSystem):
         place of atomic types."""
         term = random.random()
         ctrl_fun = lambda *a: self.random_variable_type(max_depth - 1,
-                                                            p_terminate_early)
+                                                            p_terminate_early,
+                                                            nonatomics=nonatomics)
         if max_depth == 0 or term < p_terminate_early:
             # choose a variable type
             t = VariableType.random(ctrl_fun)

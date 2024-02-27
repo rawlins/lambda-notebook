@@ -1,4 +1,4 @@
-__all__ = ['core', 'boolean', 'meta', 'number', 'ply', 'sets']
+__all__ = ['core', 'boolean', 'meta', 'number', 'ply', 'sets', 'test']
 
 # -*- coding: utf-8 -*-
 from numbers import Number
@@ -7,7 +7,7 @@ from lamb.types import TypeMismatch, type_e, type_t, type_n
 from lamb.types import type_property, type_transitive, BasicType, FunType
 # from lamb.utils import *
 
-from lamb.meta import boolean, number, sets, core, ply
+from lamb.meta import core, boolean, meta, number, ply, sets, test
 from lamb.meta.core import TypedExpr, TypedTerm, CustomTerm, ApplicationExpr
 from lamb.meta.core import LFun, BindingOp
 from lamb.meta.core import Tuple, TupleIndex, Partial, Disjunctive, BinaryGenericEqExpr
