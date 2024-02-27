@@ -1134,6 +1134,15 @@ def union_assignments(a1, a2):
     return a1
 
 
+def debind(t, vars=None):
+    if isinstance(t, Forall):
+        t = t.debind(vars=vars)
+        # may still be recursive Forall instances
+    if not t._sublet:
+        return t
+    return t.copy_local(*[debind(sub, vars=vars) for sub in t])
+
+
 class Forall(TypeConstructor):
     """Unary type constructor that indicates explicit unselective binding of
     any type variables in its scope."""
@@ -1170,8 +1179,15 @@ class Forall(TypeConstructor):
             r = r.arg
         return r
 
-    def debind(self):
-        return freshen_type(self.arg)
+    def debind(self, vars=None):
+        if vars is not None:
+            assignment = dict()
+        else:
+            assignment = None
+        r = freshen_type(self.arg, assignment=assignment)
+        if vars is not None:
+            vars = vars.update(set(assignment.values()))
+        return r
 
     def functional(self):
         return self.arg.functional()
@@ -1224,16 +1240,11 @@ class Forall(TypeConstructor):
 
     def unify(self, t2, unify_control_fun, assignment=None):
         rebind = False
-        left = freshen_type(self.arg)
-        to_compact = left.bound_type_vars()
-        if isinstance(t2, Forall):
-            # in principle, we could let recursion handle this
-            right = freshen_type(t2.arg)
-            to_compact = to_compact | right.bound_type_vars()
-            # in principle, for this case, we could optimize the rebinding a
-            # bit (since it is guaranteed safe on result)
-        else:
-            right = t2
+
+        to_compact = set()
+        left = debind(self, vars=to_compact)
+        right = debind(t2, vars=to_compact)
+
         # to get this result we have to override AST ordering (!). The reason
         # is that we have to prioritize variables in the `right` argument now,
         # unconditionally. The default behavior will prioritize variables that
@@ -1249,17 +1260,13 @@ class Forall(TypeConstructor):
         # dup with `unify_details`...
         result = result.sub_type_vars(assignment, trans_closure=True)
 
-        # also attempt to compact any fresh variables introduced by unification
-        # that were not present in t2
-        to_compact = to_compact | {assignment[v]
-                for v in to_compact
-                if v in assignment and isinstance(assignment[v], VariableType)
-                                   and assignment[v].is_fresh()
-                                   and assignment[v] not in t2.bound_type_vars()}
+        # if unify inferred a mapping from a type variable in the input to one
+        # of the newly introduced fresh types, that fresh type has been made
+        # concrete and can't be rebound
+        for k in [k for k in assignment if k not in to_compact]:
+            to_compact = to_compact - assignment[k].bound_type_vars()
 
-        # rebind any mapped types in the assignment. Example: Unifying
-        # ∀<X,Y> + X would end up with X mapped to fresh variables from
-        # instantiating the ∀ type; we want a resulting ∀ type in the map.
+        # rebind any mapped types in the assignment.
         # XX are there cases where fresh variables appear purely on the right
         # side of the map?
         assignment = {k: convex_rebind(assignment[k], to_compact) for k in assignment
@@ -1354,7 +1361,12 @@ class VariableType(TypeConstructor):
         if isinstance(t2, VariableType) and t2 in assignment:
             (t2_principal, t2_prev) = transitive_find_end(t2, assignment)
         else:
-            t2_principal = t2
+            # note! things will go wrong if this can have bound types! If t2
+            # is a Forall itself, the case is handled by that `unify` code, but
+            # we still need to debind for embedded bound types.
+            # XX this can leave stray mappings in the assignment when the
+            # debound variables go away
+            t2_principal = debind(t2)
             t2_prev = None
         new_principal = start
         # 3. perform an occurs check -- that is, check for recursive use of
@@ -2000,7 +2012,7 @@ class TypeSystem(object):
     def _repr_latex_(self):
         return self.latex_str()
 
-    def random_type(self, max_depth, p_terminate_early):
+    def random_type(self, max_depth, p_terminate_early, nonatomics=None):
         term = random.random()
         if max_depth == 0 or term < p_terminate_early:
             # choose an atomic type
@@ -2010,7 +2022,9 @@ class TypeSystem(object):
             # choose a non-atomic type and generate a random instantiation of it
             ctrl_fun = lambda *a: self.random_type(max_depth - 1,
                                                             p_terminate_early)
-            t_class = random.choice(list(self.nonatomics))
+            if nonatomics is None:
+                nonatomics = list(self.nonatomics)
+            t_class = random.choice(nonatomics)
             return t_class.random(ctrl_fun)
 
     def repr_check(self, t):
@@ -2180,8 +2194,13 @@ def freshen_type_set(types):
     return {t: UnknownType() for t in types}
 
 
-def freshen_type(t):
-    return t.sub_type_vars(freshen_type_set(t.bound_type_vars()))
+def freshen_type(t, assignment=None):
+    f = freshen_type_set(t.bound_type_vars())
+    if assignment is None:
+        assignment = f
+    else:
+        assignment.update(f)
+    return t.sub_type_vars(assignment)
 
 
 def compact_type_vars(t, unsafe=None, fresh_only=False):
@@ -2586,8 +2605,11 @@ class PolyTypeSystem(TypeSystem):
                                             p_terminate_early, allow_variables)
 
     def random_type(self, max_depth, p_terminate_early, allow_variables=True,
-                                                        allow_disjunction=True):
+                                                        allow_disjunction=True,
+                                                        nonatomics=None):
         """Generate a random type of `max_depth`."""
+        if nonatomics is None:
+            nonatomics = self.nonatomics
         term = random.random()
         if max_depth == 0 or term < p_terminate_early:
             # choose an atomic type
@@ -2597,7 +2619,7 @@ class PolyTypeSystem(TypeSystem):
             # choose a non-atomic type and generate a random instantiation of it
             ctrl_fun = lambda *a: self.random_type(max_depth - 1,
                                             p_terminate_early, allow_variables)
-            options = self.nonatomics - {UnknownType}
+            options = nonatomics - {UnknownType}
             if not allow_variables:
                 options -= {VariableType}
             if not allow_disjunction:
@@ -2605,7 +2627,7 @@ class PolyTypeSystem(TypeSystem):
             t_class = random.choice(list(options))
             return t_class.random(ctrl_fun)
 
-    def random_variable_type(self, max_depth, p_terminate_early):
+    def random_variable_type(self, max_depth, p_terminate_early, nonatomics=None):
         """Generate a random type of `max_depth`; use only variable types in
         place of atomic types."""
         term = random.random()
@@ -2616,9 +2638,11 @@ class PolyTypeSystem(TypeSystem):
             t = VariableType.random(ctrl_fun)
             return t
         else:
+            if nonatomics is None:
+                nonatomics = self.nonatomics
             # choose a non-variable type and generate a random instantiation
             t_class = random.choice(
-                    list(self.nonatomics - {VariableType, DisjunctiveType, UnknownType}))
+                    list(nonatomics - {VariableType, DisjunctiveType, UnknownType}))
             return t_class.random(ctrl_fun)
 
 class TypeMismatch(Exception):
@@ -2819,6 +2843,22 @@ class TypeTest(unittest.TestCase):
                     self.assertTrue(result,
                         f"Symmetry check failed: tp('{repr(t1)}'), tp('{repr(t2)}').")
 
+    def test_forall(self):
+        for depth1 in range (1,3):
+            for depth2 in range (1,4):
+                for i in range(0, 500):
+                    # from some empirical testing, this seems to get a good mix
+                    # of Forall outputs, non-Forall outputs, and non-unifiable
+                    # pairs
+                    t1 = poly_system.random_variable_type(depth1, 0.2, nonatomics={Forall})
+                    t2 = poly_system.random_variable_type(depth2, 0.2)
+                    result = poly_system.unify(t1, t2)
+                    #  We can't check directly if t2 is a Forall because of
+                    # cases like unify(∀Y2, {∀Y3}) = ∀{X}. But t2 should have
+                    # been a polymorphic type with no type vars.
+                    if result is not None and isinstance(result, Forall):
+                        self.assertTrue(t2.is_polymorphic() and len(t2.bound_type_vars()) == 0,
+                            f"forall failure: unify({t1}, {t2}) = {result}")
 
     def test_disjunctive_cases(self):
         def tp(x):
@@ -2931,4 +2971,17 @@ class TypeTest(unittest.TestCase):
         self.assertTrue(len(r.bound_type_vars()) == 2)
         self.assertTrue(r[0].is_fresh())
         self.assertEqual(compact_type_vars(r), tp("<X,<Y,X>>"))
+
+        # can't be represented with unselective binding while capturing
+        # (global) identities involving X
+        r = u('X', '∀<X,Y>')
+        self.assertTrue(len(r.bound_type_vars()) == 2)
+        self.assertTrue(r[0].is_fresh() and r[1].is_fresh())
+
+        # similar but for X and Y both
+        r = u('X', '<∀X,Y>')
+        self.assertTrue(len(r.bound_type_vars()) == 2)
+        self.assertTrue(r[0].is_fresh() and not r[1].is_fresh())
+        self.assertEqual(r[1], tp('Y'))
+
 
