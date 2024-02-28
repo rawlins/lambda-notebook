@@ -594,8 +594,6 @@ class FunDomainSet(ComplexDomainSet):
         if not self.finite:
             raise ValueError("Can't iterate over non-finite `FunDomainSet`s.")
         # careful with this -- it can definitely blow up!
-        # XX like a bunch of other code, this will raise on types like
-        # <<t,t>,t> because dict is not hashable...
         dom = list(self.type.left.domain)
         for p in itertools.product(self.type.right.domain, repeat=len(dom)):
             yield utils.frozendict(list(zip(dom, p)))
@@ -736,13 +734,23 @@ class FunType(TypeConstructor):
 
 class SetDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        super().__init__("Set", typ)
+        finite = isinstance(typ.content_type.domain, DomainSet) and typ.content_type.domain.finite
+        super().__init__("Set", typ, finite=finite)
 
     def infcheck(self, x):
         if isinstance(x, collections.abc.Set):
             return all(e in self.type[0].domain for e in x)
         else:
             return False
+
+    def __iter__(self):
+        if not self.finite:
+            raise ValueError("Can't iterate over non-finite `SetDomainSet`s.")
+        # careful with this -- it can definitely blow up!
+        dom = list(self.type.content_type.domain)
+        for r in range(len(dom) + 1):
+            for e in itertools.combinations(dom, r):
+                yield frozenset(e)
 
     def normalize(self, x):
         return frozenset({self.type.content_type.domain.normalize(e) for e in x})
