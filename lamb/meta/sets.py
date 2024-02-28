@@ -7,6 +7,7 @@ from .core import Tuple
 from .meta import MetaTerm
 from .ply import alphanorm_key
 from .boolean import BinaryOrExpr, BinaryAndExpr, ForallUnary, ExistsUnary, false_term, true_term
+from lamb.utils import dbg_print
 from lamb.types import type_t, SetType
 
 
@@ -119,6 +120,17 @@ class ConditionSet(BindingOp):
         sub_var = TypedTerm(self.varname, inner_type)
         new_condition = char.apply(sub_var)
         return self.copy_local(sub_var, new_condition)
+
+
+def to_set_shim(te):
+    # right now, to_python_container on a MetaTerm returns a frozenset of
+    # domain elements, but on a regular ListedSet returns a set of TypedExprs.
+    # This function wraps the domain elements so that these are consistent.
+    # XX this is a mess...
+    s = to_python_container(te)
+    if te.meta():
+        s = {MetaTerm(elem, typ=te.type.content_type) for elem in s}
+    return s
 
 
 class ListedSet(TypedExpr):
@@ -466,8 +478,8 @@ class SetUnion(BinarySetOp):
 
 
     def simplify(self, **sopts):
-        s1 = to_python_container(self.args[0])
-        s2 = to_python_container(self.args[1])
+        s1 = to_set_shim(self.args[0])
+        s2 = to_set_shim(self.args[1])
         if s1 is not None and s2 is not None:
             if self.args[0].meta() and self.args[1].meta():
                 # only generate a metaterm if we started with two metaterms,
@@ -507,8 +519,8 @@ class SetIntersection(BinarySetOp):
         super().__init__(arg1, arg2, "Set intersection")
 
     def simplify(self, **sopts):
-        s1 = to_python_container(self.args[0])
-        s2 = to_python_container(self.args[1])
+        s1 = to_set_shim(self.args[0])
+        s2 = to_set_shim(self.args[1])
         if s1 is not None and s2 is not None:
             if self.args[0].meta() and self.args[1].meta():
                 # only generate a metaterm if we started with two metaterms,
@@ -590,8 +602,8 @@ class SetDifference(BinarySetOp):
         super().__init__(arg1, arg2, "Set difference")
 
     def simplify(self, **sopts):
-        s1 = to_python_container(self.args[0])
-        s2 = to_python_container(self.args[1])
+        s1 = to_set_shim(self.args[0])
+        s2 = to_set_shim(self.args[1])
         if s1 is not None and s2 is not None:
             if self.args[0].meta() and self.args[1].meta():
                 # only generate a metaterm if we started with two metaterms,
@@ -633,10 +645,14 @@ class SetEquivalence(BinarySetOp):
         super().__init__(arg1, arg2, "Set equivalence", typ=type_t)
 
     def simplify(self, **sopts):
-        s1 = to_python_container(self.args[0])
-        s2 = to_python_container(self.args[1])
+        s1 = to_set_shim(self.args[0])
+        s2 = to_set_shim(self.args[1])
         if s1 is not None and s2 is not None:
-            if len(s1) == 0 or len(s2) == 0:
+            if self.args[0].meta() and self.args[1].meta():
+                # s1 and s2 are `frozenset`s of domain elements
+                # XX mixing meta and non-meta sets here is a mess...
+                return derived(MetaTerm(s1 == s2), self, "set equivalence")
+            elif len(s1) == 0 or len(s2) == 0:
                 # this case is relatively straightforward: we can go simply
                 # on the basis of expression cardinality
                 return derived(MetaTerm(len(s1) == len(s2)), self, "set equivalence")
@@ -657,6 +673,11 @@ class SetEquivalence(BinarySetOp):
             tbd_left = s1 - s2 - meta_left
             meta_right = {x for x in s2 - s1 if x.meta()}
             tbd_right = s1 - s2 - meta_right
+
+            if len(tbd_left) == 0 and len(tbd_right) == 0:
+                # only MetaTerms
+                return derived(MetaTerm(len(meta_left) == 0 and len(meta_right) == 0),
+                                self, "set equivalence")
             # there's possibly some more fine-grained checks that could be done
             # for mixed meta/non-meta sets
             if len(meta_left) > len(tbd_right):
