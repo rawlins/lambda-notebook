@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 import sys, re, random, collections.abc, math, functools, itertools, contextlib
 from numbers import Number
+from contextlib import contextmanager
+import logging
+
 from lamb import utils, parsing
 from lamb.utils import *
-import logging
 
 # constant for third truth value
 global Maybe, random_len_cap
@@ -1124,9 +1126,8 @@ def union_assignments(a1, a2):
 
 
 def debind(t, vars=None):
-    if isinstance(t, Forall):
+    while isinstance(t, Forall):
         t = t.debind(vars=vars)
-        # may still be recursive Forall instances
     if not t._sublet:
         return t
     return t.copy_local(*[debind(sub, vars=vars) for sub in t])
@@ -1160,13 +1161,20 @@ class Forall(TypeConstructor):
         return not self.arg.bound_type_vars()
 
     def normalize(self):
-        r = self
-        # XX could remove any embedded ∀s? Would have to potentially rename
-        # vars, but e.g. ∀<∀X,X> is equivalent to ∀<X',X>
-        while (isinstance(r, Forall)
-                        and (isinstance(r.arg, Forall) or r.trivial())):
-            r = r.arg
-        return r
+        t = self
+        while isinstance(t.arg, Forall):
+            # debind would accomplish this, but it will rename variables too.
+            # only do so if needed.
+            t = t.arg
+
+        # n.b. these two conditions make something like ∀<e,∀X> normalize to
+        # ∀<e,X>. Would it be better to go to <e,∀X>?
+        if t.arg.is_let_polymorphic():
+            with no_new_type_vars():
+                return Forall(debind(t.arg))
+        if t.trivial():
+            return t.arg
+        return t
 
     def debind(self, vars=None):
         if vars is not None:
@@ -1284,7 +1292,6 @@ class VariableType(TypeConstructor):
     (or prime symbols).
 
     A type variable represents a (not-necessarily-finite) set of types."""
-    max_id = 0
 
     def __init__(self, symbol, number=None):
         self.number = None
@@ -1299,8 +1306,6 @@ class VariableType(TypeConstructor):
             self.symbol = symbol
             self.number = number
         self.number = max(0, self.number)
-        if self.number > VariableType.max_id:
-            VariableType.max_id = self.number
         self.name = symbol
         if self.number == 0:
             self._key_str = str(self.symbol)
@@ -1491,14 +1496,16 @@ class VariableType(TypeConstructor):
         var = random.choice(("X", "Y", "Z"))
         return VariableType(var, number=primes)
 
-    @classmethod
-    def fresh(cls):
-        # currently unused
-        return VariableType("I", number=cls.max_id + 1)
 
+@contextmanager
+def no_new_type_vars():
+    # using this is very often an extremely bad idea. Use it only if you are
+    # *absolutely sure* that the wrapped code cannot leak fresh variables.
+    maxid = UnknownType.max_identifier
+    yield
+    # not in a finally block! an exception will skip this
+    UnknownType.max_identifier = maxid
 
-# ensure that this gets reset on reload
-VariableType.max_id = 0
 
 class UnknownType(VariableType):
     """Class used internally for fresh types."""
@@ -2485,7 +2492,7 @@ class PolyTypeSystem(TypeSystem):
         if isinstance(ret, Forall) and isinstance(arg, Forall):
             # for this case, we can safely scope ∀ over the whole thing (and
             # the results are better if we do so)
-            return Forall(FunType(arg.debind(), ret.debind())).normalize()
+            return Forall(FunType(arg, ret)).normalize()
         else:
             return FunType(arg, ret)
 
@@ -2519,7 +2526,7 @@ class PolyTypeSystem(TypeSystem):
                 # we can't sensibly access left/right, there's nothing for it
                 # but to go to fresh types. (XX: refactor so that this is on
                 # the caller to handle)
-                principal = principal.debind()
+                principal = debind(principal)
             return (principal, principal.left, principal.right)
 
     def unify_fr(self, fun, ret, assignment=None):
@@ -2989,7 +2996,8 @@ class TypeTest(unittest.TestCase):
         def u(x,y):
             return poly_system.unify_sym_check(tp(x), tp(y), require_unify=True)
         self.assertEqual(tp('∀<X,Y>'), tp('∀∀<X,Y>'))
-        self.assertEqual(tp('<e,?>'), tp('∀<e,∀X>')) # X is implementation-dependent
+        self.assertEqual(tp('∀<X,Y>'), tp('∀<∀∀X,Y>'))
+        self.assertEqual(tp('<e,?>'), tp('<e,∀X>')) # X is implementation-dependent
         self.assertTrue(u('∀X', '∀X'))
         self.assertTrue(u('∀Y', '∀<X,Y>'))
         self.assertEqual(u('∀X', '∀X'), tp('∀X'))
