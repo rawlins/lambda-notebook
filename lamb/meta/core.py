@@ -500,10 +500,10 @@ def op_expr_factory(op, *args):
 
 class TermTypeMapping(object):
     """Holds a type mapping for a single term."""
-    def __init__(self, term_name, principal, specializations=None):
+    def __init__(self, term_name, principal, specializations=None, allow_poly=True):
         self.term_name = term_name
         self.principal = principal
-        if principal.is_let_polymorphic() and specializations is None:
+        if allow_poly and principal.is_let_polymorphic() and specializations is None:
             specializations = set()
         self.specializations = specializations
 
@@ -524,31 +524,35 @@ class TermTypeMapping(object):
     def __repr__(self):
         # reprs do not show term names, because this is displayed in a
         # dict context
-        if not self.specializations:
+        if not self.let_polymorphic:
             return repr(self.principal)
         else:
             return f"{repr(self.principal)}[{", ".join(repr(s) for s in self.specializations)}]"
 
     def latex_str(self, **kwargs):
-        if not self.specializations:
+        if not self.let_polymorphic:
             return self.principal.latex_str()
         else:
-            return f"{self.principal.latex_str()}[Specializations: {", ".join(s.latex_str() for s in self.specializations)}]"
+            return f"{self.principal.latex_str()}[{", ".join(s.latex_str() for s in self.specializations)}]"
 
     def __str__(self):
         return f"{self.term_name}: {repr(self)}"
 
-    def clean_copy(self, principal):
+    def _clean_copy(self, principal):
+        """Give a clean copy with principal type `principal`. No validation is
+        done on `principal`. If the mapping is let-polymorphic, the primary
+        polymorphic type will be preserved."""
         if self.let_polymorphic:
+            # intended for use when principal is in self.specializations
             return TermTypeMapping(self.term_name, self.principal, {principal})
         else:
-            return TermTypeMapping(self.term_name, principal)
+            return TermTypeMapping(self.term_name, principal, allow_poly=False)
 
     def copy(self):
         if self.let_polymorphic:
             return TermTypeMapping(self.term_name, self.principal, self.specializations.copy())
         else:
-            return TermTypeMapping(self.term_name, self.principal)
+            return TermTypeMapping(self.term_name, self.principal, allow_poly=False)
 
     def sub_type_vars(self, mapping):
         # n.b. difference from a type object: this operates by side effect!
@@ -566,80 +570,13 @@ class TermTypeMapping(object):
                 r = r | s.bound_type_vars()
         return r
 
-    def _polymorphic_merge(self, typ, env):
-        # assumption: either self or type is let-polymorphic
-        principal = env.try_unify(self.principal, typ, update_mapping=False)
-        if principal is None:
-            return None
-        ts = get_type_system()
-        if self.let_polymorphic:
-            # we have an existing polymorphic mapping, and will try to
-            # update it, either changing the primary polymorphic type or
-            # adding a specialization. The unify call above will find the
-            # strongest of the two types if there is a difference.
-            # there are basically four cases:
-            # 1 principal == self.principal == typ: do nothing
-            # 2 principal == self.principal, principal != typ: this means
-            #   that typ should become the primary polymorphic type
-            # 3 principal != self.principal, principal == typ: this means
-            #   that typ should be added as a specialization
-            # 4 principal != self.principal != typ: we would need a new
-            #   primary polymorphic type and won't infer it, so failure.
-            #   see note below.
-            #
-            # equality here is modulo alpha equivalence!
-            # XX could call unify_details and check `trivial` for the
-            # first case?
-
-            # the unify call above will substitute type vars in the env, so
-            # we need to match that
-            princ_equiv = ts.alpha_equiv(principal,
-                self.principal.sub_type_vars(env.type_mapping)) # XX is this needed?
-            typ_equiv = ts.alpha_equiv(principal,
-                typ.sub_type_vars(env.type_mapping))
-            if princ_equiv and typ_equiv:
-                # no new specialization
-                pass
-            elif princ_equiv and not typ_equiv:
-                assert typ.is_let_polymorphic()
-                self.specializations.add(self.principal)
-                self.principal = typ
-                # return self.principal
-            elif not princ_equiv and typ_equiv:
-                self.specializations.add(typ)
-                # return typ
-            else: # not princ_equiv and not typ_equiv:
-                # unification succeeded, but the principal type is neither
-                # equivalent to self.principal or to typ. This means that we do
-                # not know what the primary let-polymorphic type actually is!
-                # merging should fail in this case.
-                #
-                # Example:
-                #     %te P_∀<<e,<X,Y>>,t>(x_Z) & P_∀<<Y,<X,e>>,t>(x_Z)
-                # Here, without further info, we cannot infer a single
-                # intended primary polymorphic type. E.g. is it
-                # `∀X`, `∀<X,Y>`, ∀`<<X,<Y,Z>>`, `∀<<Y,<X,Y>>`, ...?
-                # The last of these is for this case the strongest
-                # possible polymorphic type, but we don't try to infer
-                # this for the user. They'll need to specify it
-                # somehow. (XX is it possible in principle to do this
-                # inference in H-M?)
-                return None
-        else: # not self.let_polymorphic
-            assert typ.is_let_polymorphic()
-            # we are lifting self to be let-polymorphic with `typ` as the new
-            # primary polymorphic type
-            self.specializations = {self.principal}
-            self.principal = typ
-        env.update_vars_in_terms() # XX side-effect-y
-        return principal
-
-    def merge(self, typ, env):
+    def merge(self, typ, env, allow_poly=True):
+        allow_poly = allow_poly or self.let_polymorphic
         principal = env.try_unify(self.principal, typ, update_mapping=True)
         if principal is None:
             return None
 
-        if self.let_polymorphic or typ.is_let_polymorphic():
+        if allow_poly and (self.let_polymorphic or typ.is_let_polymorphic()):
             if self.let_polymorphic:
                 # we have an existing polymorphic mapping, and will try to
                 # update it, either changing the primary polymorphic type or
@@ -701,7 +638,7 @@ class TermTypeMapping(object):
         else: # not (self.let_polymorphic or typ.is_let_polymorphic())
             # no polymorphism, just replace `principal` if unification succeeds
 
-            assert not principal.is_let_polymorphic() # should be impossible...
+            assert not allow_poly or not principal.is_let_polymorphic()
             self.principal = principal
 
         # final cleanup and return
@@ -754,8 +691,8 @@ class TypeEnv(object):
     def term_type(self, t, specific=True):
         return self.term_mapping[t].get_type(specific=specific)
 
-    def add_term_mapping(self, vname, typ):
-        result = self.try_add_term_mapping(vname, typ)
+    def add_term_mapping(self, vname, typ, allow_poly=False):
+        result = self.try_add_term_mapping(vname, typ, allow_poly=allow_poly)
         if result is None:
             # XX possibly error could be better set in term mapping code
             if self.term_mapping[vname].let_polymorphic:
@@ -767,13 +704,13 @@ class TypeEnv(object):
             raise TypeMismatch(typ, t2, error=error)
         return result
 
-    def try_add_term_mapping(self, vname, typ):
+    def try_add_term_mapping(self, vname, typ, allow_poly=False):
         if vname in self.term_mapping:
-            principal = self.term_mapping[vname].merge(typ, self)
+            principal = self.term_mapping[vname].merge(typ, self, allow_poly=allow_poly)
             if principal is None:
                 return None
         else:
-            self.term_mapping[vname] = TermTypeMapping(vname, typ)
+            self.term_mapping[vname] = TermTypeMapping(vname, typ, allow_poly=allow_poly)
             principal = typ
 
         self.add_type_to_var_set(principal)
@@ -832,10 +769,10 @@ class TypeEnv(object):
         return principal
 
     def _merge_term_mapping(self, v, m):
-        self.add_term_mapping(v, m.principal)
+        self.add_term_mapping(v, m.principal, allow_poly=m.let_polymorphic)
         if m.specializations:
             for t in m.specializations:
-                self.add_term_mapping(v, t)
+                self.add_term_mapping(v, t, allow_poly=m.let_polymorphic)
 
     def merge(self, tenv):
         for v in tenv.type_mapping:
@@ -1204,7 +1141,8 @@ class TypedExpr(object):
             raise parsing.ParseError("Failed to parse expression", s=s, e=e)
             # other exceptions just get raised directly -- what comes up in
             # practice?
-        _parser_assignment = None
+        finally:
+            _parser_assignment = None
         if isinstance(result, TypedExpr):
             return result
         c = from_python_container(result)
@@ -2556,7 +2494,7 @@ class TypedTerm(TypedExpr):
         if recalculate:
             # return a clean env with a copy of the old term mapping; this skips
             # type inference and removes all type var mappings from the picture
-            env.term_mapping[self.op] = self.get_type_env().term_mapping[self.op].clean_copy(self.type)
+            env.term_mapping[self.op] = self.get_type_env().term_mapping[self.op]._clean_copy(self.type)
             env.update_var_set()
             return env
         elif self.from_assignment is not None:
@@ -2566,7 +2504,7 @@ class TypedTerm(TypedExpr):
                 # binder to the constraint. This enables let-polymorphism via
                 # the assignment
                 a_constraint = types.Forall(a_constraint).normalize()
-            env.add_term_mapping(self.op, a_constraint)
+            env.add_term_mapping(self.op, a_constraint, allow_poly=True)
 
         if self.type is not None:
             env.add_term_mapping(self.op, self.type)

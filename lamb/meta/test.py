@@ -565,29 +565,56 @@ class MetaTest(unittest.TestCase):
 
     def test_typenv(self):
         # validate some basic facts about TypeEnv term mappings
+
         env = core.TypeEnv()
+        env.add_term_mapping("x", tp("∀X"), allow_poly=False)
+        env.add_term_mapping("x", tp("∀Y"))
+        self.assertEqual(env.term_type('x'), tp('∀X'))
+        self.assertEqual(env.term_type('x', specific=False), tp('∀X'))
         env.add_term_mapping("x", tp("X"))
-        env.add_term_mapping("x", tp("∀X"))
+        self.assertEqual(env.term_type('x'), tp('X'))
+        self.assertEqual(env.term_type('x', specific=False), tp('X'))
+
+        env = core.TypeEnv()
+        env.add_term_mapping("x", tp("∀X"), allow_poly=True)
+        env.add_term_mapping("x", tp("∀Y"))
+        self.assertEqual(env.term_type('x'), tp('∀X'))
+        env.add_term_mapping("x", tp("X"))
         self.assertEqual(env.term_type('x'), tp('X'))
         self.assertEqual(env.term_type('x', specific=False), tp('∀X'))
 
         env = core.TypeEnv()
         env.add_term_mapping("x", tp("X"))
-        env.add_term_mapping("x", tp("∀<Y,X>"))
+        env.add_term_mapping("x", tp("∀X"), allow_poly=True)
+        self.assertEqual(env.term_type('x'), tp('X'))
+        self.assertEqual(env.term_type('x', specific=False), tp('∀X'))
+
+        env = core.TypeEnv()
+        env.add_term_mapping("x", tp("X"))
+        env.add_term_mapping("x", tp("∀<Y,X>"), allow_poly=True)
         self.assertFalse(env.term_type('x').is_let_polymorphic()) # should be completely fresh
         self.assertEqual(env.term_type('x'), env.type_mapping[tp("X")])
 
         env = core.TypeEnv()
-        env.add_term_mapping("x", tp("∀<<X,<Y,Z>>,t>"))
+        env.add_term_mapping("x", tp("∀<<X,<Y,Z>>,t>"), allow_poly=True)
         env.add_term_mapping("x", tp("∀<<e,<X,Y>>,t>"))
         env.add_term_mapping("x", tp("∀<<Y,<X,e>>,t>"))
         self.assertEqual(env.term_type('x'), tp("∀<<X,<Y,Z>>,t>"))
         self.assertEqual(len(env.term_mapping['x'].specializations), 2)
 
         env = lamb.meta.core.TypeEnv()
-        env.add_term_mapping("x", tp("∀<<e,<X,Y>>,t>"))
+        env.add_term_mapping("x", tp("∀<<e,<X,Y>>,t>"), allow_poly=True)
+        # with let-polymorphism, this is a case where we cannot infer
+        # a principal polymorphic type in absence of guidance from above:
         self.assertRaises(TypeMismatch,
             env.add_term_mapping, "x", tp("∀<<Y,<X,e>>,t>"))
+
+        env = lamb.meta.core.TypeEnv()
+        env.add_term_mapping("x", tp("∀<<e,<X,Y>>,t>"), allow_poly=False)
+        env.add_term_mapping("x", tp("∀<<Y,<X,e>>,t>"))
+        # without let-polymorphism, these two straightforwardly have a principal
+        # type:
+        self.assertEqual(env.term_type('x'), tp("∀<<e,<X,e>>,t>"))
 
     def test_let_polymorphism(self):
         # introduced variable names are implementation dependent
@@ -600,16 +627,9 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(te("P_<Y,∀Z>(x_∀X)"), te("P_<Y,∀X>(x_Y)"))
         self.assertEqual(te("P_<∀Y,Z>(x_∀X)"), te("P_<∀X,Z>(x_∀X)")) # XX is this actually right?
 
-        # various more complicated things
+        # various more complicated examples
         self.assertEqual(te('L q_X : p_t & f_∀<Y,Y>(q)'), te('λ q_t: (p_t & f_<t,t>(q_t))'))
         self.assertEqual(te("L x_∀X : P_∀<Y,Z>(x)"), te("λ x_X: P_<X,X1>(x_X)"))
-
-        # XX this case infers an expression whose repr would undergo further
-        # inference on parsing -- bad! The primary polymorphic type needs to
-        # be expressed somehow...
-        # self.assertEqual(te("P_∀<Y,Z>(x_∀X) & Q_<∀<X,Y>,t>(x_∀X)"),
-        #                  te("P_<X,t>(x_X) & Q_<<X1,X2>,t>(x_<X1,X2>)"))
-
         self.assertEqual(te("L x_X : P_∀<Y,Z>(x) & Q_<∀<X,Y>,t>(x)"),
                          te("λ x_<X,X1>: (P_<<X,X1>,t>(x_<X,X1>) & Q_<<X,X1>,t>(x_<X,X1>))"))
 
@@ -622,9 +642,31 @@ class MetaTest(unittest.TestCase):
         # however, it is fully enforced on application (even without reduction):
         self.assertRaises(TypeMismatch, f, te("x_e"))
 
+        # let-polymorphism is disallowed given just local ∀-bound type hints,
+        # so a case like the previous without a lambda binder will enforce a
+        # single polymorphic type for x:
+        self.assertEqual(te("P_∀<Y,Z>(x_∀X) & Q_<∀<X,Y>,t>(x_∀X)"),
+                         te("P_<<X,X1>,t>(x_<X,X1>) & Q_<<X,X1>,t>(x_<X,X1>)"))
+
+        # another pair like the above, where different results obtain with and
+        # without a binder. In the polymorphic case, `x` is allowed to specialize
+        # to completely incompatible types(!):
+        self.assertEqual(te("L x_∀X : P_∀<<X,Y>,Z>(x_∀X) & Q_<e,t>(x_∀X)"),
+                         te("(λ x_∀X: (P_<<X,X1>,t>(x_<X,X1>) & Q_<e,t>(x_e)))"))
+
+        # and without let-polymorphism a case like this will fail altogether,
+        # since Q forces x_e, and P forces an incompatible functional type for
+        # x:
+        self.assertRaises(TypeMismatch, te, "P_∀<<X,Y>,Z>(x_∀X) & Q_<e,t>(x_∀X)")
+
         # a case of unresolvable polymorphism; a primary polymorphic type can't
         # be inferred:
-        self.assertRaises(TypeMismatch, te, "P_∀<<e,<X,Y>>,t>(x_Z) & P_∀<<Y,<X,e>>,t>(x_Z)")
+        self.assertRaises(parsing.ParseError, te,
+                        "L f_∀<<e,<X,Y>>,t>: f(x_Z) & f_∀<<Y,<X,e>>,t>(x_Z)")
+        # however, without let polymorphism the body would be completely fine,
+        # since there is a straightforward principal type:
+        self.assertEqual(te("f_∀<<e,<X,Y>>,t>(x_Z) & f_∀<<Y,<X,e>>,t>(x_Z)"),
+                         te("f_<<e,<X,e>>,t>(x_<e,<X,e>>) & f_<<e,<X,e>>,t>(x_<e,<X,e>>)"))
 
     def test_boolean_simplify(self):
         # negation
