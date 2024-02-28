@@ -752,6 +752,10 @@ class SetDomainSet(ComplexDomainSet):
             for e in itertools.combinations(dom, r):
                 yield frozenset(e)
 
+    def enumerable(self):
+        # only the finite case is supported right now...
+        return self.finite
+
     def normalize(self, x):
         return frozenset({self.type.content_type.domain.normalize(e) for e in x})
 
