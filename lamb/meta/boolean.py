@@ -315,7 +315,7 @@ class ForallUnary(BindingOp):
     def to_conjunction(self, assignment=None):
         if self[0].type.domain.finite:
             a = self.scope_assignment(assignment=assignment)
-            subs = [self[1].under_assignment(a | {self.varname : MetaTerm(elem)})
+            subs = [self[1].under_assignment(a | {self.varname : MetaTerm(elem, typ=self[0].type)})
                     for elem in self[0].type.domain]
             return derived(BinaryAndExpr.join(subs, empty=True),
                 self,
