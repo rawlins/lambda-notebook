@@ -1,10 +1,11 @@
 import lamb
-from lamb import types
+from lamb import types, utils
 from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
 from .core import BindingOp, Partial, LFun, get_sopt
 from .meta import MetaTerm, DomainError
 from .ply import simplify_all, alphanorm
 from lamb.types import type_t
+from lamb.utils import dbg_print
 
 global true_term, false_term
 
@@ -338,11 +339,16 @@ class ForallUnary(BindingOp):
                     and self[0].type.domain.enumerable()
                     and self[0].type.domain.finite):
             a = self.scope_assignment(assignment=assignment)
+            body = self[1].simplify_all(**sopts)
+            # disabling alphanorm for the loop is heuristic, but for many cases
+            # doing a single pre-simplification will hopefully get scenarios
+            # that alphanorm would speed up.
+            sopts['alphanorm'] = False
             for elem in self[0].type.domain:
-                a[self.varname] = MetaTerm(elem)
+                a[self.varname] = MetaTerm(elem, typ=self[0].type)
                 # XX how to handle OutOfDomain
                 # XX should this call simplify_all or something more targeted?
-                cur = self[1].under_assignment(a, track_all_names=True).simplify_all(**sopts)
+                cur = body.under_assignment(a, track_all_names=True).simplify_all(**sopts)
                 if cur == False:
                     if cur.derivation:
                         reason = f"counterexample for ∀{self.varname}"
@@ -391,7 +397,7 @@ class ExistsUnary(BindingOp):
     def to_disjunction(self, assignment=None):
         if self[0].type.domain.enumerable() and self[0].type.domain.finite:
             a = self.scope_assignment(assignment=assignment)
-            subs = [self[1].under_assignment(a | {self.varname : MetaTerm(elem)})
+            subs = [self[1].under_assignment(a | {self.varname : MetaTerm(elem, typ=self[0].type)})
                     for elem in self[0].type.domain]
             return derived(BinaryOrExpr.join(subs, empty=False),
                 self,
@@ -414,10 +420,15 @@ class ExistsUnary(BindingOp):
                     and self[0].type.domain.enumerable()
                     and self[0].type.domain.finite):
             a = self.scope_assignment(assignment=assignment)
+            body = self[1].simplify_all(**sopts)
+            # disabling alphanorm for the loop is heuristic, but for many cases
+            # doing a single pre-simplification will hopefully get scenarios
+            # that alphanorm would speed up.
+            sopts['alphanorm'] = False
             for elem in self[0].type.domain:
-                a[self.varname] = MetaTerm(elem)
+                a[self.varname] = MetaTerm(elem, typ=self[0].type)
                 # XX how to handle OutOfDomain
-                cur = self[1].under_assignment(a, track_all_names=True).simplify_all(**sopts)
+                cur = body.under_assignment(a, track_all_names=True).simplify_all(**sopts)
                 if cur == False:
                     continue
                 elif cur == True:
@@ -514,9 +525,14 @@ class ExistsExact(BindingOp):
                         and self[0].type.domain.enumerable()
                         and self[0].type.domain.finite):
             a = self.scope_assignment(assignment=assignment)
+            body = self[1].simplify_all(**sopts)
+            # disabling alphanorm for the loop is heuristic, but for many cases
+            # doing a single pre-simplification will hopefully get scenarios
+            # that alphanorm would speed up.
+            sopts['alphanorm'] = False
             verifier, counterexample, sub = find_unique_evaluation(
                 self[0].type.domain,
-                self[1],
+                body,
                 (lambda t : simplify_all(t, **sopts)),
                 self.varname,
                 a)
@@ -601,14 +617,19 @@ class IotaUnary(BindingOp):
                     and not self.free_terms()
                     and self[0].type.domain.enumerable()
                     and self[0].type.domain.finite):
+            body = self[1].simplify_all(**sopts)
+            # disabling alphanorm for the loop is heuristic, but for many cases
+            # doing a single pre-simplification will hopefully get scenarios
+            # that alphanorm would speed up.
+            sopts['alphanorm'] = False
             verifier, counterexample, sub = find_unique_evaluation(
                 self[0].type.domain,
-                self[1],
+                body,
                 (lambda t : simplify_all(t, **sopts)),
                 self.varname,
                 self.scope_assignment(assignment=assignment))
             if verifier is not None:
-                return derived(MetaTerm(verifier), self, f"unique instantiation for ι",
+                return derived(MetaTerm(verifier, typ=self[0].type), self, f"unique instantiation for ι",
                     subexpression=sub, force_on_recurse=True)
             else:
                 # return self
