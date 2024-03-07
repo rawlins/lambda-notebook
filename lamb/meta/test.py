@@ -493,6 +493,30 @@ class MetaTest(unittest.TestCase):
         self.assertRaises(TypeMismatch, MetaTerm, {False, '_c1'})
         self.assertRaises(parsing.ParseError, MetaTerm, {'_x1', '_c1'})
 
+    def test_eq(self):
+        t1 = te("(_c1, _c2, True)")
+        meta_t1 = MetaTerm(('_c1', '_c2', True))
+        t2 = te("(_c1, _c3, True)")
+        meta_t2 = MetaTerm(('_c1', '_c3', True))
+        testsimp(self, t1.equivalent_to(t1), True, exec=True)
+        testsimp(self, t1.equivalent_to(meta_t1), True, exec=True)
+        testsimp(self, meta_t1.equivalent_to(t1), True, exec=True)
+        testsimp(self, meta_t1.equivalent_to(meta_t1), True, exec=True)
+        testsimp(self, t1.equivalent_to(t2), False, exec=True)
+        testsimp(self, t1.equivalent_to(meta_t2), False, exec=True)
+        testsimp(self, meta_t1.equivalent_to(t2), False, exec=True)
+        testsimp(self, meta_t1.equivalent_to(meta_t2), False, exec=True)
+        s1 = te("{{_c1, _c2}}")
+        meta_s1 = meta.MetaTerm(frozenset({frozenset({'_c2', '_c1'})}))
+        testsimp(self, s1.equivalent_to(s1), True, exec=True)
+        testsimp(self, s1.equivalent_to(meta_s1), True, exec=True)
+        testsimp(self, meta_s1.equivalent_to(s1), True, exec=True)
+        testsimp(self, meta_s1.equivalent_to(meta_s1), True, exec=True)
+        # not exactly eq, but close enough
+        testsimp(self, s1[0] << s1, True, exec=True)
+        testsimp(self, s1[0] << meta_s1, True, exec=True)
+
+
     def test_reduce(self):
         self.assertEqual(self.ident(self.y).reduce(), self.y)
 

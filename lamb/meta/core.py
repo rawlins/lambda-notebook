@@ -157,6 +157,14 @@ def term(s, typ=None, assignment=None, meta=False):
     return r
 
 
+def is_concrete(s):
+    """Is `s` a MetaTerm, or a finite data structure consisting only of MetaTerms?"""
+    from .sets import ListedSet
+    return (s.meta()
+        or (is_te(s, ListedSet) or is_te(s, Tuple))
+            and all(is_concrete(elem) for elem in s))
+
+
 def check_type(item, typ, raise_tm=True, msg=None):
     ts = get_type_system()
     if not ts.eq_check(item.content.type, typ):
@@ -3512,11 +3520,11 @@ class BinaryGenericEqExpr(SyncatOpExpr):
         return c
 
     def simplify(self, **sopts):
-        if (self.args[0].op in self.argtype.domain
-                            and self.args[1].op in self.argtype.domain):
-            # equality check on elements of the underlying type domain
-            return derived(te(self.args[0].op == self.args[1].op),
-                                                    self, desc="Equality")
+        if (is_concrete(self[0]) and is_concrete(self[1])):
+            # for any fully concrete sets/tuples, we should use the compiled
+            # implementation
+            from .meta import exec, MetaTerm
+            return derived(MetaTerm(exec(self)), self, desc="Equality")
         elif self.args[0] == self.args[1]:
             from .boolean import true_term
             # *heuristic* simplification rule: under syntactic equivalence,

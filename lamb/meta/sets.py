@@ -3,7 +3,8 @@ import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
-from .core import Tuple
+from .core import Tuple, is_concrete
+from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key
 from .boolean import BinaryOrExpr, BinaryAndExpr, ForallUnary, ExistsUnary, false_term, true_term
@@ -420,16 +421,14 @@ class SetContains(SyncatOpExpr):
             return lambda context: arg(context) in s(context)
 
     def simplify(self, **sopts):
-        if isinstance(self.args[1], ConditionSet):
+        if is_concrete(self.args[1]) and is_concrete(self.args[0]):
+            return derived(MetaTerm(meta.exec(self)), self, "∈ simplification")
+        elif isinstance(self.args[1], ConditionSet):
             derivation = self.derivation
             step = (self.args[1].to_characteristic()(self.args[0])).reduce()
             step.derivation = derivation # suppress the intermediate parts of
                                          # this derivation, if any
             return derived(step, self, "∈ simplification")
-        elif self.args[0].meta() and self.args[1].meta():
-            # TODO: this should be code on the set object, not here
-            result = MetaTerm(self.args[0].op in self.args[1].op)
-            return derived(result, self, "∈ simplification")
         elif isinstance(self.args[1], ListedSet) and len(self.args[1]) == 0:
             return derived(false_term, self, "∈ simplification (empty set)")
         elif isinstance(self.args[1], ListedSet) and len(self.args[1]) == 1:
@@ -437,7 +436,10 @@ class SetContains(SyncatOpExpr):
             return derived(self.args[0] % content, self,
                                             "∈ simplification (singleton set)")
         elif isinstance(self.args[1], ListedSet) and get_sopt('eliminate_sets', sopts):
-            # tends to produce fairly long expressions
+            # tends to produce fairly long expressions that are slow to
+            # evaluate; in cases where there's a better simplification
+            # algorithm, in my testing, the penalty for doing this conversion
+            # is something like 1 order of magnitude (e.g. 200ms=>2s)
             conditions = [(self.args[0] % a) for a in self.args[1]]
             return derived(BinaryOrExpr.join(conditions).simplify_all(**sopts),
                             self,

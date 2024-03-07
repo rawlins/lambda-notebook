@@ -148,6 +148,11 @@ class MetaTerm(core.TypedTerm):
         else:
             raise ValueError(f"Unknown callable object `{fun}`!")
 
+    def set(self):
+        if not isinstance(self.type, types.SetType):
+            raise TypeError(f"Can't convert MetaTerm of type {repr(self.type)} to a set")
+        return self.op
+
     def apply(self, arg):
         if not self.type.functional() or not core.get_type_system().eq_check(self.type.left, arg.type):
             raise TypeMismatch(self, arg, error="Function-argument application: mismatched argument type to MetaTerm")
@@ -291,7 +296,7 @@ class MetaTerm(core.TypedTerm):
         return self.latex_str(suppress_parens=True, use_aname=isinstance(self.type, BasicType))
 
     @classmethod
-    def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(),
+    def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=None,
                             prob_used=0.8, prob_var=0.5, max_type_depth=1):
         # MetaTerm can also be instantiated by TypedTerm.random, and that is
         # the only way that is reachable recursively
