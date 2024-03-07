@@ -1017,6 +1017,27 @@ class TypedExpr(object):
                 env.merge(part.get_type_env(force_recalc=recalculate))
         return env
 
+    def _compile(self):
+        raise NotImplementedError
+
+    def _compiled_repr(self):
+        return f"<compiled {self.__class__.__name__} of type `{repr(self.type)}`>"
+
+    @property
+    def _compiled(self):
+        if not getattr(self, '_compiled_cache', None):
+            self._recompile()
+        return self._compiled_cache
+
+    def _recompile(self):
+        self._compiled_cache = self._compile()
+        if self._compiled_cache is not None:
+            self._compiled_cache.__qualname__ = self._compiled_repr()
+        return self._compiled_cache
+
+    def _reset_compiled(self):
+        self._compiled_cache = None
+
     def _unsafe_subst(self, i, s):
         self.args[i] = s
         return self
@@ -2219,7 +2240,6 @@ class ApplicationExpr(TypedExpr):
         else:
             return None
 
-
     @classmethod
     def fa_type_inference(cls, fun, arg, assignment):
         history = False
@@ -2248,6 +2268,51 @@ class ApplicationExpr(TypedExpr):
 
         # assumption: by now, fun.type supports indexing to get the output type
         return (fun, arg, fun.type.right, history)
+
+    def nucleus(self):
+        # find the functional element at the center of potentially repeated
+        # ApplicationExprs. Probably either an LFun or a TypedTerm. (Or a
+        # Partial, Disjunction, ...)
+        if is_te(self[0], ApplicationExpr):
+            return self[0].nucleus()
+        else:
+            return self[0]
+
+    def _compile(self):
+        # XX this could use the AST to optimize further. Unclear whether the
+        # optimizations are meaningful.
+        # * uncurry an LFun and do all substs at once
+        # * more precise vacuity checks. The check here is very simple, but
+        #   could try to do something more syntactically complex. Right now it
+        #   will miss something like (L x: L y: P(x))(a)(b). However, it might
+        #   be a better use of time just to run the thing. The main function of
+        #   skipping these cases is to avoid a KeyError if the assignment is
+        #   incomplete for free terms in a discarded argument.
+        # * ...?
+        arg = self[1]._compiled
+        if is_te(self[0], LFun) and self[0].vacuous():
+            # if we can analytically determine that this ApplicationExpr
+            # will discard the argument, don't bother calling it in the
+            # compiled version. We do compile just for consistency of
+            # error checking. As noted above, this misses a lot of cases.
+            return lambda context: fun(context)(None)
+        else:
+            fun = self[0]._compiled
+
+        from .meta import MetaTerm
+        def c(context):
+            f_exec = fun(context)
+            if callable(f_exec):
+                return f_exec(arg(context))
+            else:
+                # allows dicts/sets to act as functions. This could be pushed
+                # to MetaTerm._compile but for now I prefer to leave the compiled
+                # values as their actual python implementation
+                return MetaTerm._apply_impl(f_exec, arg(context))
+
+        return c
+        # # otherwise, fun should return a callable, use it:
+        # return lambda context: fun(context)(arg(context))
 
     def _reduction_order(self):
         # prefer to reduce the argument before the function, in case the
@@ -2341,6 +2406,13 @@ class Tuple(TypedExpr):
 
     def copy_local(self, *args, type_check=True):
         return self.copy_core(Tuple(args, typ=self.type))
+
+    def _compile(self):
+        # n.b. it is possible to more quickly access individual elements, but
+        # this compiled function is intended to return an entire tuple
+        # see TupleIndex._compile
+        pre = tuple(a._compiled for a in self)
+        return lambda context: tuple(a(context) for a in pre)
 
     def index(self, i):
         return self.args[i]
@@ -2518,6 +2590,12 @@ class TypedTerm(TypedExpr):
 
     def term(self):
         return True
+
+    def _compile(self):
+        # this is completely unsafe as to what `context` gives you; wrapper
+        # functions in meta can be used to ensure type-safety.
+        # XX should this at least use meta.compiled?
+        return lambda context : context[self.op]
 
     def apply(self, arg):
         return self(arg)
@@ -2776,6 +2854,17 @@ class Partial(TypedExpr):
         else:
             return super().__hash__()
 
+    def _compile(self):
+        err = f"Condition failed on compiled `{repr(self)}`"
+        body = self[0]._compiled
+        cond = self[1]._compiled
+        def c(context):
+            if not cond(context):
+                # XX revisit at some point
+                raise DomainError(err)
+            return body(context)
+        return c
+
     def simplify(self, **sopts):
         if self.condition == True:
             # the copy here is (apparently) needed to get derivation bookkeeping right...
@@ -2886,6 +2975,13 @@ class Body(TypedExpr):
         super().__init__("Body", body)
         self.type = body.type
 
+    def _compile(self):
+        if isinstance(self[0], Partial):
+            pre = self[0].body._compiled
+        else:
+            pre = self[0]._compiled
+        return lambda context: pre(context)
+
     def calculate_partiality(self, vars=None, **sopts):
         result = self[0].calculate_partiality(vars=vars, **sopts)
         intermediate = derived(Body(result), self, "Partiality calculation (recursion on Body)",
@@ -2907,6 +3003,13 @@ class Condition(TypedExpr):
     def __init__(self, body, type_check=True):
         super().__init__("Condition", body)
         self.type = types.type_t
+
+    def _compile(self):
+        if isinstance(self[0], Partial):
+            pre = self[0].condition._compiled
+            return lambda context: pre(context)
+        else:
+            return lambda context: True
 
     def calculate_partiality(self, vars=None, **sopts):
         from .boolean import true_term
@@ -3325,6 +3428,11 @@ def op(op, arg_type, ret_type,
                 self.operator_style = True
                 super().__init__(ret_type, *args, tcheck_args=False)
 
+            def _compile(self):
+                # this could be faster if it weren't generic
+                args = tuple(a._compiled for a in self)
+                return lambda context: func(self, *[a(context) for a in args])
+
             def simplify(self, **sopts):
                 parts = [to_python(a.copy()) for a in self.args]
                 if python_only and any([isinstance(a, TypedExpr) for a in parts]):
@@ -3383,6 +3491,25 @@ class BinaryGenericEqExpr(SyncatOpExpr):
         # some problems with equality using '==', TODO recheck, but for now
         # just use "<=>" in the normalized form
         super().__init__(type_t, arg1, arg2, tcheck_args = False)
+
+    def _compile(self):
+        # XX is this safe to implement at every type?
+        if self[0] == self[1]:
+            # if we have syntactic identity, that guarantees equivalence even
+            # without execution.
+            # XX it's a bit weird that functions will work iff they meet this
+            # criteria...
+            return lambda context: True
+        l = self[0]._compiled
+        r = self[1]._compiled
+        def c(context):
+            left = l(context)
+            right = r(context)
+            # can this be done statically?
+            if callable(left) and callable(right):
+                raise TypeError(f"Unable to dynamically check equality for {left} <=> {right}")
+            return left == right
+        return c
 
     def simplify(self, **sopts):
         if (self.args[0].op in self.argtype.domain
@@ -3468,6 +3595,19 @@ class TupleIndex(SyncatOpExpr):
     def latex_str(self, suppress_parens=False, **kwargs):
         return ensuremath("(%s[%s])" % (self.args[0].latex_str(**kwargs),
                                         self.args[1].latex_str(**kwargs)))
+
+    def _compile(self):
+        index = self[1]._compiled
+        if isinstance(self[0], Tuple):
+            # precompile elements but defer supplying context
+            # XX can this be generalized to some non-Tuple self[0]s?
+            tup = tuple(a._compiled for a in self[0])
+            return lambda context: tup[index(context)](context)
+        else:
+            # if we don't have a Tuple, it's hard to avoid supplying context
+            # immediately
+            tup = self[0]._compiled
+            return lambda context: tup(context)[index(context)]
 
     def reduce(self):
         if self.args[1] in types.type_n.domain:
@@ -3820,7 +3960,7 @@ class BindingOp(TypedExpr):
     def vacuous(self):
         """Return true just in case the operator's variable is not free in the
         body expression."""
-        return self.varname in super().free_variables()
+        return self.varname not in self[1].free_variables()
 
     def term(self):
         return False
@@ -4133,6 +4273,30 @@ class LFun(BindingOp):
         env.remove_term(self.varname)
         new_fun = new_fun.under_type_assignment(env.type_mapping)
         return new_fun     
+
+    def _compile(self):
+        body = self[1]._compiled
+        if is_te(self[0], LFun) and self[0].vacuous():
+            # don't try to evaluate the argument at all in this case, since it
+            # will be discarded. *caveat*: this may prevent constraints from
+            # being applied, e.g. from Partial? Note that the argument will
+            # still be *compiled* if it's part of an ApplicationExpr.
+            return lambda context: lambda x: self[0]._compiled(context)
+        qualname = self._compiled_repr()
+        def outer(context):
+            def inner(x):
+                # assumption: x is compiled and normalized. In principle this
+                # could normalize; currently wrapper functions handle this
+                old = context.get(self.varname, None)
+                context[self.varname] = x
+                r = body(context)
+                # XX how important are side effects on raise?
+                if old is not None:
+                    context[self.varname] = old
+                return r
+            inner.__qualname__ = qualname
+            return inner
+        return outer
 
     def apply(self,arg):
         """Apply an argument directly to the function.

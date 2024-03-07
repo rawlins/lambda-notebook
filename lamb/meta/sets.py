@@ -47,6 +47,35 @@ def safevar(e, typ=None):
     return TypedTerm(e.find_safe_variable(starting=varname, avoid_bound=False), typ=typ)
 
 
+def finite_safe(s):
+    """Is it safe to assume, independent of the domain, that `s` is a finite
+    set? This essentially syntactically checks if `s` is a ListedSet or if it
+    is constructed from ListedSets via the set operations intersection, union,
+    and difference in the appropriate way for each operation.
+
+    Returns
+    -------
+    bool
+        can the set be safely assumed to be finite? A return value of ``False``
+        doesn't indicate non-finiteness, only that finiteness can't be
+        determined syntactically."""
+    if isinstance(s, ListedSet) or isinstance(s, MetaTerm):
+        # XX a ListedSet of sets could still contain non-finite members
+        return True
+    elif isinstance(s, ConditionSet) or isinstance(s, TypedTerm):
+        # XX in principle, one could easily figure out that certain
+        # ConditionSets are finite...
+        return False
+    elif isinstance(s, SetIntersection):
+        return finite_safe(s[0]) or finite_safe(s[1])
+    elif isinstance(s, SetUnion):
+        return finite_safe(s[0]) and finite_safe(s[1])
+    elif isinstance(s, SetDifference):
+        return finite_safe(s[0]) # s[1] doesn't matter
+    else:
+        return False # not a set?
+
+
 class ConditionSet(BindingOp):
     """A set represented as a condition on a variable.
 
@@ -83,12 +112,16 @@ class ConditionSet(BindingOp):
         body = self.body.latex_str(suppress_parens=suppress_sub, **kwargs)
         return utils.ensuremath(f"\\{{{self[0].latex_str(**kwargs)} \\:|\\: {body}\\}}")
 
-    def __lshift__(self, i):
-        return SetContains(i, self)
-
     def to_characteristic(self):
         """Return a LFun based on the condition used to describe the set."""
         return LFun(self.vartype, self.body, self.varname)
+
+    def _compile(self):
+        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+            raise NotImplementedError("Compiled ConditionSet requires a guaranteed-finite domain")
+        f = self.to_characteristic()._compiled
+        domain = tuple(self[0].type.domain)
+        return lambda context: {elem for elem in domain if f(context)(elem)}
 
     def eliminate(self, **sopts):
         # this is a bit wacky. But for the case where there are no free terms
@@ -233,9 +266,10 @@ class ListedSet(TypedExpr):
     def name_of(self, i):
         return f"element {i}"
 
-    def __lshift__(self, i):
-        """Use the `<<` operator for set membership."""
-        return SetContains(i, self)
+    def _compile(self):
+        # XX could optimize further if self is purely meta...
+        l = [a._compiled for a in self.set()]
+        return lambda context: frozenset(elem(context) for elem in l)
 
     def set(self):
         """Return a python `set` of terms in the ListedSet. This of course uses
@@ -372,6 +406,19 @@ class SetContains(SyncatOpExpr):
         arg1 = self.ensure_typed_expr(arg1, arg2.type.content_type)
         super().__init__(type_t, arg1, arg2, tcheck_args=False)
 
+    def _compile(self):
+        arg = self[0]._compiled
+        if isinstance(self[1], ConditionSet):
+            # short-circuit the finiteness requirement if we were to directly
+            # compile self[1]
+            fun = self[1].to_characteristic()._compiled
+            return lambda context: fun(context)(arg(context))
+        else:
+            # XX can any of these cases be further optimized? Probably at least
+            # ListedSet?
+            s = self[1]._compiled
+            return lambda context: arg(context) in s(context)
+
     def simplify(self, **sopts):
         if isinstance(self.args[1], ConditionSet):
             derivation = self.derivation
@@ -434,6 +481,18 @@ class BinarySetOp(SyncatOpExpr):
             typ = t
         super().__init__(typ, arg1, arg2, tcheck_args=False)
 
+    def _compile(self):
+        impl = self._set_impl()
+        if impl is None:
+            raise NotImplementedError
+        impl = impl._compiled
+        return lambda context: impl(context)
+
+    def _set_impl(self):
+        # set operations and relations typically have an implementation in terms
+        # of simpler operations/relations; subclasses can fill this in here.
+        return None
+
     @classmethod
     def check_viable(cls, *args):
         if len(args) != 2:
@@ -476,6 +535,17 @@ class SetUnion(BinarySetOp):
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set union")
 
+    def _set_impl(self):
+        var = safevar(self)
+        return ConditionSet(var, var << self.args[0] | var << self.args[1])
+
+    def _compile(self):
+        if finite_safe(self):
+            s1 = self[0]._compiled
+            s2 = self[1]._compiled
+            return lambda context: s1(context) | s2(context)
+        else:
+            return super()._compile()
 
     def simplify(self, **sopts):
         s1 = to_set_shim(self.args[0])
@@ -496,10 +566,7 @@ class SetUnion(BinarySetOp):
         # more unwieldy
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
-            var = safevar(self)
-            return derived(ConditionSet(var,
-                            (var << self.args[0]) | (var << self.args[1])),
-                            self,
+            return derived(self._set_impl(), self,
                             "set union (set elimination)").simplify_all(**sopts)
 
         return self
@@ -517,6 +584,18 @@ class SetIntersection(BinarySetOp):
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set intersection")
+
+    def _set_impl(self):
+        var = safevar(self)
+        return ConditionSet(var, var << self.args[0] & var << self.args[1])
+
+    def _compile(self):
+        if finite_safe(self):
+            s1 = self[0]._compiled
+            s2 = self[1]._compiled
+            return lambda context: s1(context) & s2(context)
+        else:
+            return super()._compile()
 
     def simplify(self, **sopts):
         s1 = to_set_shim(self.args[0])
@@ -581,10 +660,7 @@ class SetIntersection(BinarySetOp):
 
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
-            var = safevar(self)
-            return derived(
-                ConditionSet(var, (var << self.args[0]) & (var << self.args[1])),
-                self,
+            return derived(self._set_impl(), self,
                 "set intersection (set elimination)").simplify_all(**sopts)
         return self
 
@@ -600,6 +676,25 @@ class SetDifference(BinarySetOp):
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set difference")
+
+    def _set_impl(self):
+        var = safevar(self)
+        return ConditionSet(var, var << self.args[0] & (~(var << self.args[1])))
+
+    def _compile(self):
+        if finite_safe(self):
+            # it's safe to work with the left argument directly
+            s1 = self[0]._compiled
+            if isinstance(self[1], ListedSet):
+                s2 = self[1]._compiled
+                return lambda context: s1(context) - s2(context)
+            else:
+                var = safevar(self)
+                # XX code dup
+                impl = LFun(var, (var << self.args[1]))._compiled
+                return lambda context: {e for e in s1(context) if not impl(context)(e)}
+        else:
+            return super()._compile()
 
     def simplify(self, **sopts):
         s1 = to_set_shim(self.args[0])
@@ -626,10 +721,7 @@ class SetDifference(BinarySetOp):
 
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
-            var = safevar(self)
-            return derived(
-                ConditionSet(var, (var << self.args[0]) & (~(var << self.args[1]))),
-                self,
+            return derived(self._set_impl(), self,
                 "set difference (set elimination)")#.simplify_all(**sopts)
         return self
 
@@ -643,6 +735,24 @@ class SetEquivalence(BinarySetOp):
 
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Set equivalence", typ=type_t)
+
+    def _set_impl(self):
+        # this is general, but unfortunately kind of bad in a lot of special
+        # cases
+        var = safevar(self)
+        return ForallUnary(var, ((var << self.args[0]).equivalent_to(var << self.args[1])))
+
+    def _compile(self):
+        # don't use the default implementation for compilation; among other
+        # reasons is that it won't handle ListedSets very well.
+
+        # if l and/or r are ConditionSets, compiling will require finiteness.
+        l = self[0]._compiled
+        r = self[1]._compiled
+        # XX there are definitely some optimizations from simplify that would
+        # be worth importing here
+        # to what degree can the finiteness constraint be eliminated?
+        return lambda context: l(context) == r(context)
 
     def simplify(self, **sopts):
         s1 = to_set_shim(self.args[0])
@@ -711,9 +821,7 @@ class SetEquivalence(BinarySetOp):
 
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
-            var = safevar(self)
-            return derived(ForallUnary(var, ((var << self.args[0]).equivalent_to(var << self.args[1]))),
-                self,
+            return derived(self._set_impl(), self,
                 "set equivalence (set elimination)").simplify_all(**sopts)
         return self
 
@@ -728,10 +836,12 @@ class SetSubset(BinarySetOp):
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Subset", typ=type_t)
 
+    def _set_impl(self):
+        return self.args[0].equivalent_to(self.args[0] & self.args[1])
+
     def simplify(self, **sopts):
         old_derivation = self.derivation
-        test = derived(self.args[0].equivalent_to(self.args[0] & self.args[1]),
-            self, "subset (set elimination)")
+        test = derived(self._set_impl(), self, "subset (set elimination)")
         simplified = test.simplify_all(**sopts)
         if simplified is test and not get_sopt('eliminate_sets', sopts):
             # if simplify didn't do anything to this expression, the result is
@@ -752,12 +862,12 @@ class SetProperSubset(BinarySetOp):
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Proper subset", typ=type_t)
 
+    def _set_impl(self):
+        return ((self.args[0] <= self.args[1]) & (~(self.args[0].equivalent_to(self.args[1]))))
+
     def simplify(self, **sopts):
         old_derivation = self.derivation
-        test = derived(
-            ((self.args[0] <= self.args[1]) & (~(self.args[0].equivalent_to(self.args[1])))),
-            self,
-            "proper subset (set elimination)")
+        test = derived(self._set_impl(), self, "proper subset (set elimination)")
         simplified = test.simplify_all(**sopts)
         if simplified is test and not get_sopt('eliminate_sets', sopts):
             self.derivation = old_derivation
@@ -777,12 +887,13 @@ class SetSupset(BinarySetOp):
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Superset", typ=type_t)
 
+    def _set_impl(self):
+        # normalize to <=
+        return SetSubset(self.args[1], self.args[0])
+
     def simplify(self, **sopts):
-        # always normalize to <=
-        return derived(
-            SetSubset(self.args[1], self.args[0]),
-            self,
-            "superset => subset").simplify(**sopts)
+        # unconditionally normalize
+        return derived(self._set_impl(), self, "superset => subset").simplify(**sopts)
 
 
 class SetProperSupset(BinarySetOp):
@@ -796,10 +907,10 @@ class SetProperSupset(BinarySetOp):
     def __init__(self, arg1, arg2, type_check=True):
         super().__init__(arg1, arg2, "Proper superset", typ=type_t)
 
-    def simplify(self, **sopts):
-        # always normalize to <
-        return derived(
-            SetProperSubset(self.args[1], self.args[0]),
-            self,
-            "superset => subset").simplify(**sopts)
+    def _set_impl(self):
+        # normalize to <
+        return SetProperSubset(self.args[1], self.args[0])
 
+    def simplify(self, **sopts):
+        # unconditionally normalize
+        return derived(self._set_impl(), self, "superset => subset").simplify(**sopts)

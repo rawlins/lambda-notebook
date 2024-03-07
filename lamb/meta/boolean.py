@@ -58,6 +58,11 @@ class BinaryAndExpr(SyncatOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
+    def _compile(self):
+        l = self[0]._compiled
+        r = self[1]._compiled
+        return lambda context: l(context) and r(context)
+
     @classmethod
     def simplify_early_check(cls, e1, e2, origin=None, **sopts):
         for e in (e1,e2):
@@ -102,6 +107,11 @@ class BinaryOrExpr(SyncatOpExpr):
 
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
+
+    def _compile(self):
+        l = self[0]._compiled
+        r = self[1]._compiled
+        return lambda context: l(context) or r(context)
 
     @classmethod
     def simplify_early_check(cls, e1, e2, origin=None, **sopts):
@@ -150,6 +160,11 @@ class BinaryArrowExpr(SyncatOpExpr):
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
 
+    def _compile(self):
+        l = self[0]._compiled
+        r = self[1]._compiled
+        return lambda context: not l(context) or r(context)
+
     def simplify(self, **sopts):
         def d(x):
             return derived(x, self, desc="material implication")
@@ -178,6 +193,11 @@ class BinaryBiarrowExpr(SyncatOpExpr):
 
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
+
+    def _compile(self):
+        l = self[0]._compiled
+        r = self[1]._compiled
+        return lambda context: l(context) == r(context)
 
     def simplify(self, **sopts):
         def d(x):
@@ -230,6 +250,11 @@ class BinaryNeqExpr(SyncatOpExpr):
 
     def __init__(self, arg1, arg2):
         super().__init__(type_t, arg1, arg2)
+
+    def _compile(self):
+        l = self[0]._compiled
+        r = self[1]._compiled
+        return lambda context: l(context) != r(context)
 
     def simplify(self, **sopts):
         def d(x):
@@ -326,6 +351,29 @@ class ForallUnary(BindingOp):
     def eliminate(self, assignment=None, **sopts):
         return self.to_conjunction(assignment=assignment)
 
+    def _compile(self):
+        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+            raise NotImplementedError("Compiled ∀ quantification requires a guaranteed finite/enumerable domain")
+        if self.vacuous():
+            return lambda context: True
+        # compile *with* a specific domain
+        # XX this is a bit slow to access; an iterator is faster but doesn't work
+        # for compilation because it's not resettable
+        domain = tuple(self[0].type.domain)
+        body = self[1]._compiled
+        def c(context):
+            old = context.get(self.varname, None)
+            for elem in domain:
+                context[self.varname] = elem
+                if not body(context):
+                    if old is not None:
+                        context[self.varname] = old
+                    return False
+            if old is not None:
+                context[self.varname] = old
+            return True
+        return c
+
     def simplify(self,assignment=None, **sopts):
         # note: not valid if the domain of individuals is completely empty
         # (would return True). We are therefore assuming that this case is
@@ -406,6 +454,26 @@ class ExistsUnary(BindingOp):
 
     def eliminate(self, assignment=None, **sopts):
         return self.to_disjunction(assignment=assignment)
+
+    def _compile(self):
+        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+            raise NotImplementedError("Compiled ∃ quantification requires a guaranteed finite/enumerable domain")
+        if self.vacuous():
+            return lambda context: False
+        domain = tuple(self[0].type.domain)
+        body = self[1]._compiled
+        def c(context):
+            old = context.get(self.varname, None)
+            for elem in domain:
+                context[self.varname] = elem
+                if body(context):
+                    if old is not None:
+                        context[self.varname] = old
+                    return True
+            if old is not None:
+                context[self.varname] = old
+            return False
+        return c
 
     def simplify(self, assignment=None, **sopts):
         if not self.varname in self.body.free_variables():
@@ -511,6 +579,30 @@ class ExistsExact(BindingOp):
         result = derived(result, self, "∃! elimination")
         return result
 
+    def _compile(self):
+        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+            raise NotImplementedError("Compiled ∃! quantification requires a guaranteed finite/enumerable domain")
+        if self.vacuous():
+            return lambda context: False
+        domain = tuple(self[0].type.domain)
+        body = self[1]._compiled
+        def c(context):
+            old = context.get(self.varname, None)
+            found = None
+            for elem in domain:
+                context[self.varname] = elem
+                if body(context):
+                    if found is not None:
+                        if old is not None:
+                            context[self.varname] = old
+                        return False # found 2
+                    else:
+                        found = elem
+            if old is not None:
+                context[self.varname] = old
+            return found is not None
+        return c
+
     def simplify(self, assignment=None, **sopts):
         if not self.varname in self.body.free_variables():
             # even sillier to check for than the ∃ case...
@@ -605,6 +697,38 @@ class IotaUnary(BindingOp):
         result = self.copy_local(sub_var, new_condition)
         return result
 
+    def _compile(self):
+        # XX code dup
+        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+            raise NotImplementedError("Compiled ∃! quantification requires a guaranteed finite/enumerable domain")
+        if self.vacuous():
+            return lambda context: False
+        domain = tuple(self[0].type.domain)
+        body = self[1]._compiled
+        def c(context):
+            # could pre-select the domain, but this allows for it to change
+            # (to some degree)
+            old = context.get(self.varname, None)
+            found = None
+            for elem in domain:
+                # assumption: x is uncompiled
+                context[self.varname] = elem
+                if body(context):
+                    if found is not None:
+                        if old is not None:
+                            context[self.varname] = old
+                        raise DomainError(self, self[0].type.domain,
+                            extra="Uniqueness failure on compiled ι")
+                    else:
+                        found = context[self.varname]
+            if old is not None:
+                context[self.varname] = old
+            if found is None:
+                raise DomainError(self, self[0].type.domain,
+                    extra="Existence failure on compiled ι")
+            return found
+        return c
+
     def simplify(self, assignment=None, **sopts):
         if not self.varname in self.body.free_variables():
             c = self.type.domain.cardinality()
@@ -656,6 +780,8 @@ class IotaPartial(IotaUnary):
 
     def copy_local(self, var, arg, type_check=True):
         return self.copy_core(IotaPartial(var, arg, type_check=type_check))
+
+    # XX what should ._compiled do? For now, no implementation.
 
     def calculate_partiality(self, vars=None, **sopts):
         new_body = self.body.calculate_partiality(vars=vars, **sopts)

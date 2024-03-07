@@ -273,15 +273,20 @@ def test_repr_parse_abstract(self, depth):
             print("Failure on depth %i expression '%s'" % (depth, repr(x)))
         self.assertTrue(result)
 
-def testsimp(self, a, b, all=False):
+def testsimp(self, a, b, all=False, exec=False):
+    if exec:
+        all = True
     if all:
         intermediate = a.simplify_all()
     else:
         intermediate = a.simplify()
     teb = te(b)
-    if intermediate != teb:
-        print("Failed simplification test: '%s == %s'" % (repr(a), repr(b)))
-    self.assertEqual(intermediate, teb)
+    self.assertEqual(intermediate, teb,
+                f"Failed simplification test: '{repr(a)} == {repr(b)}' (got {repr(intermediate)})")
+    if exec:
+        execed = meta.exec(a)
+        self.assertEqual(intermediate, teb,
+                f"Failed exec test: '{repr(a)} == {repr(b)}' (got {repr(execed)})")
     return intermediate
 
 
@@ -670,20 +675,21 @@ class MetaTest(unittest.TestCase):
 
     def test_boolean_simplify(self):
         # negation
-        testsimp(self, te("~False"), True)
-        testsimp(self, te("~True"), False)
-        testsimp(self, te("~~True"), True, all=True)
-        testsimp(self, te("~~False"), False, all=True)
+        testsimp(self, te("~False"), True, exec=True)
+        testsimp(self, te("~True"), False, exec=True)
+        testsimp(self, te("~~True"), True, exec=True)
+        testsimp(self, te("~~False"), False, exec=True)
         testsimp(self, te("~p_t"), te("~p_t"))
         testsimp(self, te("~~p_t"), te("p_t"))
         testsimp(self, te("~~~p_t"), te("~p_t"))
         testsimp(self, te("~~~~p_t"), te("p_t"), all=True)
 
         # conjunction
-        testsimp(self, te("True & True"), True)
-        testsimp(self, te("True & False"), False)
-        testsimp(self, te("False & True"), False)
-        testsimp(self, te("False & False"), False)
+        testsimp(self, te("True & True"), True, exec=True)
+        testsimp(self, te("True & False"), False, exec=True)
+        testsimp(self, te("False & True"), False, exec=True)
+        testsimp(self, te("False & False"), False, exec=True)
+        testsimp(self, te("True & True & False"), False, exec=True)
         testsimp(self, te("False & p_t"), False)
         testsimp(self, te("p_t & False"), False)
         testsimp(self, te("True & p_t"), te("p_t"))
@@ -693,10 +699,11 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t & ~p_t"), False)
 
         # disjunction
-        testsimp(self, te("True | True"), True)
-        testsimp(self, te("True | False"), True)
-        testsimp(self, te("False | True"), True)
-        testsimp(self, te("False | False"), False)
+        testsimp(self, te("True | True"), True, exec=True)
+        testsimp(self, te("True | False"), True, exec=True)
+        testsimp(self, te("False | True"), True, exec=True)
+        testsimp(self, te("False | False"), False, exec=True)
+        testsimp(self, te("False | False | True"), True, exec=True)
         testsimp(self, te("False | p_t"), te("p_t"))
         testsimp(self, te("p_t | False"), te("p_t"))
         testsimp(self, te("True | p_t"), True)
@@ -706,10 +713,10 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t | ~p_t"), True)
 
         # arrow
-        testsimp(self, te("True >> True"), True)
-        testsimp(self, te("True >> False"), False)
-        testsimp(self, te("False >> True"), True)
-        testsimp(self, te("False >> False"), True)
+        testsimp(self, te("True >> True"), True, exec=True)
+        testsimp(self, te("True >> False"), False, exec=True)
+        testsimp(self, te("False >> True"), True, exec=True)
+        testsimp(self, te("False >> False"), True, exec=True)
         testsimp(self, te("False >> p_t"), True)
         testsimp(self, te("p_t >> False"), te("~p_t"))
         testsimp(self, te("True >> p_t"), te("p_t"))
@@ -718,10 +725,10 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t >> q_t"), te("p_t >> q_t"))
 
         # biconditional
-        testsimp(self, te("True <=> True"), True)
-        testsimp(self, te("True <=> False"), False)
-        testsimp(self, te("False <=> True"), False)
-        testsimp(self, te("False <=> False"), True)
+        testsimp(self, te("True <=> True"), True, exec=True)
+        testsimp(self, te("True <=> False"), False, exec=True)
+        testsimp(self, te("False <=> True"), False, exec=True)
+        testsimp(self, te("False <=> False"), True, exec=True)
         testsimp(self, te("False <=> p_t"), te("~p_t"))
         testsimp(self, te("p_t <=> False"), te("~p_t"))
         testsimp(self, te("True <=> p_t"), te("p_t"))
@@ -730,10 +737,10 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t <=> p_t"), True)
 
         # neq
-        testsimp(self, te("True =/= True"), False)
-        testsimp(self, te("True =/= False"), True)
-        testsimp(self, te("False =/= True"), True)
-        testsimp(self, te("False =/= False"), False)
+        testsimp(self, te("True =/= True"), False, exec=True)
+        testsimp(self, te("True =/= False"), True, exec=True)
+        testsimp(self, te("False =/= True"), True, exec=True)
+        testsimp(self, te("False =/= False"), False, exec=True)
         testsimp(self, te("False =/= p_t"), te("p_t"))
         testsimp(self, te("p_t =/= False"), te("p_t"))
         testsimp(self, te("True =/= p_t"), te("~p_t"))
@@ -742,6 +749,12 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t =/= p_t"), False)
 
         # interactions (not exhaustive)
+        testsimp(self, te("True & ~~True"), True, exec=True)
+        testsimp(self, te("~True & ~~~True"), te("False"), exec=True)
+        testsimp(self, te("True | ~~True"), True, exec=True)
+        testsimp(self, te("~True | ~~~True"), False, exec=True)
+        testsimp(self, te("True => ~~True"), True, exec=True)
+        testsimp(self, te("True & ~~~True"), False, exec=True)
         testsimp(self, te("p_t & ~~p_t"), te("p_t"), all=True)
         testsimp(self, te("~p_t & ~~~p_t"), te("~p_t"), all=True)
         testsimp(self, te("p_t | ~~p_t"), te("p_t"), all=True)
@@ -770,6 +783,28 @@ class MetaTest(unittest.TestCase):
                        te("Forall x_e : Forall y_e : P_<(e,e),t>(y,x)"),
                        all=True)
 
+        # not a very interesting domain, but these exercise some basic
+        # implementational code even extending to multiple quantifiers
+        testsimp(self, te("Forall x_t : x"), False, exec=True)
+        testsimp(self, te("Forall x_t : ~x"), False, exec=True)
+        testsimp(self, te("Forall x_t : ~x | ~~x"), True, exec=True)
+        testsimp(self, te("Exists x_t : x"), True, exec=True)
+        testsimp(self, te("Exists x_t : ~x"), True, exec=True)
+        testsimp(self, te("ExistsExact x_t : x"), True, exec=True)
+        testsimp(self, te("ExistsExact x_t : ~x"), True, exec=True)
+        testsimp(self, te("ExistsExact x_t : ~x | ~~x"), False, exec=True)
+        testsimp(self, te("Iota x_t : x"), True, exec=True)
+        testsimp(self, te("Iota x_t : ~x"), False, exec=True)
+        # XX simplify doesn't do anything on this case, even though it does
+        # on other quantifiers
+        self.assertRaises(meta.DomainError, meta.exec, te("Iota x_t : x == x"))
+
+        testsimp(self, te("Forall x_t : Exists y_t : x == y"), True, exec=True)
+        testsimp(self, te("Forall x_t : Forall y_t : x == y"), False, exec=True)
+        testsimp(self, te("Forall x_t : Forall y_t : Exists z_t: x | y | z"), True, exec=True)
+        testsimp(self, te("Forall x_t : Forall y_t : Forall z_t: x | y | z"), False, exec=True)
+        testsimp(self, te("Exists x_t : Exists y_t : Exists z_t: x & y & z"), True, exec=True)
+
     def test_boolean_evaluation(self):
         # this test is more to ensure that this code isn't crashing, than a
         # deep test of boolean inference.
@@ -795,8 +830,111 @@ class MetaTest(unittest.TestCase):
     def test_simplify(self):
         # test a few non-boolean equality cases. (These also exercise set/tuple
         # parsing cases that aren't otherwise tested here)
-        self.assertTrue(TypedExpr.factory("{x_e, y_e} <=> {x_e, y_e}").simplify())
-        self.assertTrue(TypedExpr.factory("(x_e, y_e) <=> (x_e, y_e)").simplify())
+        testsimp(self, te("{x_e, y_e} <=> {x_e, y_e}"), True, all=True)
+        testsimp(self, te("{x_e, y_e} <=> {y_e, x_e}"), True, all=True)
+        testsimp(self, te("(x_e, y_e) <=> (x_e, y_e)"), True, all=True)
+        # should not simplify:
+        testsimp(self, te("(x_e, y_e) <=> (y_e, x_e)"), te("(x_e, y_e) <=> (y_e, x_e)"), all=True)
+
+        # execable equality cases:
+        testsimp(self, te("{True, False} <=> {True, False, True}"), True, exec=True)
+        testsimp(self, te("{_c1, _c3} <=> {_c1, _c3, _c1}"), True, exec=True)
+        testsimp(self, te("(_c1, _c3) <=> (_c1, _c3)"), True, exec=True)
+        # XX simplify does not handle these correctly
+        # testsimp(self, te("(_c1, _c3) <=> (_c3, _c1)"), False, exec=True)
+        # testsimp(self, te("~((_c1, _c3) <=> (_c3, _c1))"), True, exec=True)
+        self.assertFalse(meta.exec(te("(_c1, _c3) <=> (_c3, _c1)")))
+        self.assertTrue(meta.exec(te("~((_c1, _c3) <=> (_c3, _c1))")))
+
+    def test_exec(self):
+        # see also, `testsimp` calls with exec=True
+        # XX generate random exec-safe expressions? it would be ideal to test
+        # all metalanguage ops
+
+        # really basic cases:
+        self.assertTrue(meta.exec(te("p_t & q_t"), p=True, q=True))
+        self.assertTrue(meta.exec(te("L p_t : p_t & q_t"), q=True)(True))
+        self.assertFalse(meta.exec(te("L p_t : p_t & q_t"), q=True)(False))
+        self.assertRaises(TypeError, meta.exec, te("p_t & q_t")) # missing context
+
+        te_f = te("L x_e: x == _c1")
+        f = meta.exec(te_f)
+        self.assertTrue(f('_c1'))
+        self.assertFalse(f('_c2'))
+        with types.type_e.restrict_domain({'c0', 'c1','c2', 'c3'}):
+            self.assertRaises(TypeError, meta.exec, te("ExistsExact x_e : P_<e,t>(x)"))
+            self.assertTrue(meta.exec(te("ExistsExact x_e : P_<e,t>(x)"), P=f))
+            self.assertTrue(meta.exec(te("ExistsExact x_e : P_<e,t>(x)"), P=te_f))
+            self.assertTrue(meta.exec(te("L f_<e,t> : ExistsExact x_e : f_<e,t>(x)"))(f))
+            self.assertTrue(meta.exec(te("L f_<e,t> : ExistsExact x_e : f_<e,t>(x)"))(te_f))
+            self.assertTrue(meta.exec(te("L f_<e,t> : ~(ExistsExact x_e : ~f_<e,t>(x))"))(f))
+
+            # exercise set code...several of these cases should in principle be
+            # handleable by simplify as well
+            s1 = te("Set x_e : x << {_c1, _c2}")
+            s2 = te("Set x_e : ~(x == _c1)")
+            s3 = te("{_c1, _c2, _c3}")
+            s4 = te("{_c0, _c2, _c3}")
+            s5 = te({'_c2', '_c3'})
+            self.assertTrue(meta.exec(((s3 - s4) | s3).equivalent_to(s3)))
+            self.assertFalse(meta.exec(((s3 - s4) | s3).equivalent_to(s4)))
+            self.assertTrue(meta.exec((s1 & s2).equivalent_to(te({'_c2'}))))
+            self.assertTrue(meta.exec((s2 & s4).equivalent_to(s4)))
+            self.assertTrue(meta.exec((s2 & s3).equivalent_to(s5)))
+            self.assertTrue(meta.exec((s2 & s3) <= s5))
+            self.assertTrue(meta.exec((s2 & s3) >= s5))
+            self.assertFalse(meta.exec((s2 & s3) < s5))
+            self.assertFalse(meta.exec((s2 & s3) > s5))
+            self.assertTrue(meta.exec((s2 - s3) < s4))
+            self.assertTrue(meta.exec(s5 <= s3))
+            self.assertTrue(meta.exec(s5 < s3))
+            self.assertTrue(meta.exec(s5 < s2))
+            self.assertTrue(meta.exec((s1 & s2) <= s5))
+            self.assertTrue(meta.exec((s1 & s2) < s5))
+            self.assertFalse(meta.exec((s1 & s2) > s5))
+
+        # test some aspects of the wrapper api
+        f = te("L s_{{e}} : L x_e : L y_e : ({x} << s) >> ({y} << s)")
+        # can't directly write recursive sets in python, use a factory
+        s = sets.sset([{'_c1', '_c2'}, {'_c1'}, {'_c2'}])
+        self.assertTrue(meta.exec(f, s, te("_c1"), te("_c2")))
+        self.assertTrue(meta.exec(f, s, te("_c3"), te("_c1")))
+        self.assertFalse(meta.exec(f, s, te("_c1"), te("_c3")))
+        self.assertTrue(meta.exec(f, s, te("_c3"))(te("_c1")))
+        self.assertFalse(meta.exec(f, s, te("_c1"))(te("_c3")))
+        self.assertTrue(meta.exec(f, s)(te("_c3"))(te("_c1")))
+        self.assertFalse(meta.exec(f, s)(te("_c1"))(te("_c3")))
+        self.assertTrue(meta.exec(f)(s)(te("_c3"))(te("_c1")))
+        self.assertFalse(meta.exec(f)(s)(te("_c1"))(te("_c3")))
+        self.assertRaises(TypeError, meta.exec(f), te("_c1"))
+        self.assertRaises(TypeError, meta.exec(f)(s), 1)
+        self.assertRaises(TypeError, meta.exec(f, s), 1)
+        self.assertTrue(meta.exec(f, _uncurry=True)(s, te("_c3"), te("_c1")))
+        self.assertFalse(meta.exec(f, _uncurry=True)(s, te("_c1"), te("_c3")))
+        self.assertRaises(TypeError, meta.exec(f, _uncurry=True), s)
+        self.assertRaises(TypeError, meta.exec(f, _uncurry=True), s, te("_c3"))
+        self.assertRaises(TypeError, meta.exec(f, _uncurry=True), te("_c3"), s, te("_c1"))
+        self.assertRaises(TypeError, meta.exec(f, _uncurry=True), s, te("_c3"), te("_c1"), te("_c1"))
+
+        # a few more error cases that fail arity or dynamic type checks
+        self.assertRaises(TypeError,
+            meta.exec(te("L p_t : p_t & q_t"), q=True),
+            1) # dynamic type check on p (bool vs number)
+        self.assertRaises(TypeError,
+            meta.exec(te("L p_t : L q_t : p_t & q_t")),
+            1) # dynamic type check on p
+        self.assertRaises(TypeError,
+            meta.exec(te("L p_t : L q_t : p_t & q_t"))(True),
+            1) # dynamic type check on (inner argument) q
+        self.assertRaises(TypeError,
+            meta.exec(te("L p_t : p_t & q_t"), q=True)(False),
+            False) # over-application
+        self.assertRaises(TypeError,
+            meta.exec(te("L p_t : p_t & q_t"), q=True),
+            False, False) # dynamic type check on p (bool vs tuple / missing _uncurry)
+        self.assertRaises(TypeError,
+            meta.exec(te("L p_t : L q_t : p_t & q_t"), _uncurry=True),
+            False) # underapplication on uncurried function
 
     def test_set_simplify(self):
         for i in range(100):

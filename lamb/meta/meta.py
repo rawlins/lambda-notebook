@@ -6,8 +6,9 @@ from lamb import types
 
 from . import core, boolean
 from .ply import get_sopt
+from .core import is_te
 from lamb import types, parsing
-from lamb.utils import ensuremath
+from lamb.utils import ensuremath, dbg_print
 from lamb.types import TypeMismatch, type_e, type_t, type_n, BasicType, SetType, TupleType
 
 
@@ -21,7 +22,7 @@ class DomainError(Exception):
         extra = self.extra
         if extra:
             extra = f" ({extra})"
-        return f"`{self.element}` not present in domain `{repr(self.domain)}`{extra}"
+        return f"`{repr(self.element)}` not present in domain `{repr(self.domain)}`{extra}"
 
     def __repr__(self):
         return self.__str__()
@@ -29,11 +30,16 @@ class DomainError(Exception):
 
 class OutOfDomain(DomainError):
     def __init__(self, f, a):
-        super().__init__(a, f.type.left.domain)
-        self.f = f
+        if is_te(f):
+            dom = f.type.left.domain
+            self.f = f.op
+        else:
+            dom = f # MetaTerm op or compiled function
+            self.f = f
+        super().__init__(a, dom)
 
     def __str__(self):
-        return f"`{self.element}` missing from function domain (`{repr(self.f.op)}`)"
+        return f"`{self.element}` missing from function domain (`{repr(self.f)}`)"
 
 
 class MetaTerm(core.TypedTerm):
@@ -104,15 +110,43 @@ class MetaTerm(core.TypedTerm):
             # resolving it as in the `None` case?
             return typ
 
+    def _recheck_domain(self):
+        if self.op not in self.type.domain:
+            raise DomainError(self.op, self.type.domain)
+
+    def _compile(self):
+        # caveat: functional types return as their underlying python
+        # implementation. ApplicationExpr._compile will handle this, but other
+        # users will need special casing.
+        def c(context):
+            # XX can this domain check be handled elsewhere?
+            self._recheck_domain()
+            return self.op
+        return c
+
     def simplify(self, **sopts):
         # if we are doing an evaluate pass, recheck the domain. This is to
         # validate expressions that were generated out of the scope of a
         # domain restriction, relative to one.
         # currently: only do this for atomic types.
         if get_sopt('evaluate', sopts) and len(self.type) == 0:
-            if self.op not in self.type.domain:
-                raise DomainError(self.op, self.type.domain)
+            self._recheck_domain()
         return self
+
+    @classmethod
+    def _apply_impl(cls, fun, arg):
+        if isinstance(fun, collections.abc.Set):
+            return arg in fun
+        elif isinstance(fun, collections.abc.Mapping):
+            # XX is there a better way to handle this?
+            if arg in fun:
+                return fun[arg]
+            else:
+                raise OutOfDomain(fun, arg)
+        elif callable(fun):
+            return fun(arg)
+        else:
+            raise ValueError(f"Unknown callable object `{fun}`!")
 
     def apply(self, arg):
         if not self.type.functional() or not core.get_type_system().eq_check(self.type.left, arg.type):
@@ -120,18 +154,20 @@ class MetaTerm(core.TypedTerm):
         elif not arg.meta():
             return self(arg)
         elif isinstance(self.op, collections.abc.Set):
+            # XX why does this have to be disjunctive?? It makes this code very
+            # messy
             # this will raise if somehow self.type.right is not t
-            return MetaTerm(arg in self.op or arg.op in self.op, typ=self.type.right)
+            return MetaTerm(self._apply_impl(self.op, arg) or self._apply_impl(self.op, arg.op),
+                typ=self.type.right)
         elif isinstance(self.op, collections.abc.Mapping):
-            # XX is there a better way to handle this?
-            if arg in self.op:
-                return MetaTerm(self.op[arg], typ=self.type.right)
-            elif arg.op in self.op:
-                return MetaTerm(self.op[arg.op], typ=self.type.right)
-            else:
-                raise OutOfDomain(self, arg)
+            # XX why does this have to be disjunctive??
+            try:
+                return MetaTerm(self._apply_impl(self.op, arg), typ=self.type.right)
+            except OutOfDomain:
+                pass
+            return MetaTerm(self._apply_impl(self.op, arg.op), typ=self.type.right)
         else:
-            raise ValueError(f"Unknown MetaTerm value `{self.op}`!")
+            return self._apply_impl(self.op, arg)
 
     def meta(self):
         return True
@@ -268,6 +304,365 @@ class MetaTerm(core.TypedTerm):
         return core.TypedExpr.term_factory(typ.domain.random(), typ)
 
 
+###################
+# wrappers for TypedExpr compilation
+
+
+def compile_term_check(te, context=None):
+    if not is_te(te):
+        return None # can't verify the context
+    if context is None:
+        context = {}
+    missing_terms = [k for k in te.free_terms() if k not in context]
+    if missing_terms:
+        # without an explicit check, piecemeal KeyErrors get produced
+        # XX could trigger this message *on* a KeyError?
+        missing_terms.sort()
+        missing_terms = ", ".join([repr(core.TypedTerm(k, typ=te.get_type_env().term_type(k)))
+                                        for k in missing_terms])
+        raise TypeError(f"Context for executing `{repr(te)}` is missing free term(s): {missing_terms}")
+    return True
+
+
+def compiled(e, recompile=False, with_context=None, validate=False):
+    """Given some TypedExpr `e`, produce a compiled version of `e` suitable
+    for direct execution. If `e` is not a TypedExpr, this returns `e`, and
+    for this case none of the parameters have an effect. This can be used as
+    a safer version of accessing e._compiled, because it can be
+    used idempotently (e.g. ``compiled(compiled(e)) == compiled(e)``).
+
+    Parameters
+    ----------
+    e: Any
+        a potential TypedExpr to compile
+    recompile: bool, optional
+        if `True`, prevents compilation from using a cached version.
+    with_context: Mapping, optional
+        if provided, immediately call a compiled TypedExpr with this parameter
+        used as the context. If `None` (the default), don't call.
+    validate: bool, optional
+        if True, validate `e` before compiling against the context, checking
+        to ensure that all free terms are supplied. Note that even if
+        `with_context` is set to `None`, setting `validate` to `True` will
+        force validation. A `None` context in this case is equivalent to the
+        empty mapping.
+
+    Returns
+    -------
+    Any
+        A compiled TypedExpr, with or without a context supplied, or `e` if `e`
+        is not a TypedExpr.
+    """
+    if is_te(e):
+        if recompile:
+            e._reset_compiled()
+        if validate:
+            compile_term_check(e, with_context)
+        if with_context is not None:
+            return e._compiled(with_context)
+        else:
+            # defer context
+            return e._compiled
+    else:
+        # XX is it possible to try supplying context here?
+        return e
+
+
+def _do_dynamic_tcheck(fun, typ, args, arity_only=False):
+    """Do some minimal dynamic type-checking for a function at a type, given
+    some args. If `arity_only` is set, just check arity against `typ`, also
+    handling the case where typ.left is a tuple. If `arity_only` is True, we
+    also check each argument against the type's domain.
+
+    If this does a full type check, it will normalize elements of `args` to
+    the relevant type domain by side effect!
+
+    This check is potentially costly when arguments are not simple, partly
+    because of this normalization. For example, sets/dicts will be converted
+    to their frozen variants to ensure hashability.
+    """
+    if not typ.functional() and args:
+        raise TypeError(f"Argument supplied to non-functional wrapped expression {fun.__qualname__}")
+    if not isinstance(typ, types.FunType):
+        return True # XX handle
+    if typ.left.is_polymorphic():
+        return True
+    if isinstance(typ.left, types.TupleType):
+        arity = len(typ.left)
+        argtype = typ.left
+    else:
+        arity = 1
+        argtype = (typ.left,)
+    if arity != len(args):
+        # XX this error is hard to word clearly in the context of both curried
+        # and uncurried functions
+        raise TypeError(f"Arity mismatch: {len(args)} arguments supplied directly to arity {arity} wrapped expression {fun.__qualname__}")
+    # the domain check is potentially costly
+    if not arity_only:
+        for i in range(len(argtype)):
+            if args[i] not in argtype[i].domain:
+                raise TypeError(f"{fun.__qualname__} received mismatched argument for type {argtype[i]}: `{repr(args[i])}`")
+            # side effect warning!
+            args[i] = argtype[i].domain.normalize(args[i])
+    return True
+
+
+def wrap_compiled(te, _typ=None, _check_domain=True, _mirror=False, **context):
+    """Wrap a compiled ``TypedExpr`` with a single (potentially tuple/n-ary)
+    argument so that it can be more easily called in Python code. This is a
+    relatively low-level version of this idea, and so unless you know what
+    you're doing, it is better to use `exec` or `to_callable`. (The latter is
+    implemented by repeatedly calling `wrap_compiled`.)
+
+    Parameters
+    ----------
+    te: Any
+        A ``TypedExpr`` to be compiled, or an already compiled and executed
+        ``TypedExpr``. (I.e., if it's already compiled, it should have its context
+        already supplied as well.)
+    _typ: lamb.types.TypeConstructor, optional
+        An explicit type for `te`, used only if `te` is precompiled. If `te`
+        is not precompiled, the type will be taken directly from `te`,
+        overriding this parameter. This is used simply for arity checking, so
+        that the return will produce an error if the compiled version is not
+        expecting an argument and it gets one, and not take an argument if
+        it should not.
+    _check_domain: bool
+        If ``True``, the wrapped function will check its arguments against the
+        type domain for the input type (if type is available). This is a
+        potentially costly check, but makes it a lot easier to spot common
+        mistakes. This check handles *only* concrete types; in particular,
+        polymorphic input types are not checked at all.
+    **context:
+        A sequence of named parameters to use as the context for calling the
+        compiled version of `te`. Ignored of `te` is pre-compiled.
+
+    Returns
+    -------
+    Any
+        This has two cases. In both cases, `context` is supplied while building
+        the wrapped function, so it must be complete for all free terms.
+
+        * If `te` has a functional type (or is a pre-compiled callable): return
+          a callable that checks arity, before calling compiled `te` with that
+          argument. The argument to this callable is assumed to be already
+          compiled with a context supplied.
+        * If `te` is not functional/callable: return the compiled and called
+          value of `te`.
+
+    See also
+    --------
+    `to_callable`, `exec`: probably the functions you want to call directly.
+    """
+    in_context = compiled(te, with_context=context)
+    if is_te(te):
+        qualname = te._compiled.__qualname__
+        _typ = te.type
+    else:
+        qualname = in_context.__qualname__
+    if (_typ is not None and not isinstance(_typ, types.FunType)
+                or not is_te(in_context) and not callable(in_context)):
+        # XX should this check use type?
+        return in_context
+    if is_te(te):
+        repr_for_err = repr(te)
+    else:
+        # if te is a wrapped function, the qualname will provide details, but
+        # otherwise, it should at least provide a function name?
+        repr_for_err = qualname
+    def wrapped_fun(*args):
+        args = tuple(compiled(a, with_context=context) for a in args)
+        if _typ is not None:
+            args = list(args)
+            _do_dynamic_tcheck(in_context, _typ, args, arity_only=not _check_domain)
+        if len(args) == 0:
+            # len 0 just returns the compiled and executed te.
+            # XX this case is a bit weird?
+            return in_context
+        if len(args) == 1:
+            return in_context(args[0])
+        return in_context(args)
+    wrapped_fun.__qualname__ = f"wrap_compiled({qualname})"
+    return wrapped_fun
+
+
+def to_callable(te, _uncurry=False, _allow_partial=False, _check_domain=True, **context):
+    """Wrap an n-ary, possibly curried, function so that it can be called
+    from python. This is lower-level than `exec`.
+
+    Parameters
+    ----------
+    te: lamb.meta.TypedExpr
+        A ``TypedExpr`` to be compiled and called
+    _uncurry: bool, optional
+        If ``True``, and `te` is a curried n-place function, the returned
+        callable will take the arguments in an un-curried (n-ary) way.
+    _allow_partial: bool, optional
+        When uncurrying, if set to ``True``, this will not require that all
+        arguments be supplied in the n-ary sequence. That is, it'll allow
+        underapplication. The result of under-application *will* be curried.
+        If some argument places already take tuples, this will not be flattened.
+    _check_domain: bool
+        If ``True``, the wrapped function will check its arguments against the
+        type domain for the input type (if type is available). This is a
+        potentially costly check, but makes it a lot easier to spot common
+        mistakes. This check handles *only* concrete types; in particular,
+        polymorphic input types are not checked at all.
+    **context: dict, optional
+        The context to interpret `te` in.
+
+    Returns
+    -------
+    Any
+        This function has two cases.
+
+        * If `te` is functional, this function will return a callable that
+          calls compiled `te` with arguments supplied (either in a curried or
+          uncurried fashion as determined by the parameters). The result fully
+          checks arity.
+        * If `te` is not functional, return the compiled and called instance of
+          `te`.
+
+    See also
+    --------
+    `exec`: the most general wrapper for compiled metalanguage code.
+    """
+    typ = te.type
+    arg_slots = []
+    repr_for_err = repr(te)
+    wrapped = te
+    te_qualname = None
+    if isinstance(typ, types.FunType):
+        arg_slots.append(typ.left) # XX could extract argument name
+        wrapped = wrap_compiled(wrapped, _typ=typ, _check_domain=_check_domain, **context)
+        te_qualname = wrapped.__qualname__
+        typ = typ.right
+        # XX handle and/or prevent polymorphism, disjunction, ...?
+
+        # subsequent wrappings need to invert application order (XX messy)
+        # we implement things this way in order to correctly handle variable
+        # capture for `wrapped`/`typ` in the loop
+        def build_rewrapped(_wrapped, _typ):
+            f = lambda x: wrap_compiled(_wrapped(x), _typ=_typ, _check_domain=_check_domain, **context)
+            f.__qualname__ = _wrapped.__qualname__
+            return f
+
+        while isinstance(typ, types.FunType):
+            arg_slots.append(typ.left)
+            wrapped = build_rewrapped(wrapped, typ)
+            typ = typ.right
+    else:
+        wrapped = wrap_compiled(wrapped, _typ=typ, _check_domain=_check_domain, **context)
+
+    if _uncurry and arg_slots:
+        def uncurried(*args):
+            # overrides the arity checks from wrap_compiled
+            if len(args) > len(arg_slots):
+                raise TypeError(
+                    f"Too many arguments ({len(args)} > {len(arg_slots)}) supplied for compiled function {repr_for_err}")
+            if not _allow_partial and len(args) != len(arg_slots):
+                raise TypeError(
+                    f"Too few arguments ({len(args)} < {len(arg_slots)}) supplied for compiled function {repr_for_err}")
+            call = wrapped
+            for a in args:
+                # the curried wrapper handles both compilation of `a` and
+                # supplying `context`
+                call  = call(a)
+            return call
+        if te_qualname:
+            # using this qualname with an inner function is a bit weird, but
+            # it gets the idea across at least
+            uncurried.__qualname__ = f"uncurried({te_qualname})"
+        return uncurried
+    else:
+        return wrapped
+
+
+def exec(te, *args,
+    _typecheck=True, _uncurry=False, _allow_partial=False, _check_domain=True,
+    **context):
+    """Execute `te` by compiling it, supplying a context, and potentially some
+    arguments if `te` is a function. Any unsupplied arguments will be
+    "deferred": the return will be a callable that can then take those
+    arguments.
+
+    Parameters
+    ----------
+    te : lamb.meta.TypedExpr
+        A TypedExpr to execute.
+    *args: List[lamb.meta.TypedExpr], optional
+        A sequence of arguments to compile and supply to `te` when executing it.
+        This does not need to exhaust the arguments for `te`, and if argument
+        places are left out of `args`, they will be deferred (i.e. the return
+        will be a callable).
+    _typecheck: bool, optional
+        If ``True``, statically type-check `args` using metalanguage type
+        inference. This *only* applies to arguments supplied to `exec`, and
+        not deferred arguments for `te`. (See also: `_domain_check`.)
+    _uncurry: bool, optional
+        If ``True``, and the return would be a callable, uncurry any arguments
+        to functions so that the return expects them in an n-ary way.
+    _allow_partial: bool, optional
+        If ``True``, and uncurrying happens, allow underapplication. (The result
+        of underapplication will be a curried function.)
+    _domain_check: bool, optional
+        If ``True``, any deferred arguments will be dynamically type-checked
+        by the wrapped function; see the same named parameter in
+        ``to_callable``.
+    **context: dict, optional
+        A context parameter for executing all TypedExprs; this must supply
+        values for any free terms in `te`. Unlike other wrapper functions,
+        `exec` does not assume that context values are compiled, and will
+        compile them if need. If they are compiled, they are executed with an
+        empty context, so this is not suitable if they themselves contain free
+        terms. This does accept pre-compiled/executed values. `exec` will raise
+        ``TypeError`` if free terms are missing from `context`. However, it is
+        important to keep in mind that no type checking is done when executing
+        something given `context`.
+
+    Returns
+    -------
+    Any
+        A potentially callable compiled and executed (using `context`) version
+        of `te`. It will be callable just in case `te` is functional and the
+        supplied `args` leave some argument places unfilled.
+    """
+    # this shadows `exec`, but if `exec` is ever run in this module, something
+    # has gone very wrong
+    if _typecheck and args:
+        # type check by building a TypedExpr with any supplied args. Can be
+        # costly compared to deferring them.
+        for a in args:
+            te = te(a)
+        # XX should this call reduce_all(), or even simplification? In some
+        # extremely limited empirical testing, reduce_all is slower...
+        args = []
+
+    # do some validation that lower-level wrappers don't do
+    # note that no type checking of any sort is done on `context` aside from
+    # this. This requires any contextual TypedExprs to themselves have no
+    # context requirements...
+    # XX could lift certain things to MetaTerms?
+    compile_term_check(te, context)
+    context = {k: compiled(context[k], validate=True, with_context={}) for k in context}
+
+    r = to_callable(te,
+        _uncurry=_uncurry, _allow_partial=_allow_partial, _check_domain=_check_domain,
+        **context)
+    # n.b. the parameters to `to_callable` have no effect if there are no
+    # remaining argument slots at this point.
+    if args:
+        args = [compiled(a, with_context=context) for a in args]
+        # if any args remain to apply, apply them
+        if _uncurry:
+            r = r(*args)
+        else:
+            # overapplication check here?
+            for a in args:
+                r = r(a)
+    return r
+
+
 def is_propositional(e):
     # in principle, could allow type variables here
     return e.type == types.type_t
@@ -287,7 +682,7 @@ def combinations_gen(l, elems):
 #
 # >>> s = list('abcdefghijklmnopqrstuv')
 # >>> %time x = combos(s, (False, True), max_length=100)
-# >>> %time x = list(combinatsion_gen(s, (False, True)))
+# >>> %time x = list(combinations_gen(s, (False, True)))
 # CPU times: user 1.04 s, sys: 282 ms, total: 1.32 s
 # Wall time: 1.33 s
 # CPU times: user 3.65 s, sys: 242 ms, total: 3.89 s
@@ -374,6 +769,7 @@ class Evaluations(collections.abc.Sequence):
         self.update_evals(assignments)
 
     def update_evals(self, assignments):
+        # XX use `exec` if we can
         self.evaluations = [
             (v, self.expression.under_assignment(v).simplify_all())
             for v in assignments]

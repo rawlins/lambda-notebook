@@ -562,7 +562,13 @@ class FunDomainSet(ComplexDomainSet):
 
     def infcheck(self, x):
         # XX variable types
-        if self.type.right == type_t and isinstance(x, collections.abc.Set):
+        if callable(x):
+            # warning -- no further type checking for this case...
+            # XX this would be pretty unsafe if it is user facing in any very
+            # direct way. The purpose is so that compiled domain checks are
+            # sufficiently general.
+            return True
+        elif self.type.right == type_t and isinstance(x, collections.abc.Set):
             # special case shorthand: when we are dealing with a characteristic
             # function, allow a set to be used.
             # XX this is very convenient, but does mean that python sets are
@@ -573,13 +579,14 @@ class FunDomainSet(ComplexDomainSet):
                 return False
             return all(x[k] in self.type.right.domain for k in x)
         else:
-            # XX allow some sort of actual python function here
             return False
 
     def normalize(self, x):
-        if isinstance(x, collections.abc.Set):
+        if callable(x):
+            return x
+        elif isinstance(x, collections.abc.Set):
             return frozenset(x)
-        else:
+        else: # mapping
             return utils.frozendict({
                 self.type.left.domain.normalize(k): self.type.right.domain.normalize(x[k])
                 for k in x})
