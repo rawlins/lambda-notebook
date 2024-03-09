@@ -3,7 +3,7 @@ import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
-from .core import Tuple, is_concrete, to_concrete
+from .core import Tuple, is_concrete, to_concrete, TypeEnv
 from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key
@@ -248,6 +248,15 @@ class ListedSet(TypedExpr):
         super().__init__("ListedSet", *args)
         self.type = SetType(typ)
         self.set_simplified = False
+
+    def calc_type_env(self, recalculate=False):
+        if len(self) == 0:
+            env = TypeEnv()
+            env.add_type_to_var_set(self.type)
+            return env
+        else:
+            # otherwise, rely on the contained elements
+            return super().calc_type_env(recalculate=recalculate)
 
     def copy_local(self, *args, type_check=True):
         # explicit handling of empty sets in order to get the type right
