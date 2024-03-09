@@ -431,32 +431,55 @@ class SetContains(SyncatOpExpr):
             return lambda context: arg(context) in s(context)
 
     def simplify(self, **sopts):
-        if is_concrete(self.args[1]) and is_concrete(self.args[0]):
+        elem_concrete = is_concrete(self[0])
+        set_concrete = is_concrete(self[1])
+        if set_concrete and elem_concrete:
+            # this case is fully executable
             return derived(MetaTerm(meta.exec(self)), self, "∈ simplification")
+        elif isinstance(self[1], ListedSet) or set_concrete:
+            s = to_concrete(self[1])
+            if len(s) == 0:
+                return derived(false_term, self, "∈ simplification (empty set)")
+
+            e = to_concrete(self[0])
+            if e in s:
+                # positive membership is safe. (Negative membership isn't...)
+                return derived(MetaTerm(true_term), self, "∈ simplification")
+            elif len(s) == 1:
+                # this case is almost always better to convert to an <=>
+                # expression
+                content, = s
+                return derived(e.equivalent_to(content), self,
+                                            "∈ simplification (singleton set)")
+            elif get_sopt('eliminate_sets', sopts):
+                # in the general case we can convert to a disjunction of <=>
+                # expressions. However, this tends to produce fairly long
+                # expressions that are slow to evaluate; in cases where there's
+                # a better simplification algorithm, in my testing, the penalty
+                # for doing this conversion can be something like 1 order of
+                # magnitude if the set is even moderately sized
+                # (e.g. 200ms=>2s). We therefore only do this with an explicit
+                # option.
+                # XX maybe could do this for small sets unconditionally?
+                # XX differentiate this from the general eliminate_sets option?
+                # XX this might be a reasonable case to actually check the
+                # complexity of the resulting expression. Example:
+                # `_c2 << {_c1, x_e}` results in eliminating _c1 from the
+                # picture.
+                conditions = [(self.args[0] % a) for a in self.args[1]]
+                return derived(BinaryOrExpr.join(conditions),
+                    self,
+                    "∈ simplification (set elimination)").simplify_all(**sopts)
         elif isinstance(self.args[1], ConditionSet):
             derivation = self.derivation
+            # XX should this be reduce_all?
             step = (self.args[1].to_characteristic()(self.args[0])).reduce()
             step.derivation = derivation # suppress the intermediate parts of
                                          # this derivation, if any
             return derived(step, self, "∈ simplification")
-        elif isinstance(self.args[1], ListedSet) and len(self.args[1]) == 0:
-            return derived(false_term, self, "∈ simplification (empty set)")
-        elif isinstance(self.args[1], ListedSet) and len(self.args[1]) == 1:
-            content, = self.args[1]
-            return derived(self.args[0] % content, self,
-                                            "∈ simplification (singleton set)")
-        elif isinstance(self.args[1], ListedSet) and get_sopt('eliminate_sets', sopts):
-            # tends to produce fairly long expressions that are slow to
-            # evaluate; in cases where there's a better simplification
-            # algorithm, in my testing, the penalty for doing this conversion
-            # is something like 1 order of magnitude (e.g. 200ms=>2s)
-            conditions = [(self.args[0] % a) for a in self.args[1]]
-            return derived(BinaryOrExpr.join(conditions).simplify_all(**sopts),
-                            self,
-                            "∈ simplification (set elimination)")
-        else:
-            # leave other ListedSets as-is for now.
-            return self
+
+        # leave other ListedSets as-is for now.
+        return self
 
     @classmethod
     def random(cls, ctrl, max_type_depth=1, typ=None):
