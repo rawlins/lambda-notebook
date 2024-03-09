@@ -5,6 +5,7 @@ from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from . import core, boolean, number, sets, meta
 from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
+from .core import is_concrete
 from .meta import MetaTerm
 from .ply import alphanorm
 
@@ -494,10 +495,10 @@ class MetaTest(unittest.TestCase):
         self.assertRaises(parsing.ParseError, MetaTerm, {'_x1', '_c1'})
 
     def test_eq(self):
-        t1 = te("(_c1, _c2, True)")
-        meta_t1 = MetaTerm(('_c1', '_c2', True))
-        t2 = te("(_c1, _c3, True)")
-        meta_t2 = MetaTerm(('_c1', '_c3', True))
+        t1 = te("(_c1, _c2, (True, False))")
+        meta_t1 = MetaTerm(('_c1', '_c2', (True, False)))
+        t2 = te("(_c1, _c2, (True, True))")
+        meta_t2 = MetaTerm(('_c1', '_c2', (True, True)))
         testsimp(self, t1.equivalent_to(t1), True, exec=True)
         testsimp(self, t1.equivalent_to(meta_t1), True, exec=True)
         testsimp(self, meta_t1.equivalent_to(t1), True, exec=True)
@@ -506,15 +507,19 @@ class MetaTest(unittest.TestCase):
         testsimp(self, t1.equivalent_to(meta_t2), False, exec=True)
         testsimp(self, meta_t1.equivalent_to(t2), False, exec=True)
         testsimp(self, meta_t1.equivalent_to(meta_t2), False, exec=True)
-        s1 = te("{{_c1, _c2}}")
-        meta_s1 = meta.MetaTerm(frozenset({frozenset({'_c2', '_c1'})}))
+        s1 = te("{{_c1, _c2}, {_c3}}")
+        meta_s1 = meta.MetaTerm(frozenset({frozenset({'_c2', '_c1'}), frozenset({'_c3'})}))
         testsimp(self, s1.equivalent_to(s1), True, exec=True)
         testsimp(self, s1.equivalent_to(meta_s1), True, exec=True)
         testsimp(self, meta_s1.equivalent_to(s1), True, exec=True)
         testsimp(self, meta_s1.equivalent_to(meta_s1), True, exec=True)
         # not exactly eq, but close enough
+        elem = te("{_c1, c2}")
+        meta_elem = meta.MetaTerm(frozenset({'_c2', '_c1'}))
         testsimp(self, s1[0] << s1, True, exec=True)
         testsimp(self, s1[0] << meta_s1, True, exec=True)
+        testsimp(self, meta_elem << s1, True, exec=True)
+        testsimp(self, meta_elem << meta_s1, True, exec=True)
 
 
     def test_reduce(self):
@@ -962,6 +967,7 @@ class MetaTest(unittest.TestCase):
 
     def test_set_simplify(self):
         for i in range(100):
+            # XX random concrete sets to simplify/exec?
             x = random_expr(options=RType.SET_RELATION, depth=3)
             try:
                 x.simplify_all(eliminate_sets=True, reduce=True)

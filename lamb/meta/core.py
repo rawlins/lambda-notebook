@@ -157,14 +157,6 @@ def term(s, typ=None, assignment=None, meta=False):
     return r
 
 
-def is_concrete(s):
-    """Is `s` a MetaTerm, or a finite data structure consisting only of MetaTerms?"""
-    from .sets import ListedSet
-    return (s.meta()
-        or (is_te(s, ListedSet) or is_te(s, Tuple))
-            and all(is_concrete(elem) for elem in s))
-
-
 def check_type(item, typ, raise_tm=True, msg=None):
     ts = get_type_system()
     if not ts.eq_check(item.content.type, typ):
@@ -3380,32 +3372,81 @@ def from_python(p, typ=None):
         return MetaTerm(p, typ=typ)
 
 
-def from_python_container(p):
+def from_python_container(p, default=None):
+    """Construct a TypedExpr given a (potentially recursive) python set/tuple.
+    This is expected to have something that is or can be converted to TypedExprs
+    at the bottom of the structure. (The factory is called, so strings are
+    accepted.)
+
+    Quirk: in order to get a set-theoretic interpretation for `{}`, the empty
+    dict is treated as an empty set at an unknown type."""
     from .sets import sset
-    # can this use collections.abc types?
-    if isinstance(p, tuple):
+    if isinstance(p, tuple): # or collections.abc.Sequence
         # should an empty tuple force a MetaTerm?
-        return Tuple(p)
-    elif isinstance(p, set):
-        return sset(p)
+        return Tuple(tuple(from_python_container(elem, default=elem) for elem in p))
+    elif isinstance(p, collections.abc.Set):
+        return sset((from_python_container(elem, default=elem) for elem in p))
     elif isinstance(p, dict) and len(p) == 0:
         # hack: empty dict is treated as empty set, so that "{}" makes sense
         return sset(set())
-    return None
+
+    return default
 
 
-def to_python_container(e):
+def is_concrete(s):
+    """Is `s` a MetaTerm, or a finite data structure consisting only of MetaTerms?"""
     from .sets import ListedSet
-    if isinstance(e, ListedSet):
-        return e.set()
-    elif isinstance(e, Tuple):
-        return e.tuple()
-    elif e.meta() and (
-                isinstance(e.type, types.SetType)
-                or isinstance(e.type, types.FunType)
-                or isinstance(e.type, types.TupleType)):
-        return e.op
-    return None
+    return (s.meta()
+        or (is_te(s, ListedSet) or is_te(s, Tuple))
+            and all(is_concrete(elem) for elem in s))
+
+
+def to_python_container(e, default=None):
+    """Convert a (listed) set / tuple object, potentially recursively, into
+    a corresponding python container."""
+    from .sets import ListedSet
+    if isinstance(e, ListedSet) or e.meta() and isinstance(e.type, types.SetType):
+        return frozenset({to_python_container(elem, default=elem) for elem in e.set()})
+    elif isinstance(e, Tuple) or e.meta() and isinstance(e.type, types.TupleType):
+        return tuple(to_python_container(elem, default=elem) for elem in e.tuple())
+    # handling for MetaTerm functions that have a set/dict implementation?
+
+    return default
+
+
+def to_concrete(s, strict=False):
+    """Generate a normal form for metalanguage sets/tuples that allows for
+    comparison across different ways of constructing them (meta and non-meta).
+    ListedSets, Tuples, and the MetaTerm variants thereof will be converted
+    (recursively) to frozenset/tuple objects, with non-convertable TypedExpr
+    elements at the bottom of this. If `strict` is true, this will raise
+    a ValueError on `s` parameters that are not fully concrete. This function
+    accepts python Set/Sequence objects for `s` as well, and is idempotent.
+    With `strict`=False, this is essentially a wrapper on to_python_container
+    with the idempotency addition.
+
+    If there are somehow embedded sets/tuples within a non-convertable part
+    of `s`, this will not recurse to normalize them.
+
+    See also
+    --------
+    is_concrete
+    """
+    # XX the recursive part of this is not very efficient
+    if is_te(s):
+        c = to_python_container(s)
+        if c is None:
+            if s.meta() or not strict:
+                return s
+            else:
+                raise ValueError(f"Can't convert expression to concrete container: `{s}`")
+        return to_concrete(c, strict=strict)
+    elif isinstance(s, collections.abc.Set):
+        return frozenset({to_concrete(elem, strict=strict) for elem in s})
+    elif isinstance(s, collections.abc.Sequence):
+        return tuple(to_concrete(elem, strict=strict) for elem in s)
+    else:
+        raise ValueError(f"Can't convert expression to concrete: `{s}`")
 
 
 # decorator for wrapping simplify functions, see examples in `meta.number`.

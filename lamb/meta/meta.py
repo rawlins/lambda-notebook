@@ -151,7 +151,12 @@ class MetaTerm(core.TypedTerm):
     def set(self):
         if not isinstance(self.type, types.SetType):
             raise TypeError(f"Can't convert MetaTerm of type {repr(self.type)} to a set")
-        return self.op
+        return frozenset({MetaTerm(elem, typ=self.type.content_type) for elem in self.op})
+
+    def tuple(self):
+        if not isinstance(self.type, types.TupleType):
+            raise TypeError(f"Can't convert MetaTerm of type {repr(self.type)} to a tuple")
+        return tuple(MetaTerm(elem, typ=self.type.content_type) for elem in self.op)
 
     def apply(self, arg):
         if not self.type.functional() or not core.get_type_system().eq_check(self.type.left, arg.type):

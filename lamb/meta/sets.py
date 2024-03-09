@@ -3,7 +3,7 @@ import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
-from .core import Tuple, is_concrete
+from .core import Tuple, is_concrete, to_concrete
 from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key
@@ -273,11 +273,11 @@ class ListedSet(TypedExpr):
         return lambda context: frozenset(elem(context) for elem in l)
 
     def set(self):
-        """Return a python `set` of terms in the ListedSet. This of course uses
-        syntactic identity, so while every term will be unique via this
-        criteria, it is not guarantted to be the "true" set (unless it consists
-        only of `MetaTerm`s)."""
-        return set(self.args)
+        """Return a python `frozenset` of elements in the ListedSet. This of
+        course uses syntactic identity, so while every term will be unique via
+        this criteria, it is not guaranteed to be the "true" set (unless it
+        consists only of `MetaTerm`s)."""
+        return frozenset(self.args)
 
     def sorted_set(self):
         s = self.set()
@@ -302,6 +302,7 @@ class ListedSet(TypedExpr):
         # eliminate any duplicates under syntactic identity when simplifying
         if self.set_simplified or len(self.args) <= 1:
             return self
+        # XX could this more drastically normalize via to_concrete?
         args = set(self.args) # remove duplicates, flatten order
         domain = self.type.content_type.domain
         # assumption: there is no truly empty domain, so if domain.domain is
@@ -550,15 +551,24 @@ class SetUnion(BinarySetOp):
             return super()._compile()
 
     def simplify(self, **sopts):
-        s1 = to_set_shim(self.args[0])
-        s2 = to_set_shim(self.args[1])
+        s1 = to_python_container(self.args[0])
+        s2 = to_python_container(self.args[1])
         if s1 is not None and s2 is not None:
-            if self.args[0].meta() and self.args[1].meta():
+            if is_concrete(self[0]) and is_concrete(self[1]):
+                result = s1 | s2
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
-                return derived(MetaTerm(s1 | s2, typ=self.type), self, "set union")
+                if self.args[0].meta() and self.args[1].meta():
+                    result = MetaTerm(result, typ=self.type)
+                else:
+                    result = sset(result, typ=self.type.content_type)
+                return derived(result, self, "set union")
             else:
-                return derived(sset(s1 | s2, typ=self.type.content_type), self, "set union") # blessedly simple
+                # this is code dup to above, but it is conceptually helpful to
+                # single out this case. ListedSet union is pleasantly simple
+                # compared to other operations. We can safely take the union
+                # even with unresolved terms.
+                return derived(sset(s1 | s2, typ=self.type.content_type), self, "set union")
         elif s1 is not None and len(s1) == 0:
             return derived(self.args[1], self, "set union") # {} | X = X
         elif s2 is not None and len(s2) == 0:
@@ -600,21 +610,22 @@ class SetIntersection(BinarySetOp):
             return super()._compile()
 
     def simplify(self, **sopts):
-        s1 = to_set_shim(self.args[0])
-        s2 = to_set_shim(self.args[1])
+        s1 = to_python_container(self.args[0])
+        s2 = to_python_container(self.args[1])
         if s1 is not None and s2 is not None:
-            if self.args[0].meta() and self.args[1].meta():
+            if is_concrete(self[0]) and is_concrete(self[1]):
+                result = s1 & s2
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
-                return derived(
-                    MetaTerm(s1 & s2, typ=self.type),
-                    self,
-                    "set intersection")
+                if self.args[0].meta() and self.args[1].meta():
+                    result = MetaTerm(result, typ=self.type)
+                else:
+                    result = sset(result, typ=self.type.content_type)
+                return derived(result, self, "set intersection")
 
             if s1 <= s2 or s2 <= s1:
                 # this case is also also safe: there's no way for expression
                 # resolution to expand sets that are in a subset relation.
-                # this covers empty set cases.
                 return derived(
                     sset(s1 & s2, typ=self.type.content_type),
                     self,
@@ -699,16 +710,18 @@ class SetDifference(BinarySetOp):
             return super()._compile()
 
     def simplify(self, **sopts):
-        s1 = to_set_shim(self.args[0])
-        s2 = to_set_shim(self.args[1])
+        s1 = to_python_container(self.args[0])
+        s2 = to_python_container(self.args[1])
         if s1 is not None and s2 is not None:
-            if self.args[0].meta() and self.args[1].meta():
+            if is_concrete(self[0]) and is_concrete(self[1]):
+                result = s1 - s2
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
-                return derived(
-                    MetaTerm(s1 - s2, typ=self.type),
-                    self,
-                    "set difference")
+                if self.args[0].meta() and self.args[1].meta():
+                    result = MetaTerm(result, typ=self.type)
+                else:
+                    result = sset(result, typ=self.type.content_type)
+                return derived(result, self, "set difference")
 
             if s2 == s1:
                 return derived(emptyset(self.type), self, "set difference")
@@ -716,7 +729,7 @@ class SetDifference(BinarySetOp):
             # warning: cases like {X,Y} - {Y} are not safe to simplify under
             # syntactic identity, since if X == Y, then {X} is actually wrong.
 
-        if s1 is not None and len(s1) == 0:
+        elif s1 is not None and len(s1) == 0:
             return derived(emptyset(self.type), self, "set difference") # {} - X = {}
         elif s2 is not None and len(s2) == 0:
             return derived(self.args[0], self, "set difference") # X - {} = X
@@ -757,41 +770,63 @@ class SetEquivalence(BinarySetOp):
         return lambda context: l(context) == r(context)
 
     def simplify(self, **sopts):
-        s1 = to_set_shim(self.args[0])
-        s2 = to_set_shim(self.args[1])
+        s1 = to_python_container(self[0])
+        s2 = to_python_container(self[1])
         if s1 is not None and s2 is not None:
-            if self.args[0].meta() and self.args[1].meta():
-                # s1 and s2 are `frozenset`s of domain elements
-                # XX mixing meta and non-meta sets here is a mess...
-                return derived(MetaTerm(s1 == s2), self, "set equivalence")
-            elif len(s1) == 0 or len(s2) == 0:
+            if len(s1) == 0 or len(s2) == 0:
                 # this case is relatively straightforward: we can go simply
                 # on the basis of expression cardinality
-                return derived(MetaTerm(len(s1) == len(s2)), self, "set equivalence")
-            elif s1 == s2:
-                # special case syntactic equality, this one is safe
+                return derived(MetaTerm(len(s1) == len(s2)),
+                                                    self, "set equivalence")
+            elif is_concrete(self[0]) and is_concrete(self[1]):
+                # an alternative would be to use `to_concrete` to convert this
+                # to a normalized form and then compare, but we might as well
+                # just execute
+                return derived(MetaTerm(meta.exec(self)), self, "set equivalence")
+            elif len(s1) == len(s2) and s1 == s2:
+                # special case syntactic equality, this one is safe for just
+                # the positive check. The cardinality check is a much simpler
+                # precondition to know if we should bother invoking whatever
+                # == does.
                 return derived(true_term, self, "set equivalence")
             elif len(s1) == 1 and len(s2) == 1:
-                # special case two singletons
+                # special case two singletons. This isn't necessarily simple
+                # depending on what they are, but for many cases it can be.
                 e1, = s1
                 e2, = s2
-                return derived(
-                    e1.equivalent_to(e2),
-                    self,
-                    "set equivalence").simplify_all(**sopts)
+                return derived(e1.equivalent_to(e2),
+                                self, "set equivalence").simplify_all(**sopts)
+
+            # normalize any concrete parts. At this point, neither of these
+            # can be fully concrete.
+            s1 = to_concrete(s1)
+            s2 = to_concrete(s2)
 
             # tally up all the potential mismatches
-            meta_left = {x for x in s1 - s2 if x.meta()}
-            tbd_left = s1 - s2 - meta_left
-            meta_right = {x for x in s2 - s1 if x.meta()}
-            tbd_right = s1 - s2 - meta_right
+            # example: {_c1, _c2, x_e, y_e} <=> {_c2, _c3, y_e, z_e, a_e}
+            # these sets could be equivalent, under certain circumstances.
+            # meta_left: {_c1}, meta_right: {_c3}
+            # tbd_left: {x_e}, tbd_right: {z_e, a_e}
+            # The sets are equivalent if x or y = _c3, and one of y, z or a = _c1,
+            # and z or a don't introduce any new elements.
+            # generally, if all the tbd_left elements cover all the meta_right
+            # elements and same for tbd_right vs meta_left -- no leftovers.
+            # From this example you can see that clear positive overlaps can't
+            # even be ignored, because variable resolution leaves everything
+            # quite tbd.
+            meta_left = {x for x in s1 - s2 if is_concrete(x)} # meta elements present only on the left
+            tbd_left = s1 - s2 - meta_left # non-meta elements present on the left
+            meta_right = {x for x in s2 - s1 if is_concrete(x)} # meta elements present only on the right
+            tbd_right = s2 - s1 - meta_right # non-meta elements present on the right
 
             if len(tbd_left) == 0 and len(tbd_right) == 0:
                 # only MetaTerms
                 return derived(MetaTerm(len(meta_left) == 0 and len(meta_right) == 0),
                                 self, "set equivalence")
-            # there's possibly some more fine-grained checks that could be done
-            # for mixed meta/non-meta sets
+            # there's more fine-grained checks that could be done for mixed
+            # meta/non-meta sets. For one thing, this code is acting as if
+            # all we're dealing with in the tbds are terms, and that is
+            # certainly a main case, but it's far from exhaustive.
             if len(meta_left) > len(tbd_right):
                 # too many MetaTerms in the left for non-MetaTerms on the right
                 return derived(false_term, self, "set equivalence")
@@ -826,6 +861,16 @@ class SetEquivalence(BinarySetOp):
             return derived(self._set_impl(), self,
                 "set equivalence (set elimination)").simplify_all(**sopts)
         return self
+
+# the remaining set relations for implementation primarily rely on the above
+# operations plus equivalence checking. Cases handled there will follow
+# directly from the _set_impl code below without too much pain; this especially
+# includes concrete sets and all compiled sets.
+#
+# However, all of the simplify implementations check whether simplifying the
+# _set_impl return does something, and this is a bit flawed in many cases,
+# since there may be fairly trivial tweaks in combination with formula
+# explosion that pass. (TODO)
 
 class SetSubset(BinarySetOp):
     """Binary relation of (non-proper) subsethood."""
