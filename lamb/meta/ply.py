@@ -15,29 +15,59 @@ _base_default_sopts = dict(
     alphanorm=True, # XX enum?
     collect=True,
     eliminate_sets=False,
+    eliminate_sets_all=False,
     eliminate_quantifiers=False,
     strict_charfuns=True,
     calc_partiality=True,
     )
 
 
+def _validate_sopt(opt):
+    # XX this would be a tighter api if the user couldn't delete from
+    # default_sopts, probably doesn't matter much though...
+    if opt not in default_sopts:
+        # could just raise?
+        from .core import logger
+        logger.warning(f"Unknown simplify option `{opt}`")
+
+
+def _set_sopt_requires(opt, requirement):
+    global _sopt_requires
+    _validate_sopt(opt)
+    _validate_sopt(requirement)
+    if requirement not in _sopt_requires:
+        _sopt_requires[requirement] = set()
+    _sopt_requires[requirement].add(opt)
+
+
 def reset_sopts():
-    global default_sopts
+    global default_sopts, _sopt_requires
     default_sopts = _base_default_sopts.copy()
+    # the requirements aren't currently very user-facing, but just in case,
+    # we reset them here as well
+    _sopt_requires = dict()
+    _set_sopt_requires('eliminate_sets_all', 'eliminate_sets')
 
 
 default_sopts = {}
+# mapping from sopt keys to sets of sopt keys that require them.
+# this is stored in the reverse order for easier access, so to set these in
+# a readable fashion, use _set_sopt_requires above
+_sopt_requires = {}
 reset_sopts()
+
+
+def _get_sopt(opt, sopts):
+    return sopts.get(opt, default_sopts.get(opt, None))
 
 
 def get_sopt(opt, sopts=None):
     if sopts is None:
         sopts = dict()
-    if opt not in default_sopts:
-        # could just raise?
-        from .core import logger
-        logger.warning(f"Unknown simplify option `{opt}`")
-    return sopts.get(opt, default_sopts.get(opt, None))
+    _validate_sopt(opt)
+    if opt in _sopt_requires and any(_get_sopt(e, sopts) for e in _sopt_requires[opt]):
+        return True # XX or return the value of the requiring opt
+    return _get_sopt(opt, sopts)
 
 
 def right_commutative(cls):

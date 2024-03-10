@@ -391,7 +391,7 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
 
         # lexical assignment
         if transform:
-            right_side = transform(right_side)
+            right_side = transform(right_side).simplify_all(reduce=True)
 
         item = Item(lex_name, right_side)
         # TODO: add to composition system's lexicon?  Different way of tracking
@@ -443,7 +443,7 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
             # brute force
             term.type = u_result
         if transform:
-            right_side = transform(right_side)
+            right_side = transform(right_side).simplify_all(reduce=True)
         # NOTE side-effect here
         env[term.op] = right_side
         return ({term.op : right_side}, env)

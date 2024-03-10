@@ -137,7 +137,7 @@ class ConditionSet(BindingOp):
                             .under_assignment(a | {self.varname : elem})
                             .simplify_all(**sopts) == true_term]
             return derived(
-                sset(subs, typ=self.type.content_type),
+                sset(subs, self.type),
                 self,
                 f"ConditionSet => ListedSet (generic on {self.varname})")
         return self
@@ -154,17 +154,6 @@ class ConditionSet(BindingOp):
         sub_var = TypedTerm(self.varname, inner_type)
         new_condition = char.apply(sub_var)
         return self.copy_local(sub_var, new_condition)
-
-
-def to_set_shim(te):
-    # right now, to_python_container on a MetaTerm returns a frozenset of
-    # domain elements, but on a regular ListedSet returns a set of TypedExprs.
-    # This function wraps the domain elements so that these are consistent.
-    # XX this is a mess...
-    s = to_python_container(te)
-    if te.meta():
-        s = {MetaTerm(elem, typ=te.type.content_type) for elem in s}
-    return s
 
 
 class ListedSet(TypedExpr):
@@ -295,6 +284,8 @@ class ListedSet(TypedExpr):
     def to_condition_set(self):
         """Convert to a condition set by disjoining members."""
         s = self.simplify()
+        # XX should this use << instead? then simplification to disjunction
+        # is more controllable, and this function would be simpler
         var = TypedTerm(s.find_safe_variable(starting="x"), self.type.content_type)
         conditions = [(var % a) for a in s.args]
         # n.b. an empty set gives a ConditionSet that simplifies back to the
@@ -384,15 +375,23 @@ class ListedSet(TypedExpr):
             return sset(members, typ=typ)
 
 
-def emptyset(settype=None):
-    """Convenience factory for empty sets"""
-    if settype is not None and isinstance(settype, SetType):
-        settype = settype.content_type
-    return ListedSet(set(), settype)
-
-
-def sset(iterable, typ=None, assignment=None):
+def sset(iterable, settype=None, typ=None, assignment=None):
+    # XX the typ api for ListedSet remains kind of awkward, this attempts to
+    # fill in the gaps a bit. `settype` is intentionally ordered before `typ`!
+    if settype is not None:
+        if not isinstance(settype, SetType):
+            raise ValueError("Set construction by set type requires a SetType!")
+        if typ is not None:
+            raise ValueError("Set construction requires either a content type or a set type, not both!")
+        typ = settype.content_type
     return ListedSet(iterable, typ=typ, assignment=assignment).do_simplify()
+
+
+def emptyset(settype=None, typ=None):
+    """Convenience factory for empty sets"""
+    # if settype is not None and isinstance(settype, SetType):
+    #     settype = settype.content_type
+    return sset(set(), settype=settype, typ=typ)
 
 
 class SetContains(SyncatOpExpr):
@@ -451,7 +450,7 @@ class SetContains(SyncatOpExpr):
                 content, = s
                 return derived(e.equivalent_to(content), self,
                                             "∈ simplification (singleton set)")
-            elif get_sopt('eliminate_sets', sopts):
+            elif get_sopt('eliminate_sets_all', sopts):
                 # in the general case we can convert to a disjunction of <=>
                 # expressions. However, this tends to produce fairly long
                 # expressions that are slow to evaluate; in cases where there's
@@ -461,15 +460,32 @@ class SetContains(SyncatOpExpr):
                 # (e.g. 200ms=>2s). We therefore only do this with an explicit
                 # option.
                 # XX maybe could do this for small sets unconditionally?
-                # XX differentiate this from the general eliminate_sets option?
                 # XX this might be a reasonable case to actually check the
                 # complexity of the resulting expression. Example:
                 # `_c2 << {_c1, x_e}` results in eliminating _c1 from the
-                # picture.
+                # picture. This is special cased below, but we could eliminate
+                # the case, maybe?
                 conditions = [(self.args[0] % a) for a in self.args[1]]
                 return derived(BinaryOrExpr.join(conditions),
                     self,
-                    "∈ simplification (set elimination)").simplify_all(**sopts)
+                    "∈ simplification (∈ to ∨ elimination)").simplify_all(**sopts)
+            elif elem_concrete:
+                # we should have a non-concrete ListedSet, and a concrete
+                # element. For this case, we can filter any non-matching
+                # concrete elements from the set. We know because of the
+                # order of ifs that no concrete elements match.
+                # (N.b. this is actually handled well by simplification paths
+                # under eliminate_sets_all! But the general case of that is
+                # much worse, so we special case things here if that option
+                # is not set.)
+                news = frozenset(elem for elem in s if not is_concrete(elem))
+                if news != s:
+                    # rerun simplify, essentially for the sake of only the
+                    # singleton case above. (XX can the elif order be adjusted
+                    # to get this directly, with derivational history?)
+                    return derived(SetContains(self[0], sset(news, settype=self[1].type)),
+                        self,
+                        "∈ simplification (concrete filtering)").simplify(**sopts)
         elif isinstance(self.args[1], ConditionSet):
             derivation = self.derivation
             # XX should this be reduce_all?
@@ -593,14 +609,14 @@ class SetUnion(BinarySetOp):
                 if self.args[0].meta() and self.args[1].meta():
                     result = MetaTerm(result, typ=self.type)
                 else:
-                    result = sset(result, typ=self.type.content_type)
+                    result = sset(result, self.type)
                 return derived(result, self, "set union")
             else:
                 # this is code dup to above, but it is conceptually helpful to
                 # single out this case. ListedSet union is pleasantly simple
                 # compared to other operations. We can safely take the union
                 # even with unresolved terms.
-                return derived(sset(s1 | s2, typ=self.type.content_type), self, "set union")
+                return derived(sset(s1 | s2, self.type), self, "set union")
         elif s1 is not None and len(s1) == 0:
             return derived(self.args[1], self, "set union") # {} | X = X
         elif s2 is not None and len(s2) == 0:
@@ -652,14 +668,14 @@ class SetIntersection(BinarySetOp):
                 if self.args[0].meta() and self.args[1].meta():
                     result = MetaTerm(result, typ=self.type)
                 else:
-                    result = sset(result, typ=self.type.content_type)
+                    result = sset(result, self.type)
                 return derived(result, self, "set intersection")
 
             if s1 <= s2 or s2 <= s1:
                 # this case is also also safe: there's no way for expression
                 # resolution to expand sets that are in a subset relation.
                 return derived(
-                    sset(s1 & s2, typ=self.type.content_type),
+                    sset(s1 & s2, self.type),
                     self,
                     "set intersection")
 
@@ -673,7 +689,7 @@ class SetIntersection(BinarySetOp):
                     tbd.add(x)
                 # a MetaTerm that is not in both can be excluded at this point
 
-            definite_expr = sset(definite, typ=self.type.content_type)
+            definite_expr = sset(definite, self.type)
 
             if len(tbd) == 0:
                 # everything can be verified
@@ -693,9 +709,9 @@ class SetIntersection(BinarySetOp):
                     self,
                     "set intersection (set elimination)")
 
-            tbd = ConditionSet(var, (var << sset(tbd, typ=self.type.content_type)
-                                        & (var << sset(s1 - definite, typ=self.type.content_type))
-                                        & (var << sset(s2 - definite, typ=self.type.content_type))))
+            tbd = ConditionSet(var, (var << sset(tbd, self.type)
+                                        & (var << sset(s1 - definite, self.type))
+                                        & (var << sset(s2 - definite, self.type))))
             return derived((definite_expr | tbd), self, "set intersection (set elimination)").simplify_all(**sopts)
 
         elif s1 is not None and len(s1) == 0:
@@ -752,7 +768,7 @@ class SetDifference(BinarySetOp):
                 if self.args[0].meta() and self.args[1].meta():
                     result = MetaTerm(result, typ=self.type)
                 else:
-                    result = sset(result, typ=self.type.content_type)
+                    result = sset(result, self.type)
                 return derived(result, self, "set difference")
 
             if s2 == s1:
@@ -809,7 +825,7 @@ class SetEquivalence(BinarySetOp):
                 # this case is relatively straightforward: we can go simply
                 # on the basis of expression cardinality
                 return derived(MetaTerm(len(s1) == len(s2)),
-                                                    self, "set equivalence")
+                                                    self, "set equivalence (empty set)")
             elif is_concrete(self[0]) and is_concrete(self[1]):
                 # an alternative would be to use `to_concrete` to convert this
                 # to a normalized form and then compare, but we might as well
@@ -820,14 +836,14 @@ class SetEquivalence(BinarySetOp):
                 # the positive check. The cardinality check is a much simpler
                 # precondition to know if we should bother invoking whatever
                 # == does.
-                return derived(true_term, self, "set equivalence")
+                return derived(true_term, self, "set equivalence (identical)")
             elif len(s1) == 1 and len(s2) == 1:
                 # special case two singletons. This isn't necessarily simple
                 # depending on what they are, but for many cases it can be.
                 e1, = s1
                 e2, = s2
                 return derived(e1.equivalent_to(e2),
-                                self, "set equivalence").simplify_all(**sopts)
+                                self, "set equivalence (singleton sets)").simplify_all(**sopts)
 
             # normalize any concrete parts. At this point, neither of these
             # can be fully concrete.
@@ -875,13 +891,13 @@ class SetEquivalence(BinarySetOp):
             if s1 < s2:
                 return derived(
                     ForallUnary(var, ((var << self.args[0]).equivalent_to(
-                            var << sset(s2 - s1, typ=self[0].type.content_type)))),
+                            var << sset(s2 - s1, self[0].type)))),
                     self,
                     "set equivalence (set elimination)").simplify_all(**sopts)
             elif s2 < s1:
                 return derived(
                     ForallUnary(var, ((var << self.args[1]).equivalent_to(
-                            var << sset(s1 - s2, typ=self[0].type.content_type)))),
+                            var << sset(s1 - s2, self[0].type)))),
                     self,
                     "set equivalence (set elimination)").simplify_all(**sopts)
 
