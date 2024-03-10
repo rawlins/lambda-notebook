@@ -61,7 +61,6 @@ def constants_use_custom(v):
     global _constants_use_custom
     _constants_use_custom = v
 
-_type_system = types.poly_system
 
 # TODO: could consider associating TypedExpr with a type system rather than
 # using the global variable. advantages: generality.  Disadvantages: may be a
@@ -72,9 +71,22 @@ def set_type_system(ts):
     global _type_system
     _type_system = ts
 
+
+def reset_type_system():
+    global _type_system
+    types.reset()
+    _type_system = types.poly_system
+
+
+# this will leave _type_system as None if something crashes in setup
+_type_system = None
+reset_type_system()
+
+
 def get_type_system():
     """Gets the current (global) type system for the metalanguage."""
     return _type_system
+
 
 def ts_unify(a, b):
     """Calls the current type system's `unify` function on types `a` and `b`.
@@ -1171,6 +1183,7 @@ class TypedExpr(object):
         if c is not None:
             return c
         else:
+            # XX limit some more cases of this? e.g. dict notation parses...
             logger.warning("parse_flattened returning non-TypedExpr")
             return result
 
