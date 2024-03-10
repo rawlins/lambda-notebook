@@ -27,6 +27,9 @@ class DomainError(Exception):
     def __repr__(self):
         return self.__str__()
 
+    def _repr_markdown_(self):
+        return f"<span style=\"color:red\">**{self.__class__.__name__}**</span>: {self.__str__()}"
+
 
 class OutOfDomain(DomainError):
     def __init__(self, f, a):

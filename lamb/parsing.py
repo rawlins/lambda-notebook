@@ -237,6 +237,7 @@ errors_raise = False
 @contextmanager
 def error_manager(summary=None):
     from lamb.types import TypeParseError, TypeMismatch
+    from lamb.meta.meta import DomainError
     display = None
     try:
         from IPython.display import display
@@ -248,7 +249,8 @@ def error_manager(summary=None):
             yield
         except (TypeParseError,
                 TypeMismatch,
-                ParseError) as e:
+                ParseError,
+                DomainError) as e:
             display(e)
             if errors_raise or not display:
                 raise e
