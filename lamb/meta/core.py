@@ -2357,9 +2357,14 @@ class ApplicationExpr(TypedExpr):
         # MetaTerms here via `evaluate`, triggerable independently from
         # reduction. (This can be useful when supplying MetaTerms via an
         # assignment.)
+        # XX sequencing of this vs reduce is not ideal; if `reduce=True`
+        # then an OutOfDomain case will crash before this code gets called.
         if (get_sopt('evaluate', sopts)
                         and self.args[0].meta() and self.args[1].meta()):
-            return self._do_reduce(strict_charfuns=get_sopt('strict_charfuns', sopts))
+            return derived(
+                self._do_reduce(strict_charfuns=get_sopt('strict_charfuns', sopts)),
+                self,
+                "MetaTerm reduction")
         return self
 
     def calculate_partiality(self, vars=None, **sopts):
