@@ -810,6 +810,12 @@ class SetDifference(BinarySetOp):
             # XX implement something more here?
             # warning: cases like {X,Y} - {Y} are not safe to simplify under
             # syntactic identity, since if X == Y, then {X} is actually wrong.
+        elif s2 is not None and isinstance(left, ConditionSet):
+            # XX is this too much to do unconditionally? For toy domains it's
+            # fine, good even, but this could produce very large results.
+            left_elim = left.eliminate()
+            if left_elim is not left:
+                return derived(left_elim - right, self, "set difference (finite domain)").simplify(**sopts)
 
         if (isinstance(self[0], ConditionSet) and isinstance(self[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
