@@ -93,10 +93,10 @@ class MetaTerm(core.TypedTerm):
             return typ
         else:
             if self.op not in typ.domain:
-                if typ.bound_type_vars():
+                if typ.is_polymorphic():
                     # it's helpful to have a specific error for this case
-                    raise TypeMismatch(value, typ,
-                        error=f"Can't instantiate domain elements with variable types")
+                    raise TypeMismatch(self.op, typ,
+                        error=f"Can't instantiate domain elements with polymorphic types")
                 else:
                     raise TypeMismatch(self.op, typ,
                         error=f"Invalid element reference for type domain of `{typ}` in term: `{self.op_repr()}`")
