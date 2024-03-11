@@ -1,4 +1,5 @@
 import random
+import collections.abc
 import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
@@ -394,6 +395,13 @@ def emptyset(settype=None, typ=None):
     return sset(set(), settype=settype, typ=typ)
 
 
+def is_emptyset(s):
+    return (isinstance(s, ListedSet) and len(s) == 0
+        or isinstance(s, ConditionSet) and s[0] == false_term
+        or isinstance(s, MetaTerm) and isinstance(s.type, SetType) and len(s.op) == 0
+        or isinstance(s, collections.abc.Set) and len(s) == 0)
+
+
 class SetContains(SyncatOpExpr):
     """Binary relation of set membership.  This uses `<<` as the symbol.
 
@@ -740,7 +748,7 @@ class SetDifference(BinarySetOp):
 
     def _set_impl(self):
         var = safevar(self)
-        return ConditionSet(var, var << self.args[0] & (~(var << self.args[1])))
+        return ConditionSet(var, var << self[0] & (~(var << self[1])))
 
     def _compile(self):
         if finite_safe(self):
@@ -758,31 +766,52 @@ class SetDifference(BinarySetOp):
             return super()._compile()
 
     def simplify(self, **sopts):
-        s1 = to_python_container(self.args[0])
-        s2 = to_python_container(self.args[1])
+        left = self[0]
+        right = self[1]
+        if is_emptyset(left):
+            return derived(emptyset(self.type), self, "set difference") # {} - X = {}
+        elif is_emptyset(right):
+            return derived(left, self, "set difference") # X - {} = X
+
+        s1 = to_python_container(left)
+        s2 = to_python_container(right)
         if s1 is not None and s2 is not None:
-            if is_concrete(self[0]) and is_concrete(self[1]):
+            # there are various special cases of two listed sets that can be
+            # handled
+            left_is_concrete = is_concrete(left)
+            if left_is_concrete and is_concrete(right):
+                # the easy case -- we can just do subtraction sanely
                 result = s1 - s2
                 # only generate a metaterm if we started with two metaterms,
                 # independent of the content
-                if self.args[0].meta() and self.args[1].meta():
+                if left.meta() and left.meta():
                     result = MetaTerm(result, typ=self.type)
                 else:
                     result = sset(result, self.type)
                 return derived(result, self, "set difference")
 
             if s2 == s1:
+                # syntactic identity guarantees the empty set
                 return derived(emptyset(self.type), self, "set difference")
-            # XX implement something more here
+
+            right_concrete = {e for e in s2 if is_concrete(e)}
+            if right_concrete and right_concrete & s1:
+                # we can safely eliminate these elements on the left. Note that
+                # we *can't* generally eliminate them on the right. Example:
+                # `{_c1, x_e} - {_c1}`. `x` could be `_c1`, so generating
+                # `{x_e} - {}` is potentially wrong!
+                # when the left set is fully concrete, this is safe
+                left = sset(s1 - right_concrete, self.type)
+                if left_is_concrete:
+                    right = sset(s2 - right_concrete, self.type)
+                # generate the filtered set, and recurse once (in case eliminate_sets
+                # should also be applied)
+                return derived(left - right, self, "set difference").simplify(**sopts)
+            # XX implement something more here?
             # warning: cases like {X,Y} - {Y} are not safe to simplify under
             # syntactic identity, since if X == Y, then {X} is actually wrong.
 
-        elif s1 is not None and len(s1) == 0:
-            return derived(emptyset(self.type), self, "set difference") # {} - X = {}
-        elif s2 is not None and len(s2) == 0:
-            return derived(self.args[0], self, "set difference") # X - {} = X
-
-        if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
+        if (isinstance(self[0], ConditionSet) and isinstance(self[1], ConditionSet)
                 or get_sopt('eliminate_sets', sopts)):
             return derived(self._set_impl(), self,
                 "set difference (set elimination)")#.simplify_all(**sopts)
