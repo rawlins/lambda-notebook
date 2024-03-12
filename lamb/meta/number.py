@@ -81,6 +81,7 @@ BinaryTimesExpr.associative = True
 def BinaryDivExpr(self, x, y):
     return x / y
 
-@op("**", type_n, type_n)
+# XX use superscript
+@op("**", type_n, type_n, op_latex="{**}")
 def BinaryExpExpr(self, x, y):
     return x ** y
