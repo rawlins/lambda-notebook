@@ -4,7 +4,7 @@ import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
-from .core import Tuple, is_concrete, to_concrete, TypeEnv
+from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality
 from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key
@@ -67,6 +67,8 @@ def finite_safe(s):
     elif isinstance(s, ConditionSet) or isinstance(s, TypedTerm):
         # XX in principle, one could easily figure out that certain
         # ConditionSets are finite...
+        if is_emptyset(s):
+            return True
         return False
     elif isinstance(s, SetIntersection):
         return finite_safe(s[0]) or finite_safe(s[1])
@@ -118,12 +120,17 @@ class ConditionSet(BindingOp):
         """Return a LFun based on the condition used to describe the set."""
         return LFun(self.vartype, self.body, self.varname)
 
-    def _compile(self):
-        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+    def _compile(self, domain=None):
+        # XX the use of domain here is very ad hoc, generalize
+        if is_emptyset(self):
+            return lambda context: set()
+
+        if domain is None and not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
             raise NotImplementedError("Compiled ConditionSet requires a guaranteed-finite domain")
         f = self.to_characteristic()._compiled
-        domain = tuple(self[0].type.domain)
-        return lambda context: {elem for elem in domain if f(context)(elem)}
+        if domain is None:
+            domain = lambda context: tuple(self[0].type.domain)
+        return lambda context: {elem for elem in domain(context) if f(context)(elem)}
 
     def eliminate(self, **sopts):
         # this is a bit wacky. But for the case where there are no free terms
@@ -146,6 +153,25 @@ class ConditionSet(BindingOp):
     def simplify(self, **sopts):
         if self[1] == false_term:
             return derived(emptyset(self.type), self, "trivial set condition")
+        elif isinstance(self[1], SetContains) and self[1][0] == self[0]:
+            # XX these two are annoyingly special-case-y, and are primarily
+            # here because automatic simplification will generate such
+            # expressions.
+            # a better approach might at least do something like first go to
+            # cnf, and then check all conjuncts. Or, perhaps to do some form
+            # of anti-elimination so as to get set characterizations that meet
+            # this criteria?
+            return derived(self[1][1].copy(), self, "condition directly characterizes")
+        elif is_equality(self[1]):
+            target = None
+            if self[1][0] == self[0]:
+                target = self[1][1]
+            elif self[1][1] == self[0]:
+                target = self[1][0]
+            if target is not None:
+                return derived(sset([target.copy()], self.type),
+                    self,
+                    "condition directly characterizes")
 
         return self
 
@@ -396,10 +422,26 @@ def emptyset(settype=None, typ=None):
 
 
 def is_emptyset(s):
+    """Syntactic emptyset check. False for a ConditionSet doesn't mean that it
+    isn't the emptyset, just that that can't be determined syntactically."""
     return (isinstance(s, ListedSet) and len(s) == 0
-        or isinstance(s, ConditionSet) and s[0] == false_term
+        or isinstance(s, ConditionSet) and s[1] == false_term
         or isinstance(s, MetaTerm) and isinstance(s.type, SetType) and len(s.op) == 0
         or isinstance(s, collections.abc.Set) and len(s) == 0)
+
+
+def is_domainset(s):
+    # XX could check finite domains for listed cases as well?
+    return isinstance(s, ConditionSet) and s[1] == true_term
+
+
+def is_trivial_set(s):
+    return is_emptyset(s) or is_domainset(s)
+
+
+def is_trivial_set_op(s):
+    # convenience function for simplificiation. Checks one level of recursion
+    return any(is_trivial_set(sub) for sub in s)
 
 
 class SetContains(SyncatOpExpr):
@@ -633,6 +675,7 @@ class SetUnion(BinarySetOp):
         # for everything except ConditionSets, this tends to make the formula
         # more unwieldy
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
+                or is_trivial_set_op(self)
                 or get_sopt('eliminate_sets', sopts)):
             return derived(self._set_impl(), self,
                             "set union (set elimination)").simplify_all(**sopts)
@@ -658,10 +701,18 @@ class SetIntersection(BinarySetOp):
         return ConditionSet(var, var << self.args[0] & var << self.args[1])
 
     def _compile(self):
-        if finite_safe(self):
-            s1 = self[0]._compiled
-            s2 = self[1]._compiled
-            return lambda context: s1(context) & s2(context)
+        if finite_safe(self[0]) and finite_safe(self[1]):
+            s0 = self[0]._compiled
+            s1 = self[1]._compiled
+            return lambda context: s0(context) & s1(context)
+        elif finite_safe(self):
+            # XX code dup
+            # this is pretty messy as-is
+            if finite_safe(self[0]):
+                domain = self[0]._compiled
+            else:
+                domain = self[1]._compiled
+            return self._set_impl()._compile(domain=domain)
         else:
             return super()._compile()
 
@@ -728,6 +779,7 @@ class SetIntersection(BinarySetOp):
             return derived(emptyset(self.type), self, "set intersection") # X & {} = {}
 
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
+                or is_trivial_set_op(self)
                 or get_sopt('eliminate_sets', sopts)):
             return derived(self._set_impl(), self,
                 "set intersection (set elimination)").simplify_all(**sopts)
@@ -754,7 +806,7 @@ class SetDifference(BinarySetOp):
         if finite_safe(self):
             # it's safe to work with the left argument directly
             s1 = self[0]._compiled
-            if isinstance(self[1], ListedSet):
+            if finite_safe(self[1]):
                 s2 = self[1]._compiled
                 return lambda context: s1(context) - s2(context)
             else:
@@ -762,6 +814,13 @@ class SetDifference(BinarySetOp):
                 # XX code dup
                 impl = LFun(var, (var << self.args[1]))._compiled
                 return lambda context: {e for e in s1(context) if not impl(context)(e)}
+        elif is_domainset(self[1]):
+            # even if left isn't finite-safe, if we have the domain set on the
+            # right, we can know that the result is the empty set.
+            # very special case-y, but simplify handles this. Can this be
+            # generalized somehow? This is basically "if the right condition
+            # entails the left" at the strongest special case of that.
+            return lambda context: set()
         else:
             return super()._compile()
 
@@ -818,6 +877,7 @@ class SetDifference(BinarySetOp):
                 return derived(left_elim - right, self, "set difference (finite domain)").simplify(**sopts)
 
         if (isinstance(self[0], ConditionSet) and isinstance(self[1], ConditionSet)
+                or is_trivial_set_op(self)
                 or get_sopt('eliminate_sets', sopts)):
             return derived(self._set_impl(), self,
                 "set difference (set elimination)")#.simplify_all(**sopts)
@@ -844,7 +904,35 @@ class SetEquivalence(BinarySetOp):
         # don't use the default implementation for compilation; among other
         # reasons is that it won't handle ListedSets very well.
 
-        # if l and/or r are ConditionSets, compiling will require finiteness.
+        # Caveat: For equivalence, there are cases that only static analysis can
+        # deal with.
+        # The prime target here is identity laws involving {Set x: True}; meta
+        # sets cannot represent this in any way so it becomes difficult to
+        # reason over in compiled form. There are special cases where we could
+        # just work with the conditions, but that doesn't generalize. For
+        # example:
+        #   ((Set x_e: True_t) <=> ((Set x_e: True_t) & (Set x_e: False_t)))
+        # (i.e. the implementation of <=).
+        #
+        # n.b. this point generalizes in a tricky way, though equivalence is
+        # a scenario where this comes up. So for example, while
+        #     `((Set x_e: True) & (Set x_e: False)) & {_c1, _c2}`
+        # will compile,
+        #     `((Set x_e: True) & (Set x_e: True)) & {_c1, _c2}`
+        # won't.
+
+        if is_trivial_set(self[0]) and is_trivial_set(self[1]):
+            # XX this could be more general; if either or both is a vacuous
+            # condition set, we could run it and compare
+            # note: this won't work right if an empty domain is possible...
+            result = is_emptyset(self[0]) == is_emptyset(self[1])
+            return lambda context: result
+        elif self[0] == self[1]:
+            # Special case syntactic positive identity. Code dup with generic eq
+            return lambda context: True
+
+        # if l and/or r are ConditionSets, compiling will require finiteness at
+        # this point.
         l = self[0]._compiled
         r = self[1]._compiled
         # XX there are definitely some optimizations from simplify that would
@@ -940,6 +1028,7 @@ class SetEquivalence(BinarySetOp):
             # better that could be done?)
 
         if (isinstance(self.args[0], ConditionSet) and isinstance(self.args[1], ConditionSet)
+                or is_trivial_set_op(self)
                 or get_sopt('eliminate_sets', sopts)):
             return derived(self._set_impl(), self,
                 "set equivalence (set elimination)").simplify_all(**sopts)

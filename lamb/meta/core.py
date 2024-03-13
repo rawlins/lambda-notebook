@@ -153,6 +153,12 @@ def is_te(x, cls=None):
         return issubclass(cls, TypedExpr) and isinstance(x, cls)
 
 
+def is_equality(x):
+    # this looks a bit brittle, but this is probably the best current way to
+    # check for all equality/equivalence relations at once.
+    return x.op == "<=>"
+
+
 def term(s, typ=None, assignment=None, meta=False):
     """Convenience wrapper for building terms.
     `s`: the term's name.
@@ -2110,7 +2116,10 @@ class TypedExpr(object):
         return len(self.args)
 
     # See http://www.python.org/doc/current/lib/module-operator.html
-    # Not implemented: not, abs, pos, concat, contains, *item, *slice
+    # Not implemented: not, abs, pos, concat, contains, *item, *slice,
+    # floordiv, matmul
+    # XX add right versions for at least some of these? Right now e.g. left
+    # addition with a python number works, right doesn't
     def __and__(self, other):    return self.factory('&',  self, other)
     def __invert__(self):        return self.factory('~',  self)
     def __lshift__(self, other): return self.factory('<<', self, other)

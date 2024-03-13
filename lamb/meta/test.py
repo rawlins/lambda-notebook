@@ -975,6 +975,61 @@ class MetaTest(unittest.TestCase):
                 print(f"Failure on depth 3 expression '{repr(x)}'")
                 raise
 
+    def test_set_identities(self):
+        t_set = te("Set x_e : True")
+        cf_set = te("Set x_e : False")
+        # reminder, te("{}") has a polymorphic type out of the gate
+        lf_set = sets.emptyset(typ=tp("e"))
+        testsimp(self, cf_set, lf_set, all=True, exec=True)
+        for f_set in [cf_set, lf_set]:
+            # if the output is t_set, compilation is not possible
+            testsimp(self, t_set & t_set, t_set, all=True)
+            testsimp(self, t_set & f_set, lf_set, all=True, exec=True)
+            testsimp(self, f_set & t_set, lf_set, all=True, exec=True)
+            testsimp(self, f_set & f_set, lf_set, all=True, exec=True)
+
+            testsimp(self, t_set | t_set, t_set, all=True)
+            testsimp(self, t_set | f_set, t_set, all=True)
+            testsimp(self, f_set | t_set, t_set, all=True)
+            testsimp(self, f_set | f_set, lf_set, all=True, exec=True)
+
+            testsimp(self, t_set - t_set, lf_set, all=True, exec=True)
+            testsimp(self, t_set - f_set, t_set, all=True)
+            testsimp(self, f_set - t_set, lf_set, all=True, exec=True)
+            testsimp(self, f_set - f_set, lf_set, all=True, exec=True)
+
+            testsimp(self, t_set.equivalent_to(t_set), True, all=True, exec=True)
+            testsimp(self, t_set.equivalent_to(f_set), False, all=True, exec=True)
+            testsimp(self, f_set.equivalent_to(t_set), False, all=True, exec=True)
+            testsimp(self, f_set.equivalent_to(f_set), True, all=True, exec=True)
+
+
+            # <=> in general has compilation issues with t_set. The basic cases
+            # are all special cased, but all sorts of more general cases can't
+            # be handled. Unfortunately this extends to many of the derived
+            # relations that use <=>. Ideally all of these should work, but
+            # at the moment I only see how to do this by adding yet more special
+            # casing, which I don't want to do. Static simplification handles
+            # all of these.
+            testsimp(self, t_set <= t_set, True, all=True)
+            testsimp(self, t_set <= f_set, False, all=True)
+            testsimp(self, f_set <= t_set, True, all=True, exec=True)
+            testsimp(self, f_set <= f_set, True, all=True, exec=True)
+            testsimp(self, t_set < t_set, False, all=True)
+            testsimp(self, t_set < f_set, False, all=True)
+            testsimp(self, f_set < t_set, True, all=True, exec=True)
+            testsimp(self, f_set < f_set, False, all=True, exec=True)
+
+            # test a few more complicated cases. It could be good to do these
+            # more systematically. Many of these have compilation issues when
+            # t_set is embedded. This first case is a good example of this;
+            # static simplify can render this executable.
+            testsimp(self, (t_set & t_set) & f_set, lf_set, all=True)
+            testsimp(self, (t_set & f_set) & t_set, lf_set, all=True, exec=True)
+            testsimp(self, (f_set | t_set) | f_set, t_set, all=True)
+            testsimp(self, (t_set - f_set) - f_set, t_set, all=True)
+            testsimp(self, (t_set - f_set) - t_set, lf_set, all=True, exec=True)
+
     def test_random_reduce(self):
         # XX the functions generated this way do reduce substantially, but it's
         # not entirely clear to me that they're fully exercising the reduction
