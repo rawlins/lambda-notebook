@@ -327,16 +327,11 @@ class ForallUnary(BindingOp):
     op_name_uni = "∀"
     op_name_latex = "\\forall{}"
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
+    def __init__(self, var, body, varname=None, vartype=None, assignment=None,
                                                             type_check=True):
-        super().__init__(var_or_vtype, types.type_t, body, varname=varname,
-                                assignment=assignment, type_check=type_check)
-
-    def copy(self):
-        return self.copy_core(ForallUnary(self.vartype, self.body, self.varname))
-
-    def copy_local(self, var, arg, type_check=True):
-        return self.copy_core(ForallUnary(var, arg, type_check=type_check))
+        super().__init__(var, body, typ=types.type_t,
+            varname=varname, vartype=vartype,
+            assignment=assignment, type_check=type_check)
 
     def to_conjunction(self, assignment=None):
         if self[0].type.domain.finite:
@@ -431,16 +426,11 @@ class ExistsUnary(BindingOp):
     op_name_uni="∃"
     op_name_latex="\\exists{}"
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        super().__init__(var_or_vtype, types.type_t, body, varname=varname,
-                    assignment=assignment, type_check=type_check)
-
-    def copy(self):
-        return self.copy_core(ExistsUnary(self.vartype, self.body, self.varname))
-
-    def copy_local(self, var, arg, type_check=True):
-        return self.copy_core(ExistsUnary(var, arg, type_check=type_check))
+    def __init__(self, var, body,
+                varname=None, vartype=None, assignment=None, type_check=True):
+        super().__init__(var, body, types.type_t,
+            varname=varname, vartype=vartype,
+            assignment=assignment, type_check=type_check)
 
     def to_disjunction(self, assignment=None):
         if self[0].type.domain.enumerable() and self[0].type.domain.finite:
@@ -560,16 +550,11 @@ class ExistsExact(BindingOp):
     op_name_uni="∃!"
     op_name_latex="\\exists{}!"
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        super().__init__(var_or_vtype, types.type_t, body, varname=varname,
-                                assignment=assignment, type_check=type_check)
-
-    def copy(self):
-        return self.copy_core(ExistsExact(self.vartype, self.body, self.varname))
-
-    def copy_local(self, var, arg, type_check=True):
-        return self.copy_core(ExistsExact(var, arg, type_check=type_check))
+    def __init__(self, var, body,
+                varname=None, vartype=None, assignment=None, type_check=True):
+        super().__init__(var, body, types.type_t,
+            varname=varname, vartype=vartype,
+            assignment=assignment, type_check=type_check)
 
     def eliminate(self, **sopts):
         var1 = self[0].copy()
@@ -672,23 +657,16 @@ class IotaUnary(BindingOp):
 
     commutative = False # a bit meaningless, since ιx:ιy can't occur..
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body,
-            varname=varname, body_type=types.type_t, assignment=assignment,
-            type_check=type_check)
+    def __init__(self, var, body,
+                varname=None, vartype=None, assignment=None, type_check=True):
+        super().__init__(var, body, typ=None,
+            varname=varname, vartype=vartype, body_type=types.type_t,
+            assignment=assignment, type_check=type_check)
         self.type = self.vartype
 
-    def copy(self):
-        return self.copy_core(IotaUnary(self.vartype, self.body, self.varname))
-
-    def copy_local(self, var, arg, type_check=True):
-        return self.copy_core(IotaUnary(var, arg, type_check=type_check))
-
     def to_test(self, x):
-        """Return a LFun based on the condition used to describe the set."""
-        return LFun(self.vartype, self.body, self.varname).apply(x)
-
+        """Build a boolean test by substituting `x` into the body."""
+        return LFun(self.var_instance, self.body).apply(x)
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
         sub_var = TypedTerm(self.varname, unified_type)
@@ -771,15 +749,10 @@ class IotaPartial(IotaUnary):
     secondary_names = {}
     pre_simplify = True
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
+    def __init__(self, var, body, varname=None, vartype=None, assignment=None,
                                                             type_check=True):
-        super().__init__(var_or_vtype, body, varname, assignment, type_check)
-
-    def copy(self):
-        return self.copy_core(IotaPartial(self.vartype, self.body, self.varname))
-
-    def copy_local(self, var, arg, type_check=True):
-        return self.copy_core(IotaPartial(var, arg, type_check=type_check))
+        super().__init__(var, body, varname=varname, vartype=vartype,
+            assignment=assignment, type_check=type_check)
 
     # XX what should ._compiled do? For now, no implementation.
 

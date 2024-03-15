@@ -328,7 +328,7 @@ class MetaTest(unittest.TestCase):
     def setUp(self):
         self.ident = te("L x_e : x") 
         self.ia = TypedExpr.factory(self.ident, "y")
-        self.ib = LFun(type_e, self.ia, "y")
+        self.ib = LFun(("y", type_e), self.ia)
         self.P = TypedTerm("P", types.FunType(type_e, type_t))
         self.Q = TypedTerm("Q", types.FunType(type_e, type_t))
         self.x = TypedTerm("x", type_e)
@@ -337,7 +337,7 @@ class MetaTest(unittest.TestCase):
         self.t2 = TypedExpr.factory(self.Q, self.x)
         self.body = TypedExpr.factory("&", self.t, self.t) | self.t
         self.p = TypedTerm("p", type_t)
-        self.testf = LFun(type_e, self.body)
+        self.testf = LFun(("x", type_e), self.body)
 
     def test_basic(self):
         # equality basics
@@ -527,8 +527,8 @@ class MetaTest(unittest.TestCase):
 
         # test: when a free variable in a function scopes under an operator, do
         # not bind the variable on application        
-        pmw_test1 = LFun(type_t, LFun(type_e, self.t & self.p, "x"), "p")
-        pmw_test1b = LFun(type_e, self.t & self.t2, "x")
+        pmw_test1 = LFun(("p", type_t), LFun(("x", type_e), self.t & self.p))
+        pmw_test1b = LFun(("x", type_e), self.t & self.t2)
         self.assertNotEqual(pmw_test1.apply(self.t2), pmw_test1b)
 
         # Different version of the same test: direct variable substitution

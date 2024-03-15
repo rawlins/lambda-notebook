@@ -4,7 +4,7 @@ import collections, itertools, logging, html, enum
 from lamb import utils, types, meta, display
 from lamb.utils import ensuremath
 from lamb.types import type_e, type_t, type_property, TypeMismatch
-from lamb.meta import  TypedExpr, true_term
+from lamb.meta import  TypedExpr, true_term, term
 from lamb.meta.core import partial, pbody, pcond
 from lamb import tree_mini
 
@@ -2892,12 +2892,11 @@ def tree_pa_metalanguage_fun(t, assignment=None):
 
     if not tree_binder_check(t[0]):
         raise CompositionFailure(t[0], t[1], reason="PA requires a valid binder")
-    vname = "var%i" % t[0].get_index()
-    outer_vname = t[1].content.find_safe_variable()
+    vname = f"var{t[0].get_index()}"
+    var = term(t[1].content.find_safe_variable(), types.type_e)
     new_a = Assignment(assignment)
-    new_a.update({vname: te("%s_e" % outer_vname)})
-    f = meta.LFun(types.type_e, t[1].content.under_assignment(new_a),
-                                                        varname=outer_vname)
+    new_a.update({vname: var})
+    f = meta.LFun(var, t[1].content.under_assignment(new_a))
     return BinaryComposite(t[0], t[1], f, source=t)
 
 def tree_pa_sbc_fun(t, assignment=None):
@@ -2908,9 +2907,9 @@ def tree_pa_sbc_fun(t, assignment=None):
     the left sister, and will generate a CompositionFailure otherwise."""
     if not tree_binder_check(t[0]):
         raise CompositionFailure(t[0], t[1], reason="PA requires a valid binder")
-    vname = "var%i" % t[0].get_index()
-    f = meta.LFun(types.type_e, t[1].content.under_assignment(assignment),
-                                                                varname=vname)
+
+    var = term(f"var{t[0].get_index()}", types.type_e)
+    f = meta.LFun(var, t[1].content.under_assignment(assignment))
     return BinaryComposite(t[0], t[1], f, source=t)
 
 class IndexedPronoun(Item):
@@ -3000,17 +2999,15 @@ def pa_fun(binder, content, assignment=None):
     if not tree_binder_check(binder):
         raise CompositionFailure(binder, content, reason="PA requires a valid binder")
 
-    vname = "var%i" % binder.get_index()
     # there could be more natural ways to do this...should H&K assignment
     # functions be implemented directly?
-    outer_vname = "x"
-    inner_fun = meta.LFun(types.type_e,
-                        content.content.under_assignment(assignment), vname)
-    # totally brute force...
-    used_variables = inner_fun.free_variables() | inner_fun.bound_variables()
-    outer_vname = meta.core.alpha_variant(outer_vname, used_variables)
-    f = meta.LFun(types.type_e, (inner_fun)(outer_vname + "_e").reduce(),
-                                                                    outer_vname)
+    inner_var = term(f"var{binder.get_index()}", types.type_e)
+    inner_fun = meta.LFun(inner_var,
+                        content.content.under_assignment(assignment))
+    # XX this code is old and messy -- is this convoluted double var thing
+    # really needed?
+    outer_var = term(inner_fun.find_safe_variable(), types.type_e)
+    f = meta.LFun(outer_var, (inner_fun)(outer_var).reduce())
     return BinaryComposite(binder, content, f)
 
 # TODO: this is the same as tree_fa_fun_abstract, basically...
@@ -3061,26 +3058,21 @@ def presup_pm(p1, p2):
 def presup_pa(binder, content, assignment=None):
     if not tree_binder_check(binder):
         raise CompositionFailure(binder, content, reason="PA requires a valid binder")
-    vname = "var%i" % binder.get_index()
-    outer_vname = content.content.find_safe_variable()
     new_a = Assignment(assignment)
-    bound_var = meta.term(vname, types.type_e)
-    new_a.update({vname: meta.term(outer_vname, types.type_e)})
+    bound_var = meta.term(f"var{binder.get_index()}", types.type_e)
+    outer_var = term(content.content.find_safe_variable(), types.type_e)
+    new_a.update({bound_var.op: outer_var})
     # TODO: the bound var here doesn't generally work.
-    f = meta.LFun(types.type_e,
-        content.content.calculate_partiality({bound_var}).under_assignment(new_a),
-                                                            outer_vname)
+    f = meta.LFun(outer_var,
+        content.content.calculate_partiality({bound_var}).under_assignment(new_a))
     return BinaryComposite(binder, content, f)
 
-# this is a presuppositional PA based on Liz Coppock's Semantics Boot Camp
-# PA rule.
+# this is a presuppositional PA based on the Coppock and Champollion PA rule
 def sbc_pa(binder, content, assignment=None):
     if not tree_binder_check(binder):
         raise CompositionFailure(binder, content, reason="PA requires a valid binder")
-    vname = "var%i" % binder.get_index()
-    bound_var = meta.term(vname, types.type_e)
-    f = meta.LFun(types.type_e,
-                    content.content.calculate_partiality({bound_var}), vname)
+    bound_var = meta.term(f"var{binder.get_index()}", types.type_e)
+    f = meta.LFun(bound_var, content.content.calculate_partiality({bound_var}))
     return BinaryComposite(binder, content, f)
 
 
@@ -3145,15 +3137,3 @@ def setup_td_presup():
     td_presup.add_rule(BinaryCompositionOp("PA", presup_pa, allow_none=True))
 
 setup_td_presup()
-
-def test_basic():
-    cat = Item("cat", "L x_e: Cat(x)")
-    gray = Item("gray", "L x_e: Gray(x)")
-    john = Item("John", "John_e")
-    julius = Item("Julius", "Julius_e")
-    inP = Item("in", "L x: L y: In(y)(x)")
-    texas = Item("Texas", "Texas_e")
-    pvar = meta.TypedTerm("p", types.type_property)
-    isV = Item("is", meta.LFun(types.type_property, pvar, "p"))
-    get_system().add_items(cat, gray, john, julius, inP, texas, isV)
-

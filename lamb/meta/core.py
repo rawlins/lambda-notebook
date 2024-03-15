@@ -3781,43 +3781,49 @@ class BindingOp(TypedExpr):
             if var_list[i][1] is None:
                 var_list[i] = (var_list[i][0],
                                 default_variable_type(var_list[i][0]))
+        # len(var_list) is checked in precheck
         if op_class.allow_multivars or op_class.allow_novars:
-            # use alternate constructor
-            # TODO: unify these constructors
             return op_class(var_list, body, assignment=assignment)
         else:
-            return op_class(var_or_vtype=var_list[0][1],
-                            varname=var_list[0][0],
-                            body=body,
-                            assignment=assignment)
+            return op_class(var_list[0], body, assignment=assignment)
 
-    def __init__(self, var_or_vtype, typ, body, varname=None, body_type=None,
-                                        assignment=None, type_check=True):
-        # NOTE: not calling superclass
-        # Warning: can't assume in general that typ is not None. 
-        # I.e. may be set in subclass after a call
-        # to this function.  Subclass is responsible for doing this properly...
+    def __init__(self, var, body,
+                typ, # require this to be provided, but it may be None (see below)
+                varname=None, vartype=None, body_type=None,
+                assignment=None, type_check=True):
+        # NOTE: this does not call the superclass constructor
+
+        # default assumption for body type: type of the whole thing = type
+        # of the body. This is a bit arbitrary, but is true for standard
+        # logical binders.
         if body_type is None:
             body_type = typ
-        if isinstance(var_or_vtype, str):
-            var_or_vtype = TypedExpr.term_factory(var_or_vtype)
-        if isinstance(var_or_vtype, TypedTerm):
-            if varname is not None:
-                logger.warning("Overriding varname '%s' with '%s'"
-                                            % (varname, var_or_vtype.op))
-            varname = var_or_vtype.op
-            vartype = var_or_vtype.type
-        elif types.is_type(var_or_vtype):
-            if varname is None:
-                varname = self.default_varname()
-            vartype = var_or_vtype
-        else:
-            logger.error("Unknown var_or_vtype: " + repr(var_or_vtype))
-            raise NotImplementedError
+
+        if isinstance(var, str):
+            varname = var
+        elif isinstance(var, TypedTerm):
+            varname = var.op
+            vartype = var.type
+        elif isinstance(var, tuple):
+            varname, vartype = var
+        elif var is not None:
+            # mainly here to help subclass implementers
+            raise NotImplementedError(f"Unknown var for BindingOp: `{repr(var)}`")
+
+        if varname is None:
+            # should we really allow this?
+            varname = self.default_varname()
+
+        if vartype is None:
+            raise ValueError(f"BindingOp needs a variable type (got `{repr(vartype)}`)")
         if not is_var_symbol(varname):
-            raise ValueError("Need variable name (got '%s')" % varname)
+            raise ValueError(f"BindingOp needs a variable name (got `{repr(varname)}`)")
+
+        # Warning: can't assume in general that `typ` is not `None`. Several
+        # subclasses set it themselves after calling the constructor.
         if typ is not None:
             self.type = typ
+
         self.derivation = None
         self.type_guessed = False
         self.defer = False
@@ -3825,6 +3831,13 @@ class BindingOp(TypedExpr):
         self.init_args()
         self.init_var(varname, vartype)
         # TODO: consider overriding __eq__ and __hash__.
+
+        # generic code for type-checking a body that may contain a bound
+        # variable with our variable's type. At this point, we should know
+        # the provided variable name and the body type for sure (otherwise
+        # this will crash). If the variable type is inferrable from the body,
+        # and is left out here, it will be inferred.
+        # without type_check=True, all sorts of things are not validated.
         if type_check:
             # note! here we intentionally construct an assignment that includes
             # only the bound variable; we don't actually want to *do* variable
@@ -3855,7 +3868,16 @@ class BindingOp(TypedExpr):
             self.init_body(body)
         self._reduced_cache = [None] * len(self.args)
 
+    def copy(self):
+        # on the assumption that type checking in subclasses is generally
+        # expensive, don't redo it
+        return self.copy_local(*self, type_check=False)
+
     def copy_local(self, *args, type_check=True):
+        # this assertion is here because right now, the superclass function
+        # signature doesn't match the subclasses, but in a way that will fail
+        # silently
+        assert type(self) != BindingOp
         return self.copy_core(type(self)(*args, type_check=type_check))
 
     def name_of(self, i):
@@ -4286,15 +4308,17 @@ class LFun(BindingOp):
     commutative = False
     left_commutative = False
 
-    def __init__(self, var_or_vtype, body, varname=None, let=False,
+    def __init__(self, var, body, vartype=None, let=False,
                                             assignment=None, type_check=True):
         # Use placeholder typ argument of None.  This is because the input type
-        # won't be known until the var_or_vtype argument is parsed, which is
-        # done in the superclass constructor.
-        # sort of a hack, this could potentially cause odd side effects if
-        # BindingOp.__init__ is changed without taking this into account.
-        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body,
-            varname=varname, body_type=body.type, assignment=assignment,
+        # won't be known until self.var is dealt with, which is done in the
+        # superclass.
+        #
+        # This can potentially cause odd side effects if BindingOp.__init__'s
+        # handling of type inference is changed without taking this into account.
+        super().__init__(var, body, typ=None,
+            body_type=body.type, vartype=vartype,
+            assignment=assignment,
             type_check=type_check)
         self.type = FunType(self.vartype, body.type)
         self.let = let
@@ -4312,13 +4336,6 @@ class LFun(BindingOp):
 
     def functional(self):
         return True # no need to do any calculations
-
-    def copy(self):
-        # XX is there a reason this uses the old syntax?
-        return self.copy_core(LFun(self.argtype, self.body, self.varname, type_check=False))
-
-    def copy_local(self, var, arg, type_check=True):
-        return self.copy_core(LFun(var, arg, type_check=type_check))
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
         # `env` will not start with bound variable in it, initialize with the
@@ -4393,11 +4410,14 @@ class LFun(BindingOp):
 
     def compose(self, other):
         """Function composition."""
+        from lamb.combinators import fun_compose
+        # this implementation requires polymorphism
         return fun_compose(self, other)
 
     def __mul__(self, other):
         """Override `*` as function composition for LFuns.  Note that this
         _only_ works for LFuns currently, not functional constants/variables."""
+        # XX generalize or remove magic function
         return self.compose(other)
 
     @classmethod
@@ -4406,21 +4426,3 @@ class LFun(BindingOp):
         # not great at reusing bound variables
         ftyp = get_type_system().random_from_class(types.FunType)
         return test.random_lfun(ftyp, ctrl)
-
-def geach_combinator(gtype, ftype):
-    body = term("g", gtype)(term("f", ftype)(term("x", ftype.left)))
-    combinator = LFun(gtype, LFun(ftype,
-                LFun(ftype.left, body,varname="x"),varname="f"), varname="g")
-    return combinator
-
-def fun_compose(g, f):
-    """Function composition using the geach combinator for the appropriate type,
-    defined above."""
-    if (not (g.type.functional() and f.type.functional()
-             and g.type.left == f.type.right)):
-        raise types.TypeMismatch(g, f,
-                        error="Function composition type constraints not met")
-    combinator = geach_combinator(g.type, f.type)
-    result = (combinator(g)(f)).reduce_all()
-    return result
-

@@ -90,12 +90,13 @@ class ConditionSet(BindingOp):
     op_name_latex="Set"
     commutative = False # A bit meaningless, since Set x: Set y: can't occur
 
-    def __init__(self, var_or_vtype, body, varname=None, assignment=None,
-                                                            type_check=True):
-        body = self.ensure_typed_expr(body, assignment=assignment)
-        super().__init__(var_or_vtype=var_or_vtype, typ=None, body=body,
-                varname=varname, body_type=types.type_t, assignment=assignment,
-                type_check=type_check)
+    def __init__(self, var, body, varname=None, vartype=None,
+                assignment=None, type_check=True):
+        # XX why is ensure_typed_expr precalled
+        body = self.ensure_typed_expr(body, typ=types.type_t, assignment=assignment)
+        super().__init__(var, body, typ=None,
+                varname=varname, vartype=vartype, body_type=types.type_t,
+                assignment=assignment, type_check=type_check)
         self.type = SetType(self.vartype)
 
     def apply_var_constraints(self):
@@ -118,7 +119,7 @@ class ConditionSet(BindingOp):
 
     def to_characteristic(self):
         """Return a LFun based on the condition used to describe the set."""
-        return LFun(self.vartype, self.body, self.varname)
+        return LFun(self.varname, self.body, vartype=self.vartype)
 
     def _compile(self, domain=None):
         # XX the use of domain here is very ad hoc, generalize

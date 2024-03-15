@@ -14,7 +14,7 @@ from lamb.meta.core import Tuple, TupleIndex, Partial, Disjunctive, BinaryGeneri
 from lamb.meta.core import registry, logger, op, op_expr_factory
 from lamb.meta.core import get_type_system, set_type_system, constants_use_custom, ts_unify, ts_compatible
 from lamb.meta.core import te, is_te, tp, term, let_wrapper, check_type, MiniOp
-from lamb.meta.core import geach_combinator, fun_compose, unify
+from lamb.meta.core import unify
 
 from lamb.meta.ply import simplify_all, derived, default_sopts, collect, join
 
@@ -42,7 +42,7 @@ default_metalanguage()
 def test_setup():
     ident = te("L x_e : x")
     ia = TypedExpr.factory(ident, "y")
-    ib = LFun(type_e, ia, "y")
+    ib = LFun('y', ia, vartype=type_e)
     P = TypedTerm("P", FunType(type_e, type_t))
     Q = TypedTerm("Q", FunType(type_e, type_t))
     x = TypedTerm("x", type_e)
@@ -51,10 +51,10 @@ def test_setup():
     t2 = TypedExpr.factory(Q, x)
     body = TypedExpr.factory("&", t, t) | t
     p = TypedTerm("p", type_t)
-    testf = LFun(type_e, body)
+    testf = LFun(None, body, vartype=type_e)
 
-    pmw_test1 = LFun(type_t, LFun(type_e, t & p, "x"), "p")
-    pmw_test1b = LFun(type_e, t & t2, "x")
+    pmw_test1 = LFun('p', LFun('x', t & p, vartype=type_e), vartype=type_t)
+    pmw_test1b = LFun('x', t & t2, vartype=type_e)
     # test: when a free variable in a function scopes under an operator, do not
     # bind the variable on application
     assert pmw_test1.apply(t2) != pmw_test1b

@@ -1,7 +1,7 @@
 import unittest
 
 import lamb
-from . import lang, parsing, meta
+from . import lang, parsing, meta, types
 
 parsing.errors_raise = True
 
@@ -47,6 +47,23 @@ class LangTest(unittest.TestCase):
     def setUp(self):
         self.state = dict()
         parsing.parse("\n".join(basic_testcases), state=self.state)
+
+
+    def test_basic(self):
+        from lamb.lang import Item
+        # this doesn't do much, but will test that basic metalanguage things
+        # are working in the `lang` context
+        cat = Item("cat", "L x_e: Cat_<e,t>(x)")
+        gray = Item("gray", "L x_e: Gray_<e,t>(x)")
+        john = Item("John", "John_e")
+        julius = Item("Julius", "Julius_e")
+        inP = Item("in", "L x: L y: In_<e,<e,t>>(y)(x)")
+        texas = Item("Texas", "Texas_e")
+        pvar = meta.TypedTerm("p", types.type_property)
+        isV = Item("is", meta.LFun("p", pvar, vartype=types.type_property))
+        system = lang.td_system.copy()
+        system.add_items(cat, gray, john, julius, inP, texas, isV)
+
 
     def test_fa(self):
         r1_a = self.state['test1'] * self.state['test2']
