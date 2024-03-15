@@ -3,7 +3,8 @@
 ## Unreleased
 
 The next release will be 0.8.0, and involves a major metalanguage/type system
-update, centered around a new approach to metasemantics.
+update, centered around a new approach to metasemantics. This is probably the
+biggest set of changes since the initial release.
 
 New features:
 
@@ -93,13 +94,15 @@ Fixes, improvements, changes:
 ## [0.7.0] - Rendering and metalanguage updates - 2023-09-27
 
 New features:
- - support rendering in colab
- - quicker loading without the kernel (`import lamb.auto`)
- - refactor metalanguage code: better support for new operators
 
- Fixes:
- - fix several polymorphic type inference issues
- - improved ipython/jupyter rendering
+- support rendering in colab
+- quicker loading without the kernel (`import lamb.auto`)
+- refactor metalanguage code: better support for new operators
+
+Fixes:
+
+- fix several polymorphic type inference issues
+- improved ipython/jupyter rendering
 
 ## [0.6.9] - Compatibility fix - 2022-06-18
 
@@ -108,27 +111,134 @@ Fix a python 3.10 compatibility bug
 ## [0.6.8] - Vacuity improvements - 2021-10-18
 
 Fixes, improvements, changes (highlights):
- - correctly pin the right traitlets version
+
+- correctly pin the right traitlets version
 
 ## [0.6.7] - Vacuity improvements - 2021-10-18
 
 New features:
- - composition rule for index percolation in tree composition
- - composition rule for vacuous nodes (with content=None)
+
+- composition rule for index percolation in tree composition
+- composition rule for vacuous nodes (with content=None)
 
 Fixes, improvements, changes (highlights):
- - improve and generalize lang.Binder behavior
- - enable svgling for internal tree drawing
- - improvements to the relative clause notebook
 
-## [0.6.6] - Bugfix release - 2021-10-11
+- improve and generalize lang.Binder behavior
+- enable svgling for internal tree drawing
+- improvements to the relative clause notebook
+
+## [0.6.6] - Bugfix release / python packaging - 2021-10-11
+
+This is the first version that was released on PyPI.
 
 New features:
- - added an explicit changelog
- - experimental support for derivations shown using `svgling` trees
- - full support for installation in `site-packages`, better kernel installation
+
+- added an explicit changelog in this version. (Older changes in this document
+  are backfilled from commit messages.)
+- experimental support for derivations shown using `svgling` trees
+- full support for installation in `site-packages`, better kernel installation
 
 Fixes, improvements, changes (highlights):
- - improve derivation rendering
- - improve cross-browser compatibility
- - improve error messaging and handling of composition failures
+
+- improve derivation rendering
+- improve cross-browser compatibility
+- improve error messaging and handling of composition failures
+
+## [0.6.5] - Bugfix release - 2018-10-10
+
+Documentation and notebooks:
+
+- Intensional scope fragment (primarily based on Keshet's work)
+
+Fixes, improvements, changes (highlights):
+
+- Test improvements
+- Partiality rework
+- CI (via Travis)
+- repr improvements
+
+## [0.6.4] - Partiality and simplification - 2017-11-03
+
+(Note: in conventional commit terms this should have definitely been a major
+version bump.)
+
+New features:
+
+- Change Predicate Abstraction based on Coppock's version in Semantics Boot Camp
+  (now Coppock and Champollion)
+- Recursive simplification for boolean expressions, numbers
+- Lexical ambiguity in `Item`s
+- Metalanguage operator `ExistsExact`
+- Initial implementation of Heim & Kratzer-style presuppositions via partiality
+- Disjunctive type constructor, for ad-hoc polymorphism over simple types; and
+  corresponding `Disjunction` objects in the metalanguage
+- testing infrastructure, random expression generation
+
+Documentation:
+
+- New introductory demo notebook
+- New fragment: compositional DRT (from Dee Ann Reisinger)
+- Metalanguage quick reference
+
+Fixes, improvements, changes (highlights):
+
+- Fixes and improvements to polymorphism, better testing
+- Improvements to composition systems, especially tree-based composition
+- Improvements to rich reprs
+
+## [0.6.3] - Bugfix update - 2016-09-28
+
+New feature:
+
+- Allow spaces and underscores in `Item` names
+
+Fixes, improvements, changes (highlights):
+
+- various display fixes
+- update for nltk 3+
+- documentation / notebook fixes
+- improvements to packaging
+
+## [0.6.2] - Bugfix update - 2016-02-13
+
+- packaging improvements and fixes
+
+## [0.6.1] - Bugfix update - 2016-02-07
+
+- fix a fragment notebook
+
+## [0.6] - Polymorphism - 2016-02-07
+
+New features:
+
+- Support for polymorphic types and inference via type variables
+- Corresponding metalanguage updates
+
+Fixes, improvements, changes (highlights):
+
+- Improvements for IPython 3
+
+## [0.5.1] - interim release - 2015-02-09
+
+New features:
+
+- %te magic
+- new renderers for recursive / tree-like composition displays
+
+Fixes, improvements, changes (highlights):
+
+- improvements to rich reprs
+- fixes to reduction
+
+## [0.5] - First public release - 2014-10-06
+
+This version was aiming at basic intro to semantics feature completeness:
+
+- the lambda notebook IPython kernel
+- types for a simply-typed lambda calculus
+- a matching more-or-less complete metalanguage for simply-typed lambda calculus
+- composition systems, rich repr rendering, integration with nltk `Tree`
+- various demo and fragment notebooks
+- packaging (now completely deprecated)
+
+(Version control begins 2014-01-01.)
