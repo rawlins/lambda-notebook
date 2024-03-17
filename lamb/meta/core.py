@@ -3952,6 +3952,13 @@ class BindingOp(TypedExpr):
     def body(self):
         return self.args[1]        
 
+    def finite_safe(self):
+        return self[0].type.domain.enumerable() and self[0].type.domain.finite
+
+    def domain_iter(self):
+        # this may be (probably is!) a non-stopping iterator
+        return iter(self[0].type.domain)
+
     @classmethod
     def compile_ops_re(cls):
         """Recompile the regex for detecting operators."""

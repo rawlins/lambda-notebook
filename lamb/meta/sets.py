@@ -127,22 +127,22 @@ class ConditionSet(BindingOp):
         if is_emptyset(self):
             return lambda context: set()
 
-        if domain is None and not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
-            raise NotImplementedError("Compiled ConditionSet requires a guaranteed-finite domain")
-        f = self.to_characteristic()._compiled
         if domain is None:
-            domain = lambda context: tuple(self[0].type.domain)
+            if not self.finite_safe():
+                raise NotImplementedError("Compiled ConditionSet requires a guaranteed-finite domain")
+            fixed_domain = tuple(self.domain_iter())
+            domain = lambda context: fixed_domain
+        f = self.to_characteristic()._compiled
         return lambda context: {elem for elem in domain(context) if f(context)(elem)}
 
     def eliminate(self, **sopts):
-        # this is a bit wacky. But for the case where there are no free terms
-        # at all, we can convert to a ListedSet via domain enumeration. I'm
-        # not sure how generally useful this is...
-        if self[0].type.domain.finite and not self.free_terms():
+        # For the case where there are no free terms at all, we can convert to
+        # a ListedSet via domain enumeration.
+        if self.finite_safe() and not self.free_terms():
             a = self.scope_assignment()
             sopts['evaluate'] = True
             subs = [MetaTerm(elem, typ=self[0].type)
-                    for elem in self[0].type.domain
+                    for elem in self.domain_iter()
                     if self[1]
                             .under_assignment(a | {self.varname : elem})
                             .simplify_all(**sopts) == true_term]

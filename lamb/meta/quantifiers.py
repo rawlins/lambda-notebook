@@ -60,10 +60,10 @@ class ForallUnary(BindingOp):
             assignment=assignment, type_check=type_check)
 
     def to_conjunction(self, assignment=None):
-        if self[0].type.domain.finite:
+        if self.finite_safe():
             a = self.scope_assignment(assignment=assignment)
             subs = [self[1].under_assignment(a | {self.varname : meta.MetaTerm(elem, typ=self[0].type)})
-                    for elem in self[0].type.domain]
+                    for elem in self.domain_iter()]
             return derived(boolean.BinaryAndExpr.join(subs, empty=True),
                 self,
                 f"∀{self.varname} => ∧")
@@ -73,14 +73,14 @@ class ForallUnary(BindingOp):
         return self.to_conjunction(assignment=assignment)
 
     def _compile(self):
-        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+        if not self.finite_safe():
             raise NotImplementedError("Compiled ∀ quantification requires a guaranteed finite/enumerable domain")
         if self.vacuous():
             return lambda context: True
         # compile *with* a specific domain
         # XX this is a bit slow to access; an iterator is faster but doesn't work
         # for compilation because it's not resettable
-        domain = tuple(self[0].type.domain)
+        domain = tuple(self.domain_iter())
         body = self[1]._compiled
         def c(context):
             old = context.get(self.varname, None)
@@ -105,15 +105,14 @@ class ForallUnary(BindingOp):
             return derived(true_term, self, "∀ triviality with empty domain")
         elif (get_sopt('evaluate', sopts)
                     and not self.free_terms()
-                    and self[0].type.domain.enumerable()
-                    and self[0].type.domain.finite):
+                    and self.finite_safe()):
             a = self.scope_assignment(assignment=assignment)
             body = self[1].simplify_all(**sopts)
             # disabling alphanorm for the loop is heuristic, but for many cases
             # doing a single pre-simplification will hopefully get scenarios
             # that alphanorm would speed up.
             sopts['alphanorm'] = False
-            for elem in self[0].type.domain:
+            for elem in self.domain_iter():
                 a[self.varname] = meta.MetaTerm(elem, typ=self[0].type)
                 # XX how to handle OutOfDomain
                 # XX should this call simplify_all or something more targeted?
@@ -159,10 +158,10 @@ class ExistsUnary(BindingOp):
             assignment=assignment, type_check=type_check)
 
     def to_disjunction(self, assignment=None):
-        if self[0].type.domain.enumerable() and self[0].type.domain.finite:
+        if self.finite_safe():
             a = self.scope_assignment(assignment=assignment)
             subs = [self[1].under_assignment(a | {self.varname : meta.MetaTerm(elem, typ=self[0].type)})
-                    for elem in self[0].type.domain]
+                    for elem in self.domain_iter()]
             return derived(boolean.BinaryOrExpr.join(subs, empty=False),
                 self,
                 f"∃{self.varname} => ∨")
@@ -172,11 +171,11 @@ class ExistsUnary(BindingOp):
         return self.to_disjunction(assignment=assignment)
 
     def _compile(self):
-        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+        if not self.finite_safe():
             raise NotImplementedError("Compiled ∃ quantification requires a guaranteed finite/enumerable domain")
         if self.vacuous():
             return lambda context: False
-        domain = tuple(self[0].type.domain)
+        domain = tuple(self.domain_iter())
         body = self[1]._compiled
         def c(context):
             old = context.get(self.varname, None)
@@ -201,15 +200,14 @@ class ExistsUnary(BindingOp):
                 return derived(self.body.copy(), self, "trivial ∃ elimination")
         elif (get_sopt('evaluate', sopts)
                     and not self.free_terms()
-                    and self[0].type.domain.enumerable()
-                    and self[0].type.domain.finite):
+                    and self.finite_safe()):
             a = self.scope_assignment(assignment=assignment)
             body = self[1].simplify_all(**sopts)
             # disabling alphanorm for the loop is heuristic, but for many cases
             # doing a single pre-simplification will hopefully get scenarios
             # that alphanorm would speed up.
             sopts['alphanorm'] = False
-            for elem in self[0].type.domain:
+            for elem in self.domain_iter():
                 a[self.varname] = meta.MetaTerm(elem, typ=self[0].type)
                 # XX how to handle OutOfDomain
                 cur = body.under_assignment(a, track_all_names=True).simplify_all(**sopts)
@@ -291,11 +289,11 @@ class ExistsExact(BindingOp):
         return result
 
     def _compile(self):
-        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+        if not self.finite_safe():
             raise NotImplementedError("Compiled ∃! quantification requires a guaranteed finite/enumerable domain")
         if self.vacuous():
             return lambda context: False
-        domain = tuple(self[0].type.domain)
+        domain = tuple(self.domain_iter())
         body = self[1]._compiled
         def c(context):
             old = context.get(self.varname, None)
@@ -325,8 +323,7 @@ class ExistsExact(BindingOp):
                 return derived(false_term, self, f"∃! triviality ({reason})")
         elif (get_sopt('evaluate', sopts)
                         and not self.free_terms()
-                        and self[0].type.domain.enumerable()
-                        and self[0].type.domain.finite):
+                        and self.finite_safe()):
             a = self.scope_assignment(assignment=assignment)
             body = self[1].simplify_all(**sopts)
             # disabling alphanorm for the loop is heuristic, but for many cases
@@ -334,7 +331,7 @@ class ExistsExact(BindingOp):
             # that alphanorm would speed up.
             sopts['alphanorm'] = False
             verifier, counterexample, sub = find_unique_evaluation(
-                self[0].type.domain,
+                self.domain_iter(),
                 body,
                 (lambda t : ply.simplify_all(t, **sopts)),
                 self.varname,
@@ -403,11 +400,11 @@ class IotaUnary(BindingOp):
 
     def _compile(self):
         # XX code dup
-        if not (self[0].type.domain.enumerable() and self[0].type.domain.finite):
+        if not self.finite_safe():
             raise NotImplementedError("Compiled ∃! quantification requires a guaranteed finite/enumerable domain")
         if self.vacuous():
             return lambda context: False
-        domain = tuple(self[0].type.domain)
+        domain = tuple(self.domain_iter())
         body = self[1]._compiled
         def c(context):
             # could pre-select the domain, but this allows for it to change
@@ -443,15 +440,14 @@ class IotaUnary(BindingOp):
                 return self
         elif (get_sopt('evaluate', sopts)
                     and not self.free_terms()
-                    and self[0].type.domain.enumerable()
-                    and self[0].type.domain.finite):
+                    and self.finite_safe()):
             body = self[1].simplify_all(**sopts)
             # disabling alphanorm for the loop is heuristic, but for many cases
             # doing a single pre-simplification will hopefully get scenarios
             # that alphanorm would speed up.
             sopts['alphanorm'] = False
             verifier, counterexample, sub = find_unique_evaluation(
-                self[0].type.domain,
+                self.domain_iter(),
                 body,
                 (lambda t : ply.simplify_all(t, **sopts)),
                 self.varname,
