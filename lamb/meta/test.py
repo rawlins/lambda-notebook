@@ -3,7 +3,7 @@ import collections.abc
 import lamb
 from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
-from . import core, boolean, number, sets, meta
+from . import core, boolean, number, sets, meta, quantifiers
 from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
 from .core import is_concrete
 from .meta import MetaTerm
@@ -28,7 +28,7 @@ def random_term(typ=None, blockset=None, usedset=set(), prob_used=0.8,
 def random_binding_expr(ctrl, max_type_depth=1):
     global random_used_vars
     ts = get_type_system()
-    options = [boolean.ForallUnary, boolean.ExistsUnary, boolean.ExistsExact]
+    options = [quantifiers.ForallUnary, quantifiers.ExistsUnary, quantifiers.ExistsExact]
     op_class = random.choice(options)
     var_type = ts.random_type(max_type_depth, 0.5)
     variable = random_term(var_type, usedset=random_used_vars, prob_used=0.2,
@@ -305,11 +305,11 @@ te_classes = [core.ApplicationExpr,
               boolean.BinaryArrowExpr,
               boolean.BinaryBiarrowExpr,
               boolean.BinaryNeqExpr,
-              boolean.ForallUnary,
-              boolean.ExistsUnary,
-              boolean.ExistsExact,
-              boolean.IotaUnary,
-              boolean.IotaPartial,
+              quantifiers.ForallUnary,
+              quantifiers.ExistsUnary,
+              quantifiers.ExistsExact,
+              quantifiers.IotaUnary,
+              quantifiers.IotaPartial,
               number.UnaryNegativeExpr,
               number.UnaryPositiveExpr,
               number.BinaryLExpr,

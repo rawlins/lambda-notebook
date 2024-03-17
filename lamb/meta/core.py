@@ -3884,7 +3884,7 @@ class BindingOp(TypedExpr):
         if i == len(self) - 1:
             return "body"
         else:
-            return self.super().name_of(i)
+            return super().name_of(i)
 
     def scope_assignment(self, assignment=None):
         if assignment is None:
@@ -4066,7 +4066,7 @@ class BindingOp(TypedExpr):
     def project_partiality_strict(b, body, condition):
         # refactor somehow?
         from .sets import ConditionSet
-        from .boolean import ForallUnary
+        from .quantifiers import ForallUnary
         b_cls = type(b)
         if isinstance(b, ConditionSet) or isinstance(b, LFun):
             return b
@@ -4077,7 +4077,7 @@ class BindingOp(TypedExpr):
     def project_partiality_weak(b, body, condition):
         # refactor somehow?
         from .sets import ConditionSet
-        from .boolean import ForallUnary, ExistsUnary, IotaUnary, ExistsExact
+        from .quantifiers import ForallUnary, ExistsUnary, IotaUnary, ExistsExact
         b_cls = type(b)
         if isinstance(b, ForallUnary):
             return Partial(b_cls(b.var_instance, body),

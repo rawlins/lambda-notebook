@@ -1,4 +1,4 @@
-__all__ = ['core', 'boolean', 'meta', 'number', 'ply', 'sets', 'test']
+__all__ = ['core', 'boolean', 'meta', 'number', 'ply', 'quantifiers', 'sets', 'test']
 
 # -*- coding: utf-8 -*-
 from numbers import Number
@@ -7,7 +7,7 @@ from lamb.types import TypeMismatch, type_e, type_t, type_n
 from lamb.types import type_property, type_transitive, BasicType, FunType
 # from lamb.utils import *
 
-from lamb.meta import core, boolean, meta, number, ply, sets, test
+from lamb.meta import core, boolean, meta, number, ply, quantifiers, sets, test
 from lamb.meta.core import TypedExpr, TypedTerm, CustomTerm, ApplicationExpr
 from lamb.meta.core import LFun, BindingOp
 from lamb.meta.core import Tuple, TupleIndex, Partial, Disjunctive, BinaryGenericEqExpr
@@ -31,9 +31,8 @@ from lamb.meta.meta import truthtable, truthtable_equiv, MetaTerm
 def default_metalanguage():
     registry.clear()
     registry.add_binding_op(LFun)
-    boolean.setup_operators()
-    number.setup_operators()
-    sets.setup_operators()
+    for m in [boolean, number, sets, quantifiers]:
+        m.setup_operators()
     registry.add_operator(core.BinaryGenericEqExpr, None, None)
 
 default_metalanguage()

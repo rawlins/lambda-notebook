@@ -8,7 +8,8 @@ from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality
 from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key
-from .boolean import BinaryOrExpr, BinaryAndExpr, ForallUnary, ExistsUnary, false_term, true_term
+from .boolean import BinaryOrExpr, BinaryAndExpr, false_term, true_term
+from .quantifiers import ForallUnary, ExistsUnary
 from lamb.utils import dbg_print
 from lamb.types import type_t, SetType
 
