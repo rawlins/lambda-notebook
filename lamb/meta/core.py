@@ -545,13 +545,13 @@ class TermTypeMapping(object):
         if not self.let_polymorphic:
             return repr(self.principal)
         else:
-            return f"{repr(self.principal)}[{", ".join(repr(s) for s in self.specializations)}]"
+            return f"{repr(self.principal)}[{', '.join(repr(s) for s in self.specializations)}]"
 
     def latex_str(self, **kwargs):
         if not self.let_polymorphic:
             return self.principal.latex_str()
         else:
-            return f"{self.principal.latex_str()}[{", ".join(s.latex_str() for s in self.specializations)}]"
+            return f"{self.principal.latex_str()}[{', '.join(s.latex_str() for s in self.specializations)}]"
 
     def __str__(self):
         return f"{self.term_name}: {repr(self)}"
