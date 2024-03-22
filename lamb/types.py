@@ -302,6 +302,19 @@ class CachableType:
     def __repr__(self):
         return repr(self.t)
 
+
+try:
+    from itertools import batched # py3.12 only
+except:
+    # back compat placeholder, XX hopefully his is robust enough
+    def batched(iterable, size):
+        sourceiter = iter(iterable)
+        while True:
+            batchiter = itertools.islice(sourceiter, size)
+            # the following will raise StopIteration when needed
+            yield itertools.chain([next(batchiter)], batchiter)
+
+
 class TypeConstructor(object):
     domain_class = None
     def __init__(self, domain=None):
@@ -362,7 +375,7 @@ class TypeConstructor(object):
                 raise ValueError(f"Can't get subdomain by count for non-enumerable domain of type {repr(self)}")
             if self.domain.cardinality() < count:
                 raise ValueError(f"Domain for type {repr(self)} is too small to get {count} elements")
-            values = set(next(itertools.batched(self.domain, count)))
+            values = set(next(batched(self.domain, count)))
         if not values or count == 0:
             raise ValueError("Domain restriction can't be empty")
         if self.domain.finite:
