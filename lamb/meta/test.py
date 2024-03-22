@@ -650,6 +650,18 @@ class MetaTest(unittest.TestCase):
         # type:
         self.assertEqual(env.term_type('x'), tp("∀<<e,<X,e>>,t>"))
 
+        # test the interaction of an inferred type mapping during parsing, and
+        # an externally imposed type assignment.
+        e1 = (te("P_Z(x_<X,Y>) & Q_Z2(x_<X1,Y1>)", let=False)
+                .under_type_assignment({tp('Y1'):tp('Y'), tp('X1'):tp('X')})
+                .regularize_type_env())
+        e2 = (te("P_Z(x_<X,Y>) & Q_Z2(x_<X1,Y1>)", let=False)
+                .under_type_assignment({tp('Y'):tp('Y1'), tp('X'):tp('X1')})
+                .regularize_type_env())
+        self.assertNotEqual(e1, e2)
+        self.assertEqual(e1, te("(P_<<X,Y>,t>(x_<X,Y>) & Q_<<X,Y>,t>(x_<X,Y>))"))
+        self.assertEqual(e2, te("(P_<<X1,Y1>,t>(x_<X1,Y1>) & Q_<<X1,Y1>,t>(x_<X1,Y1>))"))
+
     def test_let_polymorphism(self):
         # introduced variable names are implementation dependent
 

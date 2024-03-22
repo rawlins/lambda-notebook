@@ -1524,7 +1524,6 @@ class TypedExpr(object):
         return self.under_type_assignment(env.type_mapping,
                                                         merge_intersect=False)
 
-
     def compact_type_vars(self, unsafe=None, store_mapping=False):
         return let_compact_type_vars(self, unsafe=unsafe,
                                             store_mapping=store_mapping)
@@ -1617,12 +1616,17 @@ class TypedExpr(object):
             result.type = copy_type
         if reset:
             result.get_type_env(force_recalc=True)
+
+        # order in the following is important. If the two envs have competing
+        # mappings, e.g. X1:?1 and ?1:X1, then we want to prioritize the
+        # mapping from the `mapping` argument to this function.
         if merge_intersect:
-            result.set_type_env(result.get_type_env().intersect_merge(
-                                                TypeEnv(type_mapping=mapping)))
+            result.set_type_env(TypeEnv(type_mapping=mapping).intersect_merge(
+                                                result.get_type_env()))
         else:
-            result.set_type_env(result.get_type_env().merge(
-                                                TypeEnv(type_mapping=mapping)))
+            result.set_type_env(TypeEnv(type_mapping=mapping).merge(
+                                                result.get_type_env()))
+
         # need to set a derivation step for this in the calling function.
         result.derivation = self.derivation
         return result
@@ -3862,7 +3866,7 @@ class BindingOp(TypedExpr):
             # the bound variable that need to be finalized
             self.init_body(self.body.regularize_type_env())
             self.init_var_by_instance(
-                self.var_instance.under_type_assignment(body_env.type_mapping,
+                self.var_instance.under_type_assignment(self.body.get_type_env().type_mapping,
                                                         merge_intersect=False))
         else:
             self.init_body(body)
