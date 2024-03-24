@@ -570,7 +570,7 @@ class BasicType(TypeConstructor):
 class FunDomainSet(ComplexDomainSet):
     def __init__(self, typ):
         finite = (isinstance(typ.left.domain, DomainSet) and typ.left.domain.finite
-                    and isinstance(typ.left.domain, DomainSet) and typ.left.domain.finite)
+                    and isinstance(typ.right.domain, DomainSet) and typ.right.domain.finite)
         super().__init__("Fun", typ, finite=finite)
 
     def infcheck(self, x):
