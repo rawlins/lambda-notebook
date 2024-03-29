@@ -1,6 +1,7 @@
 import sys, re, logging, random, functools, inspect, operator
 import collections
 from numbers import Number
+from dataclasses import dataclass
 
 import lamb
 from lamb import types, parsing, utils
@@ -1169,12 +1170,12 @@ class TypedExpr(object):
         try:
             result = eval(to_eval, dict(), lcopy)
         except SyntaxError as e:
-            with parsing.parse_error_wrap("Binding operator parse error",
+            with parsing.parse_error_wrap("Binding expression parse error",
                                             s=pre_expansion):
                 # try to induce some more informative error messages
                 # if re.match(BindingOp.init_op_regex, pre_expansion):
                 if BindingOp.init_op_match(pre_expansion):
-                    BindingOp.try_parse_header(pre_expansion)
+                    BindingOp.try_parse_header([pre_expansion])
             # n.b. the msg here is probably just a placeholder, it should get
             # overridden.
             raise parsing.ParseError("Failed to parse expression", s=s, e=e)
@@ -1791,7 +1792,7 @@ class TypedExpr(object):
                 return result.simplify_point(sopts)
         for i in range(len(result.args)):
             # simple: go left to right, no repeats.
-            new_arg_i = result.args[i].simplify_all(**sopts)
+            new_arg_i = result.args[i]._simplify_all_r(**sopts)
             if new_arg_i is not result.args[i]:
                 result = derived(result.subst(i, new_arg_i), result,
                     desc=f"Recursive simplification of {result.name_of(i)}",
@@ -1833,17 +1834,21 @@ class TypedExpr(object):
         # regular interpreter...
 
         result = self
+        # don't apply `reduce` or `calc_partiality` recursively, since they are
+        # already recursive. Any subcall that restarts simplify_all will
+        # trigger them, though.
         if get_sopt('reduce', sopts):
             result = result.reduce_all()
-            # don't apply `reduce` recursively, it is already recursive
-            sopts['reduce'] = False
 
         if get_sopt('calc_partiality', sopts):
             # similarly, don't apply calculate_partiality recursively. Note that
             # calculate_partiality may itself call simplify_all.
             sopts['calc_partiality'] = False
-            result = result.calculate_partiality(**sopts)
 
+        return result._simplify_all_r(pre=pre, **sopts)
+
+    def _simplify_all_r(self, pre=False, **sopts):
+        result = self
         # do this before the normal simplify pass, since it almost guarantees
         # something that will feed the rest of simplification
         while get_sopt('eliminate_quantifiers', sopts) and isinstance(result, BindingOp):
@@ -1852,7 +1857,6 @@ class TypedExpr(object):
             # this is subject to combinatorial blowup with the size of the domain
             r2 = result.eliminate(**sopts)
             if r2 is result:
-                result = r2
                 break
             result = r2
 
@@ -2124,6 +2128,8 @@ class TypedExpr(object):
     # floordiv, matmul
     # XX add right versions for at least some of these? Right now e.g. left
     # addition with a python number works, right doesn't
+    # XX also work around the subclass priority issue for right versions
+    # (including __gt__ and __ge__...)
     def __and__(self, other):    return self.factory('&',  self, other)
     def __invert__(self):        return self.factory('~',  self)
     def __lshift__(self, other): return self.factory('<<', self, other)
@@ -2886,13 +2892,16 @@ class Partial(TypedExpr):
             return super().__hash__()
 
     def _compile(self):
-        err = f"Condition failed on compiled `{repr(self)}`"
+        # err = f"Condition failed on compiled `{repr(self)}`"
         body = self[0]._compiled
         cond = self[1]._compiled
+        from .meta import DomainError
+        # XX this error message is not particularly clear
+        err = DomainError(self[0], self, f"Condition failed on compiled `Partial`")
         def c(context):
             if not cond(context):
                 # XX revisit at some point
-                raise DomainError(err)
+                raise err
             return body(context)
         return c
 
@@ -3732,6 +3741,70 @@ class TupleIndex(SyncatOpExpr):
 global recurse_level
 recurse_level = 0
 
+# for use in parsing
+@dataclass
+class BindingOpHeader:
+    op_class: type
+    var_seq: list[tuple[str, types.TypeConstructor]] # py39 syntax
+    restrictor: TypedExpr = None
+
+    def classprop(self, k, default=None):
+        return getattr(self.op_class, k, default)
+
+    def ensure_types(self):
+        for i in range(len(self.var_seq)):
+            if self.var_seq[i][1] is None:
+                self.var_seq[i] = (self.var_seq[i][0],
+                            default_variable_type(self.var_seq[i][0]))
+
+    def precheck(self):
+        # side effect: will initialize any `None` types to the default type
+        # for the variable name
+        for i in range(len(self.var_seq)):
+            if not is_var_symbol(self.var_seq[i][0]):
+                raise parsing.ParseError(
+                    "Need variable name in binding expression"
+                    f" (received `{self.var_seq[i][0]}`)")
+            if self.var_seq[i][1] is None:
+                self.var_seq[i] = (self.var_seq[i][0],
+                            default_variable_type(self.var_seq[i][0]))
+
+        if not self.classprop('allow_multivars') and len(self.var_seq) > 1:
+            raise parsing.ParseError(
+                f"Operator class `{self.op_class.canonical_name}` does not"
+                " allow >1 variables")
+
+        if not self.classprop('allow_novars') and len(self.var_seq) == 0:
+            raise parsing.ParseError(
+                f"Operator class `{self.op_class.canonical_name}` does not"
+                " allow 0 variables")
+
+        if not self.classprop('allow_restrictor') and self.restrictor is not None:
+            raise parsing.ParseError(
+                f"Operator class `{self.op_class.canonical_name}` does not"
+                " allow a restrictor")
+
+        # note: type of restrictor not checked here! Instantiating class is
+        # responsible for that.
+
+    def get_kwargs(self, assignment=None):
+        kwargs = dict(assignment=assignment)
+        if self.classprop('allow_restrictor'):
+            kwargs['restrictor'] = self.restrictor
+        return kwargs
+
+    def factory(self, body, assignment=None):
+        self.precheck()
+        if self.classprop('allow_novars') or self.classprop('allow_multivars'):
+            # constructor should take an n-ary sequence of varname,type
+            var_arg = self.var_seq
+        else:
+            # constructor should take a single variable
+            var_arg = self.var_seq[0]
+
+        return self.op_class(var_arg, body, **self.get_kwargs())
+
+
 class BindingOp(TypedExpr):
     """Abstract class for a unary operator with a body that binds a single
     variable in its body.
@@ -3762,47 +3835,7 @@ class BindingOp(TypedExpr):
     associative = False # x ∀ (y ∀ p) != (x ∀ y) ∀ p [which is not well-formed]
     left_assoc = False # associativity is (must be) right: (x ∀ (y ∀ (z ∀ p)))
 
-    @classmethod
-    def binding_op_precheck(self, op_class, var_list):
-        for i in range(len(var_list)):
-            if not is_var_symbol(var_list[i][0]):
-                raise parsing.ParseError(
-                    "Need variable name in binding operator expression"
-                    " (received `%s`)" % var_list[i][0], None)
-        if (not op_class.allow_multivars) and len(var_list) > 1:
-            raise parsing.ParseError(
-                "Operator class `%s` does not allow >1 variables"
-                % (op_class.canonical_name), None)
-        if (not op_class.allow_novars) and len(var_list) == 0:
-            raise parsing.ParseError(
-                "Operator class `%s` does not allow 0 variables"
-                % (op_class.canonical_name), None)
-
-    @classmethod
-    def binding_op_factory(cls, op_class, var_list, body, assignment=None):
-        cls.binding_op_precheck(op_class, var_list)
-        for i in range(len(var_list)):
-            if var_list[i][1] is None:
-                var_list[i] = (var_list[i][0],
-                                default_variable_type(var_list[i][0]))
-        # len(var_list) is checked in precheck
-        if op_class.allow_multivars or op_class.allow_novars:
-            return op_class(var_list, body, assignment=assignment)
-        else:
-            return op_class(var_list[0], body, assignment=assignment)
-
-    def __init__(self, var, body,
-                typ, # require this to be provided, but it may be None (see below)
-                varname=None, vartype=None, body_type=None,
-                assignment=None, type_check=True):
-        # NOTE: this does not call the superclass constructor
-
-        # default assumption for body type: type of the whole thing = type
-        # of the body. This is a bit arbitrary, but is true for standard
-        # logical binders.
-        if body_type is None:
-            body_type = typ
-
+    def _var_init_params(self, var, varname=None, vartype=None):
         if isinstance(var, str):
             varname = var
         elif isinstance(var, TypedTerm):
@@ -3822,6 +3855,23 @@ class BindingOp(TypedExpr):
             raise ValueError(f"BindingOp needs a variable type (got `{repr(vartype)}`)")
         if not is_var_symbol(varname):
             raise ValueError(f"BindingOp needs a variable name (got `{repr(varname)}`)")
+
+        return varname, vartype
+
+
+    def __init__(self, var, body,
+                typ, # require this to be provided, but it may be None (see below)
+                varname=None, vartype=None, body_type=None,
+                assignment=None, type_check=True):
+        # NOTE: this does not call the superclass constructor
+
+        # default assumption for body type: type of the whole thing = type
+        # of the body. This is a bit arbitrary, but is true for standard
+        # logical binders.
+        if body_type is None:
+            body_type = typ
+
+        varname, vartype = self._var_init_params(var, varname=varname, vartype=vartype)
 
         # Warning: can't assume in general that `typ` is not `None`. Several
         # subclasses set it themselves after calling the constructor.
@@ -3852,7 +3902,10 @@ class BindingOp(TypedExpr):
                 self.init_body(self.ensure_typed_expr(body, body_type,
                                                         assignment=sassign))
             except types.TypeMismatch as e:
+                old = e.error
                 e.error = f"Failed to ensure body type `{body_type}` for operator class `{self.canonical_name}`"
+                if old:
+                    e.error += ": " + old
                 raise e
             body_env = self.body.get_type_env()
             if self.varname in body_env.terms(): # binding can be vacuous
@@ -3909,10 +3962,10 @@ class BindingOp(TypedExpr):
         assert len(self.args) == 2
 
     def apply_var_constraints(self):
-        # it's tempting to fully disallow polymorphic variables for classical
-        # operators. However, currently, Set is supposed to support these, and
-        # therefore set simplification (which uses quantifiers) also needs to
-        # support them.
+        # disable let-polymorphic types by default; for most subclasses this
+        # is more confusing than useful. Regular polymorphic variables are
+        # still allowed, and in fact often extremely useful / necessary for
+        # writing abstract combinators, monads, etc.
         if self.vartype.is_let_polymorphic():
             raise parsing.ParseError(
                 f"operator class `{self.canonical_name}` disallows let-polymorphic bound variables (got `{repr(self.var_instance)}`)")
@@ -3959,9 +4012,21 @@ class BindingOp(TypedExpr):
     def finite_safe(self):
         return self[0].type.domain.enumerable() and self[0].type.domain.finite
 
+    def type_domain_iter(self):
+        # wrap domain elements in MetaTerms
+        from .meta import MetaTerm
+        yield from map(
+            lambda x: MetaTerm(x, typ=self[0].type),
+            iter(self[0].type.domain))
+
     def domain_iter(self):
         # this may be (probably is!) a non-stopping iterator
-        return iter(self[0].type.domain)
+        return self.type_domain_iter()
+
+    def domain_cardinality(self):
+        if isinstance(self.vartype.domain, types.DomainSet):
+            return self.vartype.domain.cardinality()
+        return None
 
     @classmethod
     def compile_ops_re(cls):
@@ -4006,10 +4071,10 @@ class BindingOp(TypedExpr):
 
         Returns a copy.  Will not affect types of either the expression or the
         variables."""
-        new_self = self.copy()
-        new_self.init_body(variable_convert(self.body, {self.varname: new_varname}))
-        new_self.init_var(name=new_varname)
-        return new_self
+        args = self.args.copy()
+        args[0] = TypedTerm(new_varname, self.vartype)
+        args[1] = variable_convert(self.body, {self.varname: new_varname})
+        return self.copy_local(*args)
 
     def latex_op_str(self):
         return self.latex_op_str_short()
@@ -4051,8 +4116,7 @@ class BindingOp(TypedExpr):
         return super().bound_variables() | {self.varname}
 
     def calc_type_env(self, recalculate=False):
-        # general code for almost all BindingOp subclasses. The once case that
-        # needs to be more complicated is LFun.
+        # general code used in almost all BindingOp subclasses.
 
         # start with the type environment from the body
         sub_env = self.body.get_type_env(force_recalc=recalculate).copy()
@@ -4069,6 +4133,7 @@ class BindingOp(TypedExpr):
     def vacuous(self):
         """Return true just in case the operator's variable is not free in the
         body expression."""
+        # XX this doesn't handle multivar/novar cases...
         return self.varname not in self[1].free_variables()
 
     def term(self):
@@ -4077,28 +4142,28 @@ class BindingOp(TypedExpr):
     def project_partiality_strict(b, body, condition):
         # refactor somehow?
         from .sets import ConditionSet
-        from .quantifiers import ForallUnary
+        from .quantifiers import Forall
         b_cls = type(b)
         if isinstance(b, ConditionSet) or isinstance(b, LFun):
             return b
         else: # IotaPartial handled in subclass
             return Partial(b_cls(b.var_instance, body),
-                                            ForallUnary(b.var_instance, body))
+                                            Forall(b.var_instance, body))
 
     def project_partiality_weak(b, body, condition):
         # refactor somehow?
         from .sets import ConditionSet
-        from .quantifiers import ForallUnary, ExistsUnary, IotaUnary, ExistsExact
+        from .quantifiers import Forall, Exists, Iota, ExistsExact
         b_cls = type(b)
-        if isinstance(b, ForallUnary):
+        if isinstance(b, Forall):
             return Partial(b_cls(b.var_instance, body),
                                             b_cls(b.var_instance, condition))
-        elif isinstance(b, ExistsUnary) or isinstance(b, ExistsExact):
+        elif isinstance(b, Exists) or isinstance(b, ExistsExact):
             return Partial(b_cls(b.var_instance, body & condition),
                                             b_cls(b.var_instance, condition))
-        elif isinstance(b, IotaUnary): # does this lead to scope issues for the condition?
+        elif isinstance(b, Iota): # does this lead to scope issues for the condition?
             return Partial(b_cls(b.var_instance, body & condition),
-                                        ExistsUnary(b.var_instance, condition))
+                                        Exists(b.var_instance, condition))
         elif isinstance(b, ConditionSet) or isinstance(b, LFun):
             return b
         else: # IotaPartial handled in subclass
@@ -4153,7 +4218,7 @@ class BindingOp(TypedExpr):
             return result
 
     @classmethod
-    def try_parse_header(cls, s, assignment=None, locals=None):
+    def try_parse_header(cls, struc, assignment=None, locals=None):
         """Try and parse the header of a binding operator expression, i.e.
         everything up to the body including ':'.
 
@@ -4166,15 +4231,15 @@ class BindingOp(TypedExpr):
 
         global registry
 
+        if len(struc) == 0 or not isinstance(struc[0], str):
+            return None
+
+        potential_header = struc[0]
         i = 0
-        # if BindingOp.init_op_regex is None:
-        #     return None # no operators to parse
-        # op_match = re.match(BindingOp.init_op_regex, s)
-        op_match = cls.init_op_match(s)
-        if not op_match:
+        if not (op_match := cls.init_op_match(potential_header)):
             raise parsing.ParseError(
-                "Unknown operator when trying to parse binding operator expression",
-                s, None, met_preconditions=False)
+                "Unknown operator when trying to parse binding expression",
+                potential_header, None, met_preconditions=False)
         op_name, i = op_match
 
         if op_name in registry.canonicalize_binding_ops:
@@ -4185,28 +4250,62 @@ class BindingOp(TypedExpr):
                 % op_name)
         op_class = registry.binding_ops[op_name]
 
-        split = s.split(":", 1)
-        header = split[0]
-        vname = header[i:].strip() # removes everything but a variable name
+        i = parsing.consume_whitespace(potential_header, i)
+
+        new_struc = [potential_header[i:]] + struc[1:]
+        # if `:` can ever appear in types, this will go wrong
+        main_split = parsing.struc_split(new_struc, ":")
+        # XX the whitespace here is a bit unfortunate. Currently, it prevents
+        # matching in a complex functional type...
+        restric_split = parsing.struc_split(main_split[0], " <<")
+        # assumption: no structure in header before <<
+        if len(restric_split) > 1 and len(restric_split[0]) > 1:
+            raise parsing.ParseError(
+                "Extraneous material in binding expression before `<<`",
+                s=flatten_paren_struc(main_split[0]),
+                met_preconditions=True)
+
+        if len(restric_split[0]) == 0:
+            vname = ""
+        else:
+            vname = restric_split[0][0].strip()
+
+        if vname.startswith("<<"):
+            # cleanup from above hack, so that errors make more sense
+            vname = ""
+            restric_split = parsing.struc_split(main_split[0], "<<")
+
         try:
             var_seq = parsing.try_parse_term_sequence(vname, lower_bound=None,
                                     upper_bound=None, assignment=assignment)
-            cls.binding_op_precheck(op_class, var_seq)
         except parsing.ParseError as e:
             # somewhat involved logic: try to parse the var sequence before
             # reporting errors about a missing `:`. However, if we are missing
             # a `:`, mark `met_preconditions` as false so that the parser isn't
             # committed to a binding op header.
-            if len(split) != 2:
+            if len(main_split) != 2:
                 e.met_preconditions = False
             raise e
-        if (len(split) != 2):
+        if (len(main_split) != 2):
             # possibly should change to met_preconditions = True in the future.
             # At this point, we have seen a binding expression token.
             raise parsing.ParseError(
-                "Missing ':' in binding operator expression", s, None,
-                met_preconditions=False)
-        return (op_class, var_seq, split[1])
+                "Missing ':' in binding expression",
+                potential_header,
+                met_preconditions=True)
+        restric = None
+        if len(restric_split) > 1:
+            # ok, the right side of the split should now be parseable as a
+            # set expression
+            with parsing.parse_error_wrap(
+                        "Binding expression has unparsable restrictor",
+                        paren_struc=restric_split[1]):
+                # XX named variables should not occur free here
+                restric = TypedExpr.try_parse_paren_struc_r(restric_split[1],
+                        assignment=assignment, locals=locals)
+
+        return (BindingOpHeader(op_class=op_class, var_seq=var_seq, restrictor=restric),
+                main_split[1])
 
     @classmethod
     def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None,
@@ -4234,52 +4333,35 @@ class BindingOp(TypedExpr):
         Returns a subclass of BindingOp.
         """
 
-        if (len(struc) == 0):
+        new_struc = parsing.debracket(struc)
+        if (result := BindingOp.try_parse_header(new_struc,
+                            assignment=assignment, locals=locals)) is None:
             return None
-        if isinstance(struc[0], str) and struc[0] in parsing.brackets:
-            potential_header = struc[1]
-            bracketed = True
-        else:
-            potential_header = struc[0]
-            bracketed = False
-        if not isinstance(potential_header, str):
-            return None
-        result = BindingOp.try_parse_header(potential_header)
-        if result is None:
-            return None
-        (op_class, var_list, remainder) = result
-        # remainder is any string left over from parsing the header.
-        if bracketed:
-            # note: syntax checking for bracket matching is already done, this
-            # does not need to check for that here.
-            assert(parsing.brackets[struc[0]] == struc[-1])
-            new_struc = [remainder,] + struc[2:-1]
-        else:
-            new_struc = [remainder,] + struc[1:]
+        header, new_struc = result
+
         if assignment is None: 
             assignment = dict()
         else:
             assignment = assignment.copy()
-        store_old_v = None
-        for var_tuple in var_list:
+
+        for var_tuple in header.var_seq:
             (v,t) = var_tuple
             assignment[v] = TypedTerm(v, t)
         body = None
         with parsing.parse_error_wrap(
-                        "Binding operator expression has unparsable body",
+                        "Binding expression has unparsable body",
                         paren_struc=struc):
             body = TypedExpr.try_parse_paren_struc_r(new_struc,
                         assignment=assignment, locals=locals, vprefix=vprefix)
 
         if body is None:
             raise parsing.ParseError(
-                "Can't create body-less binding operator expression",
+                "Can't create body-less binding expression",
                 parsing.flatten_paren_struc(struc), None)
 
-        with parsing.parse_error_wrap("Binding operator parse error",
+        with parsing.parse_error_wrap("Binding expression parse error",
                                     paren_struc=struc):
-            result = BindingOp.binding_op_factory(op_class, var_list, body,
-                assignment=assignment)
+            result = header.factory(body, assignment=assignment)
         return result
 
     @classmethod
@@ -4296,7 +4378,6 @@ class BindingOp(TypedExpr):
             cur = cls(args[i - 1], cur)
 
         return cur
-
 
     @classmethod
     def random(cls, ctrl, body_type=type_t, max_type_depth=1):
@@ -4318,6 +4399,7 @@ class LFun(BindingOp):
     op_name_latex="\\lambda{}"
     commutative = False
     left_commutative = False
+    collectable = False
 
     def __init__(self, var, body, vartype=None, let=False,
                                             assignment=None, type_check=True):

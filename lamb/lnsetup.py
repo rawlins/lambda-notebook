@@ -74,6 +74,7 @@ def reload_lamb(use_nltk_tree=None):
         importlib.reload(lamb.meta.number)
         importlib.reload(lamb.meta.sets)
         importlib.reload(lamb.meta.quantifiers)
+        importlib.reload(lamb.meta.test)
         importlib.reload(lamb.meta)
         importlib.reload(lamb.lang)
         importlib.reload(lamb.parsing)

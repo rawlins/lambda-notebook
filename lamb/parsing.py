@@ -629,6 +629,46 @@ close_brackets = {brackets[y] : y for y in brackets.keys()}
 term_symbols_re = r'[a-zA-Z0-9]'
 
 
+def bracketed(struc):
+    # assumes bracket balancing has been checked
+    return len(struc) > 0 and isinstance(struc[0], str) and struc[0] in brackets
+
+
+def debracket(struc):
+    # n.b. this does nothing on cases like [['(', 'stuff', ')']]
+    if bracketed(struc):
+        # assert is a sanity check, balancing should already be ensured
+        assert(brackets[struc[0]] == struc[-1])
+        return debracket(struc[1:-1])
+    else:
+        return struc
+
+
+def struc_split(struc, sep):
+    # XX implement maxsplit, this currently does exactly 1 split
+    for i in range(len(struc)):
+        if isinstance(struc[i], str) and (pos := struc[i].find(sep)) >= 0:
+            l = struc[0:i]
+            r = struc[i+1:]
+            if pos > 0:
+                l = l + [struc[i][:pos]]
+            if pos + len(sep) < len(struc[i]):
+                r = [struc[i][pos+len(sep):]] + r
+            return l, r
+    return (struc,)
+
+
+def unconsumed(struc):
+    if isinstance(struc, str):
+        i = consume_whitespace(struc, 0)
+        return i < len(struc)
+    else:
+        for s in struc:
+            if unconsumed(s):
+                return True
+    return False
+
+
 def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
     accum = ""
     seq = list()
@@ -761,8 +801,11 @@ def try_parse_term_sequence(s, lower_bound=1, upper_bound=None,
         sequence = [(v, typ)]
     if i < len(s):
         i = consume_whitespace(s, i)
+        if i < len(s) and v is None:
+            raise ParseError(f"Extraneous character at beginning of term sequence (`{s[i]}`)",
+                s=s, i=i, met_preconditions=True)
         while i < len(s):
-            i = consume_char(s, i, ",", "expected comma in variable sequence")
+            i = consume_char(s, i, ",", f"expected comma in variable sequence, found `{s[i]}`")
             i = consume_whitespace(s, i)
             v, typ, i = parse_term(s, i=i, return_obj=False,
                                                     assignment=assignment)

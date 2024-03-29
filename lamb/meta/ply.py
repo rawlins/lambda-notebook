@@ -105,27 +105,36 @@ def associative(cls):
     return getattr(cls, 'associative', False)
 
 
-def collectable(cls):
+def cls_collectable(cls):
     """An expression is collectable if it can be rejoined, and for operator
     expressions, if it is also associative. This function accepts either a
     TypedExpr object or a TypedExpr class object."""
     if not isinstance(cls, type):
         cls = cls.__class__
 
-    # is there overhead for this beyond the first call?
     from .core import SyncatOpExpr, BindingOp
 
     # this is all a bit heuristic...really for any O where the operator's argument
     # type requirements are consistent with its output, we should be able to
     # collect...
-    return ((issubclass(cls, SyncatOpExpr) and cls.arity > 1 and associative(cls)
-                # if a binding op *can* recurse, it is collectable (e.g.
-                # SetContains and the like simply can't recurse...)
-                # XX is there a possible binding op where this would be false?
+
+    cls_attr = getattr(cls, 'collectable', None) # custom hook
+    return (cls_attr != False
+            and (issubclass(cls, SyncatOpExpr) and cls.arity > 1 and associative(cls)
                 or issubclass(cls, BindingOp)
-                or getattr(cls, 'collectable', False) # custom hook
-                )
+                or cls_attr)
             and getattr(cls, 'join', None))
+
+
+def collectable(e):
+    if not cls_collectable(e.__class__):
+        return False
+    from .quantifiers import RestrictedBindingOp
+    # currently, the restrictor interacts badly with alphanorm_collected
+    # note that a class needs a `join` implementation for this to work
+    if isinstance(e, RestrictedBindingOp) and e.restrictor is not None:
+        return False
+    return True
 
 
 def collect(e):
@@ -144,7 +153,7 @@ def collect(e):
     cls = e.__class__
     c = []
     def collect_r(e):
-        if not isinstance(e, cls) or not collectable(cls):
+        if not isinstance(e, cls) or not collectable(e):
             c.append(e)
         else:
             for sub in e:
@@ -153,7 +162,7 @@ def collect(e):
     return cls, c
 
 def join(cls, es, empty=None):
-    if collectable(cls): # ensures the existence of `join` #getattr(cls, 'join', None):
+    if cls_collectable(cls): # ensures the existence of `join`
         return cls.join(es, empty=empty)
     elif len(es) == 1:
         # ignore the class value, no copying
@@ -216,6 +225,7 @@ def alphanorm_collected(cls, c):
             # XX this relies `collect` not generally targeting this property.
             # if there were a left commutative-only operator that had well-formed
             # left recursion, this would do the wrong thing.
+            # XX this does not work for restricted operators
             if len(c) > 2:
                 # for a left commutative class (e.g. a binding operator) only
                 # reorder non-final elements (e.g. variables)

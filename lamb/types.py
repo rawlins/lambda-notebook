@@ -376,8 +376,6 @@ class TypeConstructor(object):
             if self.domain.cardinality() < count:
                 raise ValueError(f"Domain for type {repr(self)} is too small to get {count} elements")
             values = set(next(batched(self.domain, count)))
-        if not values or count == 0:
-            raise ValueError("Domain restriction can't be empty")
         if self.domain.finite:
             if not self.domain.domain:
                 # finite type that is not implemented via an explicit set,
@@ -772,6 +770,12 @@ class SetDomainSet(ComplexDomainSet):
             for e in itertools.combinations(dom, r):
                 yield frozenset(e)
 
+    def __len__(self):
+        if not self.finite:
+            raise ValueError("Non-finite `SetDomainSet`s do not have a length.")
+        else:
+            return 2 ** len(self.type[0].domain)
+
     def enumerable(self):
         # only the finite case is supported right now...
         return self.finite
@@ -889,6 +893,9 @@ class TupleDomainSet(ComplexDomainSet):
     def __len__(self):
         if not self.finite:
             raise ValueError("Non-finite `TupleDomainSet`s do not have a length.")
+        elif len(self.type) == 0:
+            # need to special case this -- the functools.reduce call will crash
+            return 1
         else:
             return functools.reduce(lambda x, y: x*y, (len(t.domain) for t in self.type))
 

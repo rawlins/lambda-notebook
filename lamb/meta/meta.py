@@ -22,7 +22,7 @@ class DomainError(Exception):
         extra = self.extra
         if extra:
             extra = f" ({extra})"
-        return f"`{repr(self.element)}` not present in domain `{repr(self.domain)}`{extra}"
+        return f"`{repr(self.element)}`, with domain `{repr(self.domain)}`{extra}"
 
     def __repr__(self):
         return self.__str__()

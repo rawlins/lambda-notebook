@@ -1,4 +1,4 @@
-import logging, unittest, random, enum
+import logging, unittest, random, enum, math
 import collections.abc
 import lamb
 from lamb import types, parsing
@@ -25,16 +25,14 @@ def random_term(typ=None, blockset=None, usedset=set(), prob_used=0.8,
                             prob_var=prob_var,
                             max_type_depth=max_type_depth)
 
+
 def random_binding_expr(ctrl, max_type_depth=1):
     global random_used_vars
     ts = get_type_system()
-    options = [quantifiers.ForallUnary, quantifiers.ExistsUnary, quantifiers.ExistsExact]
+    options = [quantifiers.Forall, quantifiers.Exists, quantifiers.ExistsExact]
     op_class = random.choice(options)
-    var_type = ts.random_type(max_type_depth, 0.5)
-    variable = random_term(var_type, usedset=random_used_vars, prob_used=0.2,
-                                                                prob_var=1.0)
-    random_used_vars |= {variable}
-    return op_class(variable, ctrl(typ=type_t))
+    return op_class.random(ctrl, max_type_depth)
+
 
 def random_lfun(typ, ctrl):
     global random_used_vars
@@ -105,17 +103,19 @@ def random_fa_combo(output_type, ctrl, max_type_depth=1):
     result = (ctrl(typ=fun_type))(ctrl(typ=input_type))
     return result
 
-def random_from_class(cls, max_depth=1, used_vars=None):
+def random_from_class(cls, max_depth=1, used_vars=None, ctrl=None):
     global random_used_vars
     if used_vars is None:
         used_vars = set()
     random_used_vars = used_vars
 
-    def ctrl(**args):
+    def def_ctrl(**args):
         global random_used_vars
         return random_expr(depth=max_depth-1, used_vars=random_used_vars,
                                                                     **args)
 
+    if ctrl is None:
+        ctrl = def_ctrl
     return cls.random(ctrl)
 
 
@@ -305,10 +305,10 @@ te_classes = [core.ApplicationExpr,
               boolean.BinaryArrowExpr,
               boolean.BinaryBiarrowExpr,
               boolean.BinaryNeqExpr,
-              quantifiers.ForallUnary,
-              quantifiers.ExistsUnary,
+              quantifiers.Forall,
+              quantifiers.Exists,
               quantifiers.ExistsExact,
-              quantifiers.IotaUnary,
+              quantifiers.Iota,
               quantifiers.IotaPartial,
               number.UnaryNegativeExpr,
               number.UnaryPositiveExpr,
@@ -351,7 +351,7 @@ class MetaTest(unittest.TestCase):
     def test_class_random(self):
         for c in te_classes:
             for i in range(100):
-                x = random_from_class(c)
+                x = random_from_class(c, max_depth=2)
                 # verify some things about terms
                 # XX partial metaterms? I think they may be possible...
                 self.assertTrue(x.meta() == (isinstance(x, MetaTerm)))
@@ -363,6 +363,17 @@ class MetaTest(unittest.TestCase):
                     else:
                         l = len(x)
                     self.assertTrue(x.term() == (not l), f"{x}")
+
+    def test_binding_random(self):
+        for i in range(1,3):
+            for j in range(100):
+                x = random_expr(options=RType.BINDING_EXPR, depth=i)
+                try:
+                    x.simplify_all()
+                    x.simplify_all(eliminate_quantifiers=True)
+                except:
+                    print(f"simplification failure on binding expression `{repr(x)}`")
+                    raise
 
     def test_copy(self):
         for c in te_classes:
@@ -846,6 +857,87 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("Forall x_t : Forall y_t : Forall z_t: x | y | z"), False, exec=True)
         testsimp(self, te("Exists x_t : Exists y_t : Exists z_t: x & y & z"), True, exec=True)
 
+    def quant_restrictors(self):
+        # validate cardinality checking for binding expressions. These also
+        # exercise type domain cardinality code. This code is general across
+        # RestrictedBindingOps so it's only tested with one.
+        self.assertEqual(te("Forall x_e : P_<e,t>(x)").domain_cardinality(), math.inf)
+        self.assertEqual(te("Forall x_e << (Set x_e : True) : P_<e,t>(x)").domain_cardinality(), math.inf)
+        self.assertEqual(te("Forall x_e << {}: P_<e,t>(x)").domain_cardinality(), math.inf)
+        self.assertEqual(te("Forall x_e << (Set x_e : False): P_<e,t>(x)").domain_cardinality(), math.inf)
+        with tp("e").restrict_domain({}):
+            self.assertEqual(te("Forall x_e : P_<e,t>(x)").domain_cardinality(), 0)
+            self.assertEqual(te("Forall x_e << (Set x_e : True): P_<e,t>(x)").domain_cardinality(), 0)
+            self.assertEqual(te("Forall x_e << {}: P_<e,t>(x)").domain_cardinality(), 0)
+            self.assertEqual(te("Forall x_e << (Set x_e : False): P_<e,t>(x)").domain_cardinality(), 0)
+            self.assertEqual(te("Forall x_<e,t> : P_<<e,t>,t>(x)").domain_cardinality(), 1) # the empty function
+            self.assertEqual(te("Forall x_{e} : P_<{e},t>(x)").domain_cardinality(), 1) # the empty set
+            self.assertEqual(te("Forall x_(e) : P_<(e),t>(x)").domain_cardinality(), 0)
+        with tp("e").restrict_domain({'_c1'}):
+            self.assertEqual(te("Forall x_e : P_<e,t>(x)").domain_cardinality(), 1)
+            self.assertEqual(te("Forall x_e << (Set x_e : True): P_<e,t>(x)").domain_cardinality(), 1)
+            self.assertEqual(te("Forall x_e << {}: P_<e,t>(x)").domain_cardinality(), 0)
+            self.assertEqual(te("Forall x_e << (Set x_e : False): P_<e,t>(x)").domain_cardinality(), 0)
+            self.assertEqual(te("Forall x_e << {_c1}: P_<e,t>(x)").domain_cardinality(), 1)
+            self.assertEqual(te("Forall x_<e,t> : P_<<e,t>,t>(x)").domain_cardinality(), 2)
+            self.assertEqual(te("Forall x_{e} : P_<{e},t>(x)").domain_cardinality(), 2)
+            self.assertEqual(te("Forall x_(e) : P_<(e),t>(x)").domain_cardinality(), 1)
+        with tp("e").restrict_domain({'_c1', '_c2'}):
+            self.assertEqual(te("Forall x_e : P_<e,t>(x)").domain_cardinality(), 2)
+            self.assertEqual(te("Forall x_e << (Set x_e : True): P_<e,t>(x)").domain_cardinality(), 2)
+            self.assertEqual(te("Forall x_e << {}: P_<e,t>(x)").domain_cardinality(), 0)
+            self.assertEqual(te("Forall x_e << (Set x_e : False): P_<e,t>(x)").domain_cardinality(), 0)
+            self.assertEqual(te("Forall x_e << {_c1}: P_<e,t>(x)").domain_cardinality(), 1)
+            self.assertEqual(te("Forall x_<e,t> : P_<<e,t>,t>(x)").domain_cardinality(), 4)
+            self.assertEqual(te("Forall x_{e} : P_<{e},t>(x)").domain_cardinality(), 4)
+            self.assertEqual(te("Forall x_(e) : P_<(e),t>(x)").domain_cardinality(), 2)
+
+        # validate trivial body cases
+        testsimp(self, te("Forall x_e << {} : True"), True, exec=True)
+        testsimp(self, te("Forall x_e << {_c1} : True"), True, exec=True)
+        testsimp(self, te("Forall x_e << {_c1, _c2} : True"), True, exec=True)
+        testsimp(self, te("Forall x_e << {} : False"), False, exec=True)
+        testsimp(self, te("Forall x_e << {_c1} : False"), False, exec=True)
+        testsimp(self, te("Forall x_e << {_c1, _c2} : False"), False, exec=True)
+        testsimp(self, te("Exists x_e << {} : True"), False, exec=True)
+        testsimp(self, te("Exists x_e << {_c1} : True"), True, exec=True)
+        testsimp(self, te("Exists x_e << {_c1, _c2} : True"), True, exec=True)
+        testsimp(self, te("Exists x_e << {} : False"), False, exec=True)
+        testsimp(self, te("Exists x_e << {_c1} : False"), False, exec=True)
+        testsimp(self, te("Exists x_e << {_c1, _c2} : False"), False, exec=True)
+
+        # basic test of non-trivial bodies
+        testsimp(self, te("Forall x_e << {} : x == _c1"), True, exec=True)
+        testsimp(self, te("Forall x_e << {_c1} : x == _c1"), True, exec=True)
+        testsimp(self, te("Forall x_e << {_c1} : x == _c1 | x == _c2"), True, exec=True)
+        testsimp(self, te("Forall x_e << {_c1, _c2} : x == _c1"), False, exec=True)
+        testsimp(self, te("Exists x_e << {} : x == _c1"), False, exec=True)
+        testsimp(self, te("Exists x_e << {_c1} : x == _c1"), True, exec=True)
+        testsimp(self, te("Exists x_e << {_c1} : x == _c1 | x == _c2"), True, exec=True)
+        testsimp(self, te("Exists x_e << {_c1, _c2} : x == _c1"), True, exec=True)
+        testsimp(self, te("ExistsExact x_e << {} : x == _c1"), False, exec=True)
+        testsimp(self, te("ExistsExact x_e << {_c1} : x == _c1"), True, exec=True)
+        testsimp(self, te("ExistsExact x_e << {_c1, _c2} : x == _c1"), False, exec=True)
+        self.assertRaises(meta.DomainError, te("Iota x_e << {} : x == _c1").simplify_all)
+        self.assertRaises(meta.DomainError, meta.exec, te("ExistsExact x_e << {} : x == _c1"))
+        testsimp(self, te("Iota x_e << {_c1} : x == _c1"), te("_c1"), exec=True)
+        testsimp(self, te("Iota x_e << {_c1, _c2} : x == _c1"), te("_c1"), exec=True)
+        testsimp(self, te("Iota x_e << {_c1} : x == _c1 | x == _c2"), te("_c1"), exec=True)
+        self.assertRaises(meta.DomainError, te("Iota x_e << {_c1, _c2} : x == _c1 | x == _c2").simplify_all)
+        self.assertRaises(meta.DomainError, meta.exec, te("Iota x_e << {_c1, _c2} : x == _c1 | x == _c2"))
+
+        # cardinality 1 elimination (simplification-specific)
+        testsimp(self, te("Forall x_e << {_c1} : P_<e,t>(x)"), te("P_<e,t>(_c1)"), all=True)
+        testsimp(self, te("Exists x_e << {_c1} : P_<e,t>(x)"), te("P_<e,t>(_c1)"), all=True)
+        testsimp(self, te("ExistsExact x_e << {_c1} : P_<e,t>(x)"), te("P_<e,t>(_c1)"), all=True)
+        testsimp(self, te("Forall x_e << {C_e} : P_<e,t>(x)"), te("P_<e,t>(C_e)"), all=True)
+        testsimp(self, te("Exists x_e << {C_e} : P_<e,t>(x)"), te("P_<e,t>(C_e)"), all=True)
+        testsimp(self, te("ExistsExact x_e << {C_e} : P_<e,t>(x)"), te("P_<e,t>(C_e)"), all=True)
+
+        # a few doubly quantified cases
+        testsimp(self, te("Forall x_e << {_c1, _c2, _c3} : Exists y_e  << {_c1, _c2, _c3} : x == y"), True, exec=True)
+        testsimp(self, te("Forall x_e << {_c1, _c2, _c3} : Forall y_e  << {_c1, _c2, _c3} : x == y"), False, exec=True)
+
     def test_boolean_evaluation(self):
         # this test is more to ensure that this code isn't crashing, than a
         # deep test of boolean inference.
@@ -984,7 +1076,7 @@ class MetaTest(unittest.TestCase):
             try:
                 x.simplify_all(eliminate_sets=True, reduce=True)
             except:
-                print(f"Failure on depth 3 expression '{repr(x)}'")
+                print(f"Simplify failure on depth 3 set expression '{repr(x)}'")
                 raise
 
     def test_set_identities(self):
