@@ -3948,7 +3948,11 @@ class BindingOp(TypedExpr):
             assignment = dict()
         else:
             assignment = assignment.copy()
-        assignment[self.varname] = self.var_instance
+        if isinstance(self.var_instance, Tuple):
+            for v in self.var_instance.tuple():
+                assignment[v.op] = v
+        else:
+            assignment[self.varname] = self.var_instance
         return assignment
 
     def default_varname(self):
@@ -3995,6 +3999,8 @@ class BindingOp(TypedExpr):
 
     @property
     def varname(self):
+        if isinstance(self.var_instance, Tuple):
+            return None
         return self.var_instance.term_name
 
     @property
@@ -4065,15 +4071,34 @@ class BindingOp(TypedExpr):
                     return match.group(1), match.end(1)
         return None
 
-    def alpha_convert(self, new_varname):
+    def alpha_convert(self, *new_varname):
         """Produce an alphabetic variant of the expression w.r.t. the bound
         variable, with new_varname as the new name.
 
         Returns a copy.  Will not affect types of either the expression or the
         variables."""
+        if len(new_varname) == 0:
+            return self
+
+        if isinstance(self.var_instance, Tuple):
+            vseq = [v.op for v in self.var_instance.tuple()]
+        else:
+            vseq = (self.varname,)
+
+        if len(new_varname) > len(vseq):
+            raise ValueError(f"Too many arguments supplied to `alpha_convert` (got {len(new_varname)}) for `{repr(self)}`")
+
+        remap = {vseq[i]: new_varname[i] for i in range(len(new_varname))}
+
+        # this is written in a fairly general way so as to copy `restrictor`
+        # if it is present
         args = self.args.copy()
-        args[0] = TypedTerm(new_varname, self.vartype)
-        args[1] = variable_convert(self.body, {self.varname: new_varname})
+        if isinstance(self.var_instance, Tuple):
+            args[0] = variable_convert(args[0], remap)
+        else:
+            args[0] = TypedTerm(new_varname[0], self.vartype)
+
+        args[1] = variable_convert(args[1], remap)
         return self.copy_local(*args)
 
     def latex_op_str(self):
@@ -4265,18 +4290,8 @@ class BindingOp(TypedExpr):
                 s=flatten_paren_struc(main_split[0]),
                 met_preconditions=True)
 
-        if len(restric_split[0]) == 0:
-            vname = ""
-        else:
-            vname = restric_split[0][0].strip()
-
-        if vname.startswith("<<"):
-            # cleanup from above hack, so that errors make more sense
-            vname = ""
-            restric_split = parsing.struc_split(main_split[0], "<<")
-
         try:
-            var_seq = parsing.try_parse_term_sequence(vname, lower_bound=None,
+            var_seq = parsing.try_parse_term_sequence(restric_split[0], lower_bound=None,
                                     upper_bound=None, assignment=assignment)
         except parsing.ParseError as e:
             # somewhat involved logic: try to parse the var sequence before

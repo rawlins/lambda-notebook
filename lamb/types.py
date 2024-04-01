@@ -2769,12 +2769,12 @@ class TypeMismatch(Exception):
         self.i2, self.type2 = tmp
 
     def item_str(self, i, t, latex=False):
-        from lamb import meta, lang
+        from lamb.meta import TypedExpr, TypedTerm
         # this is hacky for now: if we are printing an error about a TypedExpr
         # we want the repr for markdown backticks, but for composition results
         # we want the latex code
         # XX this isn't working right in the continuations notebook...
-        if isinstance(i, meta.TypedExpr):
+        if isinstance(i, TypedExpr):
             latex = False
         if i is None:
             return None
@@ -2792,11 +2792,14 @@ class TypeMismatch(Exception):
                 else:
                     return "`%s`/%s" % (i, repr(t))
         else:
+            # XX this will fail if this error path is triggered during package
+            # loading
+            from lamb.lang import Item
             # a TypedTerm's repr always shows the type right there, making
             # the longer form below redundant
             if (t is None or t == "?"
-                                or isinstance(i, meta.TypedTerm)
-                                or isinstance(i, lang.Item)):
+                                or isinstance(i, TypedTerm)
+                                or isinstance(i, Item)):
                 if latex and getattr(i, 'latex_str', None):
                     return f"{i.latex_str(suppress_parens=True)}"
                 else:

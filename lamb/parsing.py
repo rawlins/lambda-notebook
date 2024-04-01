@@ -669,6 +669,45 @@ def unconsumed(struc):
     return False
 
 
+def struc_dirstrip(struc, left=True):
+    # this guarantees at least len 1 on the return
+    if not struc:
+        return [""]
+
+    if left:
+        target = 0
+        remainder = slice(1, None)
+        f = lambda s: s.lstrip()
+        combine = lambda s,struc: [s] + struc
+    else:
+        target = -1
+        remainder = slice(None, -1)
+        f = lambda s: s.rstrip()
+        combine = lambda s,struc: struc + [s]
+
+    # no recursing
+    if not isinstance(struc[target], str):
+        return struc
+    stripped = f(struc[target])
+
+    if len(stripped) == 0:
+        return struc_dirstrip(struc[remainder], left=left)
+    else:
+        return combine(stripped, struc[remainder])
+
+
+def struc_lstrip(struc):
+    return struc_dirstrip(struc, left=True)
+
+
+def struc_rstrip(struc):
+    return struc_dirstrip(struc, left=False)
+
+
+def struc_strip(struc):
+    return struc_lstrip(struc_rstrip(struc))
+
+
 def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
     accum = ""
     seq = list()
@@ -791,6 +830,28 @@ def try_parse_term_sequence(s, lower_bound=1, upper_bound=None,
                                                     assignment=None):
     """Try to parse `s` as a sequence of terms separated by commas. This
     consumes the entire string."""
+    if not isinstance(s, str):
+        s = struc_strip(s)
+        if len(s) > 1:
+            raise ParseError(f"Unparsable extraneous material in term sequence",
+                s=flatten_paren_struc(s), i=0,
+                met_preconditions=True)
+        s = s[0]
+        if not isinstance(s, str):
+            s = debracket(s)
+            if len(s) == 0:
+                s = ""
+            elif len(s) == 1:
+                s = s[0]
+            else:
+                raise ParseError(f"Unparsable extraneous material in term sequence",
+                    s=flatten_paren_struc(s), i=0,
+                    met_preconditions=True)
+
+            if not isinstance(s, str):
+                raise ParseError(f"Extraneous parentheses in term sequence",
+                    s=flatten_paren_struc(s), i=0,
+                    met_preconditions=True)
     s = s.strip()
     if len(s) == 0:
         sequence = list()
