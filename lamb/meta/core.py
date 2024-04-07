@@ -2759,7 +2759,7 @@ class CustomTerm(TypedTerm):
                                    small_caps=self.sc,
                                    typ=self.type))
 
-    def copy_local(self):
+    def copy_local(self, type_check=True):
         return self.copy()
 
     def copy(self, op):
@@ -3661,9 +3661,9 @@ class TupleIndex(SyncatOpExpr):
             output_type = common_tuple_type(arg1)
         super().__init__(output_type, arg1, arg2, tcheck_args=False)
 
-    def copy_local(self, arg1, arg2):
-        # because `[]` isn't handled like a normal operator, this needs to be
-        # manually implemented
+    def copy_local(self, arg1, arg2, type_check=True):
+        # because `[]` isn't handled like a normal operator, this can't rely
+        # on generic superclass code
         return self.copy_core(TupleIndex(arg1, arg2))
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
