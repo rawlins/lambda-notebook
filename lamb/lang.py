@@ -4,7 +4,7 @@ import collections, itertools, logging, html, enum
 from lamb import utils, types, meta, display
 from lamb.utils import ensuremath
 from lamb.types import type_e, type_t, type_property, TypeMismatch
-from lamb.meta import  TypedExpr, true_term, term
+from lamb.meta import  TypedExpr, true_term, term, is_te
 from lamb.meta.core import partial, pbody, pcond
 from lamb import tree_mini
 
@@ -2054,7 +2054,12 @@ class TreeCompositionOp(object):
         return 1
 
     def description(self):
-        return "Tree composition rule"
+        if self.preconditions == tree_binary:
+            return "Binary tree composition rule"
+        elif self.preconditions == tree_unary:
+            return "Unary tree composition rule"
+        else:
+            return "Tree composition rule"
 
     def composite_name(self, t):
         return t.label()
@@ -2092,6 +2097,7 @@ class TreeCompositionOp(object):
             result = result.reduce_all()
         result.mode = self
         return result
+
 
 class LexiconOp(TreeCompositionOp):
     """A composition operation that looks up a lexical entry in the composition
@@ -2791,6 +2797,53 @@ class TreeCompositionSystem(CompositionSystem):
             cur = cur.compose_path(full_path)
             last = subtree
 
+    def add_unary_rule(self, f, name):
+        self.add_rule(self.unary_factory(f, name))
+
+    def add_binary_rule(self, f, name, mirror=False, swap=False, uncurried=False):
+        if uncurried:
+            # note unmirrored arg ordering
+            f = (lambda f: lambda x: lambda y: f(x,y))(f)
+        if mirror:
+            self.add_rule(self.binary_factory(f, f"{name}/left"))
+            self.add_rule(self.binary_factory(f, f"{name}/right", swap=True))
+        else:
+            self.add_rule(self.binary_factory(f, name, swap=swap))
+
+    def add_binary_rule_uncurried(self, f, name, mirror=False):
+        return self.add_binary_rule(f, name, mirror=mirror, uncurried=True)
+
+    def add_typeshift(self, combinator, name):
+        raise NotImplementedError
+
+    @classmethod
+    def unary_factory(cls, f, name):
+        def wrapped_combinator(t, assignment=None):
+            result = f(t[0].content.under_assignment(assignment))
+            return UnaryComposite(t[0], content=result, source=t)
+        return TreeCompositionOp(name,
+            wrapped_combinator,
+            preconditions=tree_unary,
+            source=f,
+            reduce=True)
+
+    @classmethod
+    def binary_factory(cls, f, name, swap=False):
+        def wrapped_combinator(t, assignment=None):
+            if swap:
+                l, r = t[1], t[0]
+            else:
+                l, r = t
+            result = f(
+                l.content.under_assignment(assignment))(r.content.under_assignment(assignment))
+            return BinaryComposite(l, r, content=result, source=t)
+        return TreeCompositionOp(name,
+            wrapped_combinator,
+            preconditions=tree_binary,
+            source=f,
+            reduce=True)
+
+# TODO: refactor tree composition to use factory calls
 def tree_fa_fun_abstract(f, a, assignment=None):
     """Do function application in a fixed function, argument order."""
     ts = meta.get_type_system()
@@ -2877,10 +2930,7 @@ def tree_pm_fun(t, assignment=None):
     if not (ts.eq_check(t[0].type, type_property) and 
             ts.eq_check(t[1].type, type_property)):
         raise TypeMismatch(t[0], t[1], "Predicate Modification")
-    try:
-        varname = t[0].content.varname
-    except AttributeError:
-        varname = "x"
+
     c1 = t[0].content.under_assignment(assignment)
     c2 = t[1].content.under_assignment(assignment)
     result = ((pm_op(c1))(c2)).reduce_all()
