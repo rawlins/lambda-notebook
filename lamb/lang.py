@@ -2209,7 +2209,7 @@ class PlaceholderTerm(meta.TypedTerm):
     composition."""
     def __init__(self, varname, placeholder_for, system=None, assignment=None,
                                                                type_check=True):
-        meta.TypedTerm.__init__(self, varname, types.UnknownType(),
+        meta.TypedTerm.__init__(self, varname, types.VariableType.any(),
                                 assignment=assignment, type_check=type_check,
                                 validate_name=False)
         self._variable = False

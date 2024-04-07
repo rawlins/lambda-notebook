@@ -1535,6 +1535,10 @@ class VariableType(TypeConstructor):
         var = random.choice(("X", "Y", "Z"))
         return VariableType(var, number=primes)
 
+    @classmethod
+    def any(cls):
+        return Forall(VariableType("X", 0))
+
 
 @contextmanager
 def no_new_type_vars():
@@ -1591,7 +1595,7 @@ class UnknownType(VariableType):
                 # syntactic sugar: `?` parses to ∀X. It's a bit annoying to
                 # handle it here, but the `?` prefix makes it hard to do
                 # elsewhere
-                return Forall(VariableType("X", 0)), next
+                return VariableType.any(), next
             else:
                 return UnknownType(force_num=num), next2
         return None, i
