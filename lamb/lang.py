@@ -2165,7 +2165,8 @@ def unary_factory(meta_fun, name, typeshift=False, reduce=True):
                                             source=meta_fun)
 
 def binary_factory_uncurried(meta_fun, name, reduce=True,
-                                                    combinator_source=None):
+                                                    combinator_source=None,
+                                                    commutative=False):
     """Factory function to construct a binary composition operation given some
     function."""
     def op_fun(arg1, arg2, assignment=None):
@@ -2176,7 +2177,7 @@ def binary_factory_uncurried(meta_fun, name, reduce=True,
         source = meta_fun
     else:
         source = combinator_source
-    return BinaryCompositionOp(name, op_fun, reduce=reduce, source=source)
+    return BinaryCompositionOp(name, op_fun, reduce=reduce, source=source, commutative=commutative)
 
 def binary_factory(meta_fun, name, reduce=True, commutative=False):
     """Factory function to construct a binary composition operation given some
@@ -2325,9 +2326,11 @@ class CompositionSystem(object):
         return rule
 
     def add_binary_rule_uncurried(self, fun, name, reduce=True,
-                                                        combinator_source=None):
+                                                        combinator_source=None,
+                                                        commutative=False):
         rule = binary_factory_uncurried(fun, name, reduce=reduce,
-                                        combinator_source=combinator_source)
+                                        combinator_source=combinator_source,
+                                        commutative=commutative)
         self.add_rule(rule)
         return rule
 
