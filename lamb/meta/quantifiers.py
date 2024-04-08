@@ -101,9 +101,16 @@ class RestrictedBindingOp(BindingOp):
     def finite_safe(self):
         from .sets import is_emptyset, ListedSet
         if not self.restricted():
-            return (isinstance(self[0].type.domain, types.DomainSet)
-                    and self[0].type.domain.enumerable()
-                    and self[0].type.domain.finite)
+            if not isinstance(self[0].type.domain, types.DomainSet):
+                # currently: variable type domains. Perhaps these should give
+                # False unconditionally?
+                return None
+            if not self[0].type.domain.enumerable() and self[0].type.domain.finite:
+                # This case should really count as True, but we are
+                # currently conflating finite_safe with having a working
+                # iterator. No cases currently hit this. XX separate?
+                return None
+            return self[0].type.domain.finite
         elif (is_emptyset(self.restrictor)
                 or is_concrete(self.restrictor)
                 or isinstance(self.restrictor, ListedSet)):
@@ -126,7 +133,8 @@ class RestrictedBindingOp(BindingOp):
 
     def empty_domain(self):
         from .sets import is_domainset
-        if self.finite_safe():
+        safe = self.finite_safe()
+        if safe == True:
             # we check by actually iterating. Domain sets can be quite large;
             # while they should not need to instantiate to calculate size,
             # this is a case where we can very easily assume nothing. (In
@@ -137,9 +145,12 @@ class RestrictedBindingOp(BindingOp):
             except StopIteration:
                 return True
             return False
+        elif safe == False:
+            # guaranteed non-finite domain
+            return False
         else:
-            # ConditionSet with non-trivial condition, set variable; can't be
-            # determined without evaluation
+            # ConditionSet with non-trivial condition, set variable, or
+            # non-enumerable domain; can't be determined without evaluation
             return None
 
     def domain_cardinality(self):
@@ -549,6 +560,9 @@ class ExistsExact(RestrictedBindingOp):
                         note=verifier)
             elif counterexample is not None:
                 # XX this derivation is a bit clunky
+                if sub is None:
+                    raise ValueError(
+                        f"Bug: `find_unique_evaluation` failed to simplify subexpression `{repr(counterexample)}` of `{repr(self)}` during evaluation")
                 r = derived(false_term, self,
                         f"counterexample for ∃!{self.varname}",
                         subexpression=sub[0],
@@ -655,10 +669,12 @@ class Iota(RestrictedBindingOp):
                                 self, f"unique instantiation for ι",
                                 subexpression=sub, force_on_recurse=True)
             else:
-                # return self
                 if counterexample is None:
                     extra = "existence failure on ι simplification"
                 else:
+                    if sub is None:
+                        raise ValueError(
+                            f"Bug: `find_unique_evaluation` failed to simplify subexpression `{repr(counterexample)}` of `{repr(self)}` during evaluation")
                     extra = f"uniqueness failure on ι simplification; counterexamples: `{repr(counterexample)}`"
                 raise meta.DomainError(self, self.get_domain(), extra=extra)
         return self

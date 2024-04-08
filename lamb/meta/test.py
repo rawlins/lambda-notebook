@@ -926,6 +926,9 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("Forall x_t : Forall y_t : Forall z_t: x | y | z"), False, exec=True)
         testsimp(self, te("Exists x_t : Exists y_t : Exists z_t: x & y & z"), True, exec=True)
 
+        # interesting case that came up in random testing
+        testsimp(self, te("(ExistsExact p_t: (Exists n_n: p_t))"), True, exec=True)
+
     def quant_restrictors(self):
         # validate cardinality checking for binding expressions. These also
         # exercise type domain cardinality code. This code is general across
