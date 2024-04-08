@@ -3146,25 +3146,24 @@ def setup_type_driven():
     fa = BinaryCompositionOp("FA", fa_fun)
     pa = BinaryCompositionOp("PA", pa_fun, allow_none=True)
     vac = BinaryCompositionOp("VAC", binary_vacuous, allow_none=True, commutative=True)
-    td_system = CompositionSystem(rules=[fa, pm, pa, vac], name="H&K simple")
+    td_system = CompositionSystem(rules=[fa, pm, pa, vac], name="Type-driven composition")
     set_system(td_system)
     meta.logger.setLevel(oldlevel)
 
 setup_type_driven()
 
-def setup_hk_chap3():
-    """Build a basic tree composition system modeled after chapter 3 of Heim
-    and Kratzer.  This has just FA and PM.
+def setup_hk():
+    """Build a basic tree composition system modeled after the core system of
+    the Heim and Kratzer text. This is not a fully faithful implementation of
+    Heim & Kratzer!
 
-    The composition system is set to `lang.hk3_system`.  It's recommended that
+    The composition system is set to `lang.hk_system`.  It's recommended that
     you copy this rather than modifying it directly.
 
     Note that the lexical items defined by `setup_type_driven` can be used here
     too, and are in fact added to the lexicon of this system by default."""
-    global hk3_system
+    global hk3_system, hk_system
 
-    # TODO: this should at this point be split off into hk7 or something, the
-    # docstring is a lie
     tfa_l = TreeCompositionOp("FA/left", tree_left_fa_fun)
     tfa_r = TreeCompositionOp("FA/right", tree_right_fa_fun)
     tpm = TreeCompositionOp("PM", tree_pm_fun)
@@ -3175,10 +3174,11 @@ def setup_hk_chap3():
     vac = TreeCompositionOp("VAC", tree_binary_vacuous,
         preconditions=binary_trivial, allow_none=True)
 
-    hk3_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn, idx, vac],
-                                       name="H&K Tree version")
+    hk_system = TreeCompositionSystem(rules=[tfa_l, tfa_r, tpm, tpa, nn, idx, vac],
+                                       name="H&K Tree-based composition")
+    hk3_system = hk_system # backwards compatibility
 
-setup_hk_chap3()
+setup_hk()
 
 def setup_td_presup():
     global td_presup
