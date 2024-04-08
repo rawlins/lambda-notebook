@@ -2126,10 +2126,6 @@ class TypedExpr(object):
     # See http://www.python.org/doc/current/lib/module-operator.html
     # Not implemented: not, abs, pos, concat, contains, *item, *slice,
     # floordiv, matmul
-    # XX add right versions for at least some of these? Right now e.g. left
-    # addition with a python number works, right doesn't
-    # XX also work around the subclass priority issue for right versions
-    # (including __gt__ and __ge__...)
     def __and__(self, other):    return self.factory('&',  self, other)
     def __invert__(self):        return self.factory('~',  self)
     def __lshift__(self, other): return self.factory('<<', self, other)
@@ -2141,8 +2137,6 @@ class TypedExpr(object):
 
     def __lt__(self, other):     return self.factory('<',  self, other)
     def __le__(self, other):     return self.factory('<=', self, other)
-    def __ge__(self, other):     return self.factory('>=', self, other)
-    def __gt__(self, other):     return self.factory('>',  self, other)
     def __add__(self, other):    return self.factory('+',  self, other)
     def __sub__(self, other):    return self.factory('-',  self, other)
     def __div__(self, other):    return self.factory('/',  self, other)
@@ -2151,6 +2145,78 @@ class TypedExpr(object):
     def __neg__(self):           return self.factory('-',  self)
     def __pos__(self):           return self.factory('+',  self)
     def __pow__(self, other):    return self.factory('**', self, other)
+
+    # add reverse versions of several of the above so that things like
+    # `2 + te("2")` work. Python has a weird special case where if you do
+    # A + B where `B` is a subclass of `A`, it'll call the reverse version
+    # on `B` if possible. To avoid this for the case of `Term`/`MetaTerm`,
+    # explicitly prevent the reverse versions from working if `other` is a
+    # TypedExpr.
+    def __radd__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('+', other, self)
+
+    def __rsub__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('-', other, self)
+
+    def __rtruediv__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('/', other, self)
+
+    def __rmul__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('*', other, self)
+
+    def __rpow__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('**', other, self)
+
+    def __rmod__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('<=>', other, self)
+
+    def __rand__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('&', other, self)
+
+    def __ror__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('|', other, self)
+
+    def __rxor__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('^', other, self)
+
+    def __rrshift__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('>>', other, self)
+
+    def __rlshift__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('<<', other, self)
+
+    # because __ge__ is used both as a reverse for __le__, and when >= is used
+    # directly, we can't use the above trick to ensure the constructed order
+    # is the same as what the user typed. I haven't come up with a solution
+    # short of making `MetaTerm` not a subclass of `Term`.
+    def __ge__(self, other):
+        return self.factory('>=', self, other)
+
+    def __gt__(self, other):
+        return self.factory('>',  self, other)
+
 
     def __bool__(self):
         # otherwise, python tries to use the fact that these objects implement a

@@ -5,7 +5,7 @@ from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from . import core, boolean, number, sets, meta, quantifiers
 from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
-from .core import is_concrete
+from .core import is_concrete, is_te
 from .meta import MetaTerm
 from .ply import alphanorm
 
@@ -504,6 +504,75 @@ class MetaTest(unittest.TestCase):
 
         self.assertRaises(TypeMismatch, MetaTerm, {False, '_c1'})
         self.assertRaises(parsing.ParseError, MetaTerm, {'_x1', '_c1'})
+
+    def test_binary_ops(self):
+        # this test exercises python versions of overloaded binary operators
+        # in an exhaustive way, verifying:
+        # * that both orders work with two TypedExprs
+        # * that both orders work with one TypedExpr and one python element
+        # * that order is preserved in the latter case where possible (it
+        #   is not possible for comparison relations)
+        # the only binary operator that isn't tested here at all is SetContains
+        # tests are at types n, t, and {n}
+        numeric = ["+", "-", "*", "/", "**", "%"]
+        numeric_rels = ["%", "<=", ">=", "<", ">"]
+        locals = {'e': te("3"), 'e2': te("x_n")}
+        for op in numeric:
+            # note that `%` is currently tested here; so the output type is
+            # homogenous
+            for order in (f"2 {op} e", f"e {op} 2"):
+                self.assertTrue(is_te(eval(order, None, locals)),
+                    f"`{order}` is not a TypedExpr")
+            check = 0
+            for order in (f"2 {op} e2", f"e2 {op} 2"):
+                self.assertTrue(eval(order, None, locals)[check].meta(),
+                    f"Swapped order for `{order}`")
+                check += 1
+
+        for op in numeric_rels:
+            for order in (f"2 {op} e2", f"e2 {op} 2", f"2 {op} e2", f"e2 {op} 2"):
+                # we are just checking for errors here, really. It isn't
+                # possible to get the order right in a general way; see notes
+                # on this in the __r*__ implementations in core.
+                self.assertTrue(is_te(eval(order, None, locals)),
+                    f"`{order}` is not a TypedExpr")
+
+        boolean = ["&", "|", "%", ">>", "^"]
+        locals = {'e': te("True"), 'e2': te("x_t")}
+        for op in boolean:
+            for order in (f"True {op} e", f"e {op} True"):
+                self.assertTrue(is_te(eval(order, None, locals)),
+                    f"`{order}` is not a TypedExpr")
+            check = 0
+            for order in (f"True {op} e2", f"e2 {op} True"):
+                self.assertTrue(eval(order, None, locals)[check].meta(),
+                    f"Swapped order for `{order}`")
+                check += 1
+
+        sets = ["&", "|", "-", "%"]
+        # SetContains not tested here
+        set_rels = ["%", "<=", ">=", "<", ">"]
+        locals = {'e': te("{3}"), 'e2': te("x_{n}")}
+        for op in sets:
+            # note that `%` is currently tested here; so the output type is
+            # homogenous
+            for order in (f"{{2}} {op} e", f"e {op} {{2}}"):
+                self.assertTrue(is_te(eval(order, None, locals)),
+                    f"`{order}` is not a TypedExpr")
+            check = 0
+            for order in (f"{{2}} {op} e2", f"e2 {op} {{2}}"):
+                self.assertTrue(eval(order, None, locals)[check][0].meta(),
+                    f"Swapped order for `{order}`")
+                check += 1
+
+        for op in set_rels:
+            for order in (f"{{2}} {op} e2", f"e2 {op} {{2}}", f"{{2}} {op} e2", f"e2 {op} {{2}}"):
+                # we are just checking for errors here, really. It isn't
+                # possible to get the order right in a general way; see notes
+                # on this in the __r*__ implementations in core.
+                self.assertTrue(is_te(eval(order, None, locals)),
+                    f"`{order}` is not a TypedExpr")
+
 
     def test_eq(self):
         t1 = te("(_c1, _c2, (True, False))")
