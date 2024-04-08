@@ -2446,10 +2446,8 @@ class ApplicationExpr(TypedExpr):
         # then an OutOfDomain case will crash before this code gets called.
         if (get_sopt('evaluate', sopts)
                         and self.args[0].meta() and self.args[1].meta()):
-            return derived(
-                self._do_reduce(strict_charfuns=get_sopt('strict_charfuns', sopts)),
-                self,
-                "MetaTerm reduction")
+            # _do_reduce should set a derivation
+            return self._do_reduce(strict_charfuns=get_sopt('strict_charfuns', sopts))
         return self
 
     def calculate_partiality(self, vars=None, **sopts):
