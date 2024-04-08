@@ -464,7 +464,11 @@ class SetContains(SyncatOpExpr):
         # seems like the best way to do the mutual type checking here?
         # Something more elegant?
         arg1 = self.ensure_typed_expr(arg1)
-        arg2 = self.ensure_typed_expr(arg2, SetType(arg1.type))
+        try:
+            arg2 = self.ensure_typed_expr(arg2, SetType(arg1.type))
+        except types.TypeMismatch:
+            raise types.TypeMismatch(arg2, SetType(arg1.type),
+                error="Right operand of `<<` must be a set type matching left operand")
         arg1 = self.ensure_typed_expr(arg1, arg2.type.content_type)
         super().__init__(type_t, arg1, arg2, tcheck_args=False)
 
