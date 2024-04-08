@@ -1190,7 +1190,7 @@ class TypedExpr(object):
         if c is not None:
             return c
         else:
-            # XX limit some more cases of this? e.g. dict notation parses...
+            # XX limit some more cases of this?
             logger.warning("parse_flattened returning non-TypedExpr")
             return result
 
@@ -3495,6 +3495,11 @@ def from_python_container(p, default=None):
     elif isinstance(p, dict) and len(p) == 0:
         # hack: empty dict is treated as empty set, so that "{}" makes sense
         return sset(set())
+    elif isinstance(p, dict):
+        from .meta import MetaTerm
+        # raises if the elements are not MetaTerms!
+        # TODO: support empty function somehow
+        return MetaTerm(p)
 
     return default
 
