@@ -629,8 +629,12 @@ class FunDomainSet(ComplexDomainSet):
         elif isinstance(x, collections.abc.Mapping):
             pairs = [(self.type.left.domain.element_repr(k, rich=rich),
                       self.type.right.domain.element_repr(x[k], rich=rich)) for k in x]
-            mapping = curlybraces(",".join(f"{pair[0]}:{pair[1]}" for pair in pairs), rich=rich)
-            return f"Fun[{mapping}]"
+            if rich:
+                mapping = curlybraces(",".join(f"{pair[0]}:{pair[1]}" for pair in pairs), rich=rich)
+                return f"Fun[{mapping}]"
+            else:
+                # use a python-style `{key: val}` notation for string reprs.
+                return curlybraces(", ".join(f"{pair[0]}: {pair[1]}" for pair in pairs), rich=rich)
         else:
             # not currently used
             return super().element_repr(x, rich=rich)
