@@ -387,7 +387,7 @@ class TypeConstructor(object):
         else:
             if not all(x in self.domain for x in values):
                 raise ValueError(f"{repr(values)} is not a subset of domain for type {repr(self)}")
-        values = {self.domain.normalize(x) for x in values}
+        values = {demeta(self.domain.normalize(x)) for x in values}
         return DomainSet(values=values, typ=self, superdomain=self.domain)
 
     @contextlib.contextmanager
