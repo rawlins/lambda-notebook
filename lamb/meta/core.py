@@ -4085,7 +4085,9 @@ class BindingOp(TypedExpr):
         return self.args[1]        
 
     def finite_safe(self):
-        return self[0].type.domain.enumerable() and self[0].type.domain.finite
+        return (isinstance(self[0].type.domain, types.DomainSet)
+            and self[0].type.domain.enumerable()
+            and self[0].type.domain.finite)
 
     def type_domain_iter(self):
         # wrap domain elements in MetaTerms
