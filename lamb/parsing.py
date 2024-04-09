@@ -427,8 +427,6 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
         # don't pass assignment here, to allow for redefinition.  TODO: revisit
         from lamb.meta import TypedExpr
         term = TypedExpr.term_factory(left_s)
-        if not term.variable:
-            raise ParseError("Assignment to non-variable term '%s'" % term)
         ts = parsing_ts()
         u_result = ts.unify(term.type, right_side.type)
         # there are two ways in which unify could fail.  One is the built-in ad
