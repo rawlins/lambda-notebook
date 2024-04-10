@@ -1282,7 +1282,6 @@ class TypedExpr(object):
             offset += len(replace) - len_original
         return s
 
-
     @classmethod
     def term_factory(cls, s, typ=None, assignment=None, preparsed=False):
         """Attempt to construct a TypedTerm from argument s.
@@ -1297,6 +1296,14 @@ class TypedExpr(object):
             ts = get_type_system()
             typ = ts.type_parser(typ)
 
+        aname = None
+        # convert any assignments to MetaTerms to those MetaTerms, and then
+        # set the corresponding assignment_name.
+        # TODO: this is a bit ad hoc...
+        if assignment is not None and s in assignment and assignment[s].meta():
+            aname = s
+            s = assignment[s]
+
         from .meta import MetaTerm
         if isinstance(s, MetaTerm):
             # MetaTerms are immutable under all operations that call this, so
@@ -1304,6 +1311,9 @@ class TypedExpr(object):
             # instances with the same value is `derivation`.)
             if typ is not None:
                 s.check_type_domain(typ=typ)
+            if aname is not None:
+                s = s.copy()
+                s.assignment_name = cls.term_factory(aname, s.type)
             return s
         elif isinstance(s, TypedTerm):
             # todo: handle conversion to custom
@@ -1335,7 +1345,10 @@ class TypedExpr(object):
                     v = 0
                 elif v == 1 and isinstance(v, bool) and typ == type_n:
                     v = 1
-                return MetaTerm(v, typ=typ)
+                r = MetaTerm(v, typ=typ)
+                if aname is not None:
+                    r.assignment_name = cls.term_factory(aname, r.type)
+                return r
 
             global _constants_use_custom
             if _constants_use_custom and not is_var_symbol(v):
