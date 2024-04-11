@@ -254,7 +254,7 @@ class MetaTerm(core.TypedTerm):
         return set()
 
     def __repr__(self):
-        return f"{self.op_repr()}_{repr(self.type)}"
+        return self.op_repr()
 
     def latex_str(self, show_types=True, assignment=None, use_aname=None, **kwargs):
         # TODO: similar to __repr__, possibly this code should be on the
