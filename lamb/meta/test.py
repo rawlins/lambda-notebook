@@ -274,20 +274,21 @@ def test_repr_parse_abstract(self, depth):
             print("Failure on depth %i expression '%s'" % (depth, repr(x)))
         self.assertTrue(result)
 
-def testsimp(self, a, b, all=False, exec=False):
+def testsimp(self, a, b, all=False, exec=False, **kwargs):
     if exec:
         all = True
     if all:
-        intermediate = a.simplify_all()
+        intermediate = a.simplify_all(**kwargs)
     else:
-        intermediate = a.simplify()
+        intermediate = a.simplify(**kwargs)
     teb = te(b)
     self.assertEqual(intermediate, teb,
                 f"Failed simplification test: '{repr(a)} == {repr(b)}' (got {repr(intermediate)})")
     if exec:
-        execed = meta.exec(a)
-        self.assertEqual(intermediate, teb,
-                f"Failed exec test: '{repr(a)} == {repr(b)}' (got {repr(execed)})")
+        execed_a = meta.exec(a)
+        execed_b = meta.exec(teb)
+        self.assertEqual(execed_a, execed_b,
+                f"Failed exec test: '{repr(a)} == {repr(b)}' (got `{repr(execed_a)}` == `{repr(execed_b)}`)")
     return intermediate
 
 
@@ -575,6 +576,7 @@ class MetaTest(unittest.TestCase):
 
 
     def test_eq(self):
+        # XX this could cover quite a bit more ground
         t1 = te("(_c1, _c2, (True, False))")
         meta_t1 = MetaTerm(('_c1', '_c2', (True, False)))
         t2 = te("(_c1, _c2, (True, True))")
@@ -600,6 +602,16 @@ class MetaTest(unittest.TestCase):
         testsimp(self, s1[0] << meta_s1, True, exec=True)
         testsimp(self, meta_elem << s1, True, exec=True)
         testsimp(self, meta_elem << meta_s1, True, exec=True)
+
+        with tp("e").restrict_domain(count=4):
+            # these are chosen to avoid certain optimizations involved in <<
+            # and exercise some of the more general code
+            s1 = te("(Set x_{e} : x << {{_c1}})")
+            s2 = te("(Set x_{e} : _c1 << x & x <=> {_c1})")
+            s3 = te("(Set x_{e} : _c1 << x & x <=> {_c1, _c2})")
+            testsimp(self, s1.equivalent_to(s2), True, exec=True, eliminate_sets=True)
+            testsimp(self, s1.equivalent_to(s3), False, exec=True, eliminate_sets=True)
+        # te("(Set x_{e} : x << {{_c1}}) <=> (Set x_{e} : _c1 << x & x <=> {_c1})")
 
 
     def test_reduce(self):

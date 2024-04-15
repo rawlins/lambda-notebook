@@ -130,7 +130,11 @@ class ConditionSet(BindingOp):
         if domain is None:
             if not self.finite_safe():
                 raise NotImplementedError("Compiled ConditionSet requires a guaranteed-finite domain")
-            fixed_domain = tuple(self.domain_iter())
+            # without the demeta step, we get potentially bad comparisons
+            # XX consider adjusting the domain_iter api so that it can do this
+            # directly?
+            # XX what about when domain is set?
+            fixed_domain = tuple(types.demeta(x) for x in self.domain_iter())
             domain = lambda context: fixed_domain
         f = self.to_characteristic()._compiled
         return lambda context: {elem for elem in domain(context) if f(context)(elem)}
@@ -942,7 +946,7 @@ class SetEquivalence(BinarySetOp):
         l = self[0]._compiled
         r = self[1]._compiled
         # XX there are definitely some optimizations from simplify that would
-        # be worth importing here
+        # be worth importing here. And using python equality is kind of bug-prone.
         # to what degree can the finiteness constraint be eliminated?
         return lambda context: l(context) == r(context)
 
