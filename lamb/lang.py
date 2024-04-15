@@ -3054,12 +3054,17 @@ def pa_fun(binder, content, assignment=None):
 
     # there could be more natural ways to do this...should H&K assignment
     # functions be implemented directly?
-    inner_var = term(f"var{binder.get_index()}", types.type_e)
+    name = f"var{binder.get_index()}"
+    if name in content.content.get_type_env().terms():
+        var_type = content.content.get_type_env().term_type(name)
+    else:
+        var_type = type_e
+    inner_var = term(f"var{binder.get_index()}", var_type)
     inner_fun = meta.LFun(inner_var,
                         content.content.under_assignment(assignment))
     # XX this code is old and messy -- is this convoluted double var thing
     # really needed?
-    outer_var = term(inner_fun.find_safe_variable(), types.type_e)
+    outer_var = term(inner_fun.find_safe_variable(), var_type)
     f = meta.LFun(outer_var, (inner_fun)(outer_var).reduce())
     return BinaryComposite(binder, content, f)
 
