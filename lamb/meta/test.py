@@ -611,8 +611,6 @@ class MetaTest(unittest.TestCase):
             s3 = te("(Set x_{e} : _c1 << x & x <=> {_c1, _c2})")
             testsimp(self, s1.equivalent_to(s2), True, exec=True, eliminate_sets=True)
             testsimp(self, s1.equivalent_to(s3), False, exec=True, eliminate_sets=True)
-        # te("(Set x_{e} : x << {{_c1}}) <=> (Set x_{e} : _c1 << x & x <=> {_c1})")
-
 
     def test_reduce(self):
         self.assertEqual(self.ident(self.y).reduce(), self.y)
