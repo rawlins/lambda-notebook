@@ -689,7 +689,8 @@ class TypeEnv(object):
         return s
 
     def update_var_set(self):
-        s = types.vars_in_env(self.term_mapping)
+        s = self.type_var_set
+        s = s | types.vars_in_env(self.term_mapping)
         s = s | set(self.type_mapping.keys())
         for m in self.type_mapping:
             s  = s | self.type_mapping[m].bound_type_vars()
