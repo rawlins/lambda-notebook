@@ -1614,7 +1614,8 @@ class UnknownType(VariableType):
 # typed element to its actual type.
 class DisjunctiveDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        super().__init__("Disjunctive", typ)
+        finite = all(t.domain.finite for t in typ.disjuncts)
+        super().__init__("Disjunctive", typ, finite=finite)
 
     def infcheck(self, x):
         for t in self.type:
@@ -1627,11 +1628,34 @@ class DisjunctiveDomainSet(ComplexDomainSet):
     def __repr__(self):
         return f"DisjunctiveDomainSet({self.type})"
 
+    def __len__(self):
+        if not self.finite:
+            raise ValueError("Non-finite `DisjunctiveDomainSet`s do not have a length.")
+
+        return sum(len(t for t in self.type.disjuncts))
+
+    def __iter__(self):
+        if not self.finite:
+            raise ValueError("Can't iterate over non-finite `DisjunctiveDomainSet`s.")
+        for t in self.type.type_list:
+            for elem in t.domain:
+                yield elem
+
+    def enumerable(self):
+        # only the finite case is supported right now...
+        return self.finite
+
     def element_repr(self, x, rich=False):
         # not very easy to call, but it's easy to implement
         for t in self.type:
             if x in t.domain:
                 return t.domain.element_repr(x, rich=rich)
+        raise ValueError(f"Invalid element of disjunctive type {self.type}: `{x}`")
+
+    def normalize(self, x):
+        for t in self.type:
+            if x in t.domain:
+                return t.normalize(x)
         raise ValueError(f"Invalid element of disjunctive type {self.type}: `{x}`")
 
     @classmethod
@@ -1800,8 +1824,9 @@ class DisjunctiveType(TypeConstructor):
             return self.intersection_point(b, unify_fun, assignment)
 
     def resolve_element_type(self, e):
+        # XX why is this on the type and not the domain?
         # if `e` is not a type domain element, guaranteed to return None
-        for t in self.type:
+        for t in self.type_list:
             if e in t.domain:
                 return t
         return None

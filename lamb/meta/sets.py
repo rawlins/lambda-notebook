@@ -284,7 +284,7 @@ class ListedSet(TypedExpr):
         # explicit handling of empty sets in order to get the type right
         if len(args) == 0:
             return emptyset(self.type)
-        return self.copy_core(ListedSet(args))
+        return self.copy_core(ListedSet(args, typ=self.type.content_type))
 
     @classmethod
     def join(self, l):
