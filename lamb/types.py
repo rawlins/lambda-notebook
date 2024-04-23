@@ -1632,7 +1632,7 @@ class DisjunctiveDomainSet(ComplexDomainSet):
         if not self.finite:
             raise ValueError("Non-finite `DisjunctiveDomainSet`s do not have a length.")
 
-        return sum(len(t for t in self.type.disjuncts))
+        return sum(len(t.domain for t in self.type.disjuncts))
 
     def __iter__(self):
         if not self.finite:
