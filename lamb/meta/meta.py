@@ -1,13 +1,15 @@
 import random
-import collections.abc
+import collections, collections.abc
+import contextlib
+import IPython.lib.pretty as pretty
 
 import lamb
 from lamb import types
 
 from . import core, boolean
-from .ply import get_sopt
-from .core import is_te
-from lamb import types, parsing
+from .ply import get_sopt, symbol_is_var_symbol
+from .core import is_te, te, global_namespace, get_type_system, Tuple, to_concrete, is_concrete
+from lamb import types, parsing, utils
 from lamb.utils import ensuremath, dbg_print
 from lamb.types import TypeMismatch, type_e, type_t, type_n, BasicType, SetType, TupleType
 
@@ -164,9 +166,15 @@ class MetaTerm(core.TypedTerm):
     def apply(self, arg):
         if not self.type.functional() or not core.get_type_system().eq_check(self.type.left, arg.type):
             raise TypeMismatch(self, arg, error="Function-argument application: mismatched argument type to MetaTerm")
+
+        # n-ary application will supply a Tuple here
+        if is_concrete(arg):
+            # XX demeta?
+            arg = MetaTerm(to_concrete(arg))
         elif not arg.meta():
             return self(arg)
-        elif isinstance(self.op, collections.abc.Set):
+
+        if isinstance(self.op, collections.abc.Set):
             # XX why does this have to be disjunctive?? It makes this code very
             # messy
             # this will raise if somehow self.type.right is not t
@@ -227,18 +235,22 @@ class MetaTerm(core.TypedTerm):
         if self.op.__hash__:
             return self.op.__hash__()
         else:
-            # this will probably raise. Certain python types we allow in `op`,
-            # namely dict and set, aren't hashable.
-            # TODO: convert to frozenset, and some sort of frozendict implementation?
             return hash(self.op)
 
-    def op_repr(self, rich=False, addsf=False):
+    def op_repr(self, rich=False, sf=False, use_renames=True):
         if self.type is None:
             # error in constructor, just need something here
             return str(self.op)
-        r = self.type.domain.element_repr(self.op, rich=rich)
-        if addsf and rich:
-            r = f"\\textsf{{{r}}}"
+        sup = ""
+        if rich and use_renames:
+            sup = self.type.domain.element_repr(self.op, rich=rich, use_renames=False)
+        r = self.type.domain.element_repr(self.op, rich=rich, use_renames=use_renames)
+        if rich:
+            old = r
+            if sf:
+                r = f"\\textsf{{{r}}}"
+            if sup and sup != old:
+                r = f"{{{r}}}^{{\\textsf{{{sup}}}}}"
         return r
 
     def calc_type_env(self, recalculate=False):
@@ -254,26 +266,37 @@ class MetaTerm(core.TypedTerm):
         return set()
 
     def __repr__(self):
-        return self.op_repr()
+        return self.op_repr(use_renames=False)
 
-    def latex_str(self, show_types=True, assignment=None, use_aname=None, **kwargs):
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text("MetaTerm(...)")
+        else:
+            use_renames = not getattr(p, '_define_context', True)
+            p.text(self.op_repr(use_renames=use_renames))
+
+    def latex_str(self, show_types=True, assignment=None, use_renames=None, **kwargs):
         # TODO: similar to __repr__, possibly this code should be on the
         # type domain itself
         # if just using `op` as the name, we use textsf, but setting
         # an arbitrary latex name is allowed
-        if use_aname is None:
-            use_aname = True
+        if use_renames is None:
+            use_renames = True
+        elem_renamed = (self.type is not None
+                        and isinstance(self.type.domain, types.DomainSet)
+                        and self.type.domain.element_rename(self.op))
         if self.latex_op_str is None:
-            if use_aname and self.assignment_name is not None:
+            if use_renames and self.assignment_name is not None and not elem_renamed:
                 # XX this is a bit ad hoc, could it be better systematized?
                 # maybe a piece of the assignment itself should be saved?
+                # should domain element renames also be shown as a superscript?
                 if isinstance(self.assignment_name, tuple):
                     aname, aname2 = self.assignment_name
                 else:
                     aname = self.assignment_name
                     aname2 = None
-                if isinstance(self.type, BasicType):
-                    superscript = self.op_repr(rich=True, addsf=True)
+                if isinstance(self.type, types.BasicType):
+                    superscript = self.op_repr(rich=True, sf=True)
                 else:
                     # don't try to show the actual value for this case
                     superscript = "\\text{\\textsf{[meta]}}"
@@ -283,10 +306,11 @@ class MetaTerm(core.TypedTerm):
                 return aname.latex_str(show_types=show_types,
                                             assignment=assignment,
                                             superscript=superscript,
+                                            sf=not symbol_is_var_symbol(aname.op),
                                             **kwargs)
             else:
                 # render a domain element name as sans serif
-                op_str = self.op_repr(rich=True, addsf=True)
+                op_str = self.op_repr(rich=True, sf=True, use_renames=use_renames)
         else:
             # assumption: this is only used in cases where the op string is
             # giving an extremely stable constant name (e.g. \bot for False)
@@ -295,13 +319,13 @@ class MetaTerm(core.TypedTerm):
             return ensuremath(op_str)
         else:
             # does this need to be in a \text? frontend compat in general...
-            return ensuremath(f"{{{op_str}}}_{{{self.type.latex_str()}}}")
+            return ensuremath(f"{op_str}_{{{self.type.latex_str()}}}")
 
     def _repr_latex_(self):
         # override: when directly inspecting an arbitrary MetaTerm, suppress
         # any assignment-derived name, except for the BasicType case, which
         # always shows the value
-        return self.latex_str(suppress_parens=True, use_aname=isinstance(self.type, BasicType))
+        return self.latex_str(suppress_parens=True, use_renames=isinstance(self.type, BasicType))
 
     @classmethod
     def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=None,
@@ -945,4 +969,455 @@ def truthtable_contradictory(e, simplify=True):
         e = e.simplify_all(reduce=True)
     result, assignment = extract_boolean(e)
     return all((eval[1] == False) for eval in truthtable(result[0]))
+
+
+def ensure_te_vals(m):
+    # caveat: this changes m!
+    for k in m:
+        if not is_te(m[k]):
+            m[k] = te(m[k])
+    return m
+
+
+class Assignment(utils.Namespace):
+    """This class represents an assignment function that can be incrementally
+    modified.  Like the parent class `utils.Namespace`, it uses a ChainMap for
+    most of the implementation details. All values are required to be
+    `meta.core.TypedExpr` objects."""
+    def __init__(self, _base=None, _name=None, **kwargs):
+        """Instantiate an `Assignment`.
+
+        Parameters
+        ----------
+        _base : collections.abc.Mapping, optional
+            a map to initialize with. Values must be `TypedExpr`.
+        _name : str, optional
+            a (mostly cosmetic) name for the asignment, treated as empty if
+            not provided.
+        **kwargs : dict, optional
+            key-value pairs to initialize with. Values must be `TypedExpr`.
+        """
+        if _base is None:
+            _base = dict()
+        else:
+            _base = ensure_te_vals(_base.copy())
+
+        super().__init__(_base)
+        self.update(**kwargs)
+
+        if _name is None:
+            self.name = ""
+        else:
+            self.name = _name
+
+    def copy(self):
+        return Assignment(_name=self.name, _base=self.items.copy())
+
+    def __setitem__(self, key, value):
+        """Set a value in the mapping. `value` must be a `meta.core.TypedExpr`."""
+        if not is_te(value):
+            value = te(value)
+        super().__setitem__(key, value)
+
+    def update(self, m=None, /, **kwargs):
+        """Update the mapping in place. All values must be instances of
+        `meta.core.TypedExpr`."""
+        kwargs = ensure_te_vals(kwargs)
+        if m is not None:
+            m = ensure_te_vals(m.copy())
+            self.items.update(m, **kwargs)
+        else:
+            self.items.update(**kwargs)
+
+    def modify(self, m=None, /, **kwargs):
+        """Modify `self` by creating a new element in the underlying mapping
+        chain, and updating with `m` and `**kwargs`. All values must be
+        instances of `meta.core.TypedExpr`.
+
+        Parameters
+        ----------
+        m : collections.abc.Mapping, optional
+            A mapping to update with. Values must be `TypedExpr`.
+        **kwargs : dict, optional
+            Key-value pairs to update with. Values must be `TypedExpr`.
+        """
+        super().modify() # add a new child to self.items
+        self.update(m, **kwargs)
+
+    # new_child, pop_child, shift implementation via super
+
+    def merge(self, m=None, /, **kwargs):
+        """Merge in another assignment, requiring type-consistency of any
+        modifications to existing mappings. The update will happen at the
+        principal type. This inserts a new mapping into the chain before
+        updating, so update history is stored.
+
+        This has non-symmetric behavior: if the types are ok, and the value here
+        is a term, the value in `assignment` (at the principal type) will
+        override the value in self. (The previous value's type will not be
+        adjusted.)
+
+        Parameters
+        ----------
+        m : collections.abc.Mapping, optional
+            A mapping to merge. Values must be `TypedExpr`.
+        **kwargs : dict, optional
+            Key-value pairs to merge. Values must be `TypedExpr`.
+        """
+
+        m = self.new_child(m, **kwargs)
+        for k in m:
+            if k in self:
+                # this will raise a TypeMismatch if the merge fails. `m`
+                # is in an intermediate state, but that doesn't affect `self`.
+                m[k] = core.merge_tes(self[k], m[k], symmetric=False)
+
+        return m
+
+    def _update_text(self, m, rich=False, linearized=True, **kwargs):
+        # text for a single mapping's worth of updates
+        if rich and not linearized:
+            return utils.dict_latex_repr(m, linearized=False, **kwargs)
+        elif rich:
+            # use Heim & Kratzer style reverse notation
+            a_strs = [f"{m[k].latex_str(**kwargs)}/{k}" for k in m]
+        else:
+            a_strs = [f"{repr(m[k])}/{k}" for k in m]
+        return f"[{','.join(a_strs)}]"
+
+    def text(self, rich=False, linearized=True, **kwargs):
+        maps = self.maps[::-1] # reverse it
+        if self.name:
+            r = self.name
+        elif len(maps):
+            # only linearize non-superscripted updates
+            r = self._update_text(maps[0], rich=rich, linearized=linearized, **kwargs)
+            maps = maps[1:]
+        else:
+            r = "[]" # anything else?
+
+        for i in range(len(maps)):
+            i_text = self._update_text(maps[i], rich=rich, **kwargs)
+            if rich:
+                # the superscripting is the Heim & Kratzer style, but I'm not
+                # sure I really like it...
+                r = ensuremath(f"{{{r}}}^{{{i_text}}}")
+            else:
+                r = f"{r}{i_text}"
+        return r
+
+    @contextlib.contextmanager
+    def under(self, force_names=False):
+        """Temporarily apply all definitions in this assignment to the global
+        namespace. This also update the type system's basic type element names
+        with any relevant definitions in `self` so that they are rendered
+        using their assignment names. Modifying the global namespace in the
+        scope of this call will change this assignment! (This behavior can be
+        avoided by copying first.)
+
+        Parameters
+        ----------
+        force_names: bool, default: False
+            if `True`, this will overwrite any existing domain element renames,
+            and also use the last rename in `self` rather than the first in
+            cases of duplicates.
+
+        Yields
+        ------
+        AttrWrapper
+            A wrapped version of `self` (in contrast to the superclass, not
+            of the global namespace!)
+        """
+
+        nameable = {k: self[k] for k in self if self[k].meta()
+                                and not symbol_is_var_symbol(k)
+                                and isinstance(self[k].type, types.BasicType)}
+        n_types = {nameable[k].type for k in nameable}
+        with contextlib.ExitStack() as stack:
+            for typ in n_types:
+                by_type = {k: nameable[k] for k in nameable if nameable[k].type == typ}
+                stack.enter_context(typ.with_names(by_type, force=force_names))
+            # note: changes to the global namespace in the scope of this call
+            # will change the assignment!
+            stack.enter_context(super().under())
+            # n.b. unlike super().under(), only yield an object that includes
+            # the *current* assignment
+            yield utils.AttrWrapper(self)
+
+    def _repr_latex_(self):
+        return self.latex_str()
+
+    def _repr_markdown_(self):
+        return None
+
+    def latex_str(self, linearized=False, **kwargs):
+        return ensuremath(self.text(rich=True, linearized=linearized, **kwargs))
+
+
+class Model(collections.abc.MutableMapping):
+    """A complex mapping object that represents both an assignment and a set of
+    domain restrictions for type domains; for the purpose of interpreting
+    metalanguage formulas. Implemented using an underlying `Assignment` object
+    (which in turn outsources work to `collections.ChainMap`)."""
+    def __init__(self, assignment, domain=None, setfun=True, strict_charfuns=True):
+        """
+        Parameters
+        ----------
+        assignment: collections.abc.Mapping
+            a mapping to initialize the model with. Values must be type domain
+            elements or `meta.meta.MetaTerm` objects that wrap them.
+        domain: set or dict
+            Zero or more domain restrictions for type domains. If a set is
+            provided, the type domain is inferred from set elements. If a
+            mapping is provided, it should be a mapping from types in the
+            current type system to sets of domain elements.
+        setfun: bool, default: True
+            If `True`, sets in `assignment` are treated as characterizing sets
+            for functions with return type `t`. If `False`, sets are treated
+            as the appropriate set type. (Note that sets can always be
+            instantiated here by explicitly wrapping them in a `MetaTerm` with
+            the type provided.)
+        strict_charfuns: bool, default: True
+            Determines the evaluation behavior for partial mapping-based
+            functional domain elements. If `True`, such functions will raise
+            a `meta.meta.DomainError` if they are called with a value not in
+            their domain. If `False`, any characteristic functions will instead
+            return false in this case. (Non-characteristic functions will
+            always raise.)
+        """
+        self.domains = {}
+        if domain:
+            if isinstance(domain, collections.abc.Mapping):
+                for typ in domain:
+                    self.set_domain(typ, domain[typ])
+            else:
+                # if domain is just a set, infer its type
+                self.set_domain(None, domain)
+        self.assignment = Assignment()
+        # don't use a dict comprehension -- incremental update allows constants
+        # to be used in later definitions
+        for k in assignment:
+            self.assignment[k] = self._valuation(assignment[k], setfun=setfun)
+
+        self.setfun = setfun
+        self.strict_charfuns = strict_charfuns
+
+    def __repr__(self):
+        return f"Model(assignment={repr(dict(self.assignment))}, domain={repr(self.domains)}, strict_charfuns={repr(self.strict_charfuns)})"
+
+    def _repr_pretty_(self, p, cycle):
+        # XX the output here is neither python nor metalanguage code, but a
+        # mix; it's very readable but looks misleadingly like something might
+        # parse it
+        if cycle:
+            p.text("Model(...)")
+        else:
+            ctor = pretty.CallExpression.factory(self.__class__.__name__)
+            p._define_context = True
+            p.pretty(ctor(assignment=dict(self.assignment), domain=self.domains, strict_charfuns=self.strict_charfuns))
+
+    def _domain_latex(self):
+        r = ""
+        for k in self.domains:
+            r += ensuremath(f"D_{{{utils.latex_repr(k)}}} = {utils.set_latex_repr(self.domains[k], use_renames=False)}") + "<br />"
+        if r:
+            prefix = "**Domain**: "
+            if len(self.domains) > 1:
+                prefix += "<br />"
+            r = prefix + r
+        return r
+
+    def _repr_markdown_(self):
+        r = self._domain_latex()
+        if self.assignment:
+            with self.under_assignments():
+                r += f"**Valuations**:<br />{self.assignment.latex_str(use_renames=False)}"
+
+        if not r:
+            return "**Empty model**"
+        else:
+            return r
+
+    def _valuation(self, m, setfun=True):
+        def valuation_normalize(e):
+            if isinstance(e, collections.abc.Hashable) and e in self:
+                # shortcut -- allow using our own values in subsequent
+                # definitions. This does *not* involve evaluating anything.
+                return self[e]
+            elif isinstance(e, collections.abc.Set):
+                return {valuation_normalize(x) for x in e}
+            elif isinstance(e, collections.abc.Mapping):
+                return {valuation_normalize(x): valuation_normalize(e[x]) for x in e}
+            elif isinstance(e, tuple) or isinstance(e, list):
+                return tuple(valuation_normalize(x) for x in e)
+            else:
+                return e
+
+        return MetaTerm(valuation_normalize(m), setfun=setfun)
+
+    def copy(self):
+        return Model(self.assignment.copy(), self.domains.copy(),
+                    setfun=self.setfun, strict_charfuns=self.strict_charfuns)
+
+    def __getitem__(self, k):
+        return self.assignment[k]
+
+    def __setitem__(self, k, v):
+        """Set a key according to a value `v`. Values must be either domain
+        elements, or `meta.meta.MetaTerm` objects that wrap them, as in the
+        constructor.
+
+        In some cases, it is useful to relax this value constraint. A
+        straightforward recipe for this given a model `m` is
+        ``collections.ChainMap({}, m)``.
+
+        See also
+        --------
+        `meta.core.subassignment`
+        """
+        self.assignment[k] = self._valuation(v, setfun=self.setfun)
+
+    def __len__(self):
+        return len(self.assignment)
+
+    def __delitem__(self, k):
+        """Delete the value for a key. This has similar behavior to deletion
+        in a regular `collections.ChainMap` -- so it may reveal another value
+        for the key that was shadowed, rather than resulting in no value for
+        that key."""
+        del self.assignment[k]
+
+    def __iter__(self):
+        return iter(self.assignment)
+
+    def set_domain(self, typ, domain):
+        """Set a domain at some type.
+
+        Parameters
+        ----------
+        typ: types.TypeConstructor or None
+            If `typ` is `None`, attempt to infer the type from `domain`,
+            otherwise, use the indicated type.
+        domain: set or None
+            A set of domain elements or `MetaTerm` objects wrapping domain
+            elements at the appropriate type. If `None`, the domain mapping
+            for `typ` will be removed. At least one of `typ` and `domain`
+            must be non-`None`.
+        """
+        if domain is None:
+            if typ is None and len(self.domains) > 1:
+                raise ValueError("Ambiguous `set_domain` call, no type provided")
+            if typ in self.domains:
+                del self.domains[typ]
+            return
+        # use the MetaTerm constructor to ensure a coherent set. This allows
+        # typ=None.
+        mset = MetaTerm(domain, typ=typ)
+        if not isinstance(mset.type.content_type, BasicType):
+            raise ValueError(f"Model domains can only be set for atomic types (got `{repr(mset.type)}`).")
+        self.domains[mset.type.content_type] = {MetaTerm(e) for e in mset.op}
+
+    def get_domain(self, typ):
+        """Return the domain for `typ`, or `None` if there is no domain
+        restriction at that type."""
+        if not typ in self.domains:
+            return None
+        else:
+            return self.domains[typ]
+
+    @contextlib.contextmanager
+    def under_assignments(self):
+        """Temporarily apply all assignment values encoded in this model to
+        the global namespace. This is a wrapper for `Assignment.under`.
+
+        Yields
+        ------
+        AttrWrapper
+            A wrapped version of `self`.
+        """
+
+        with self.assignment.under():
+            yield utils.AttrWrapper(self)
+
+    @contextlib.contextmanager
+    def under_domains(self):
+        """Temporarily apply all domain restrictions encoded in this model to
+        the relevant type domains."""
+        with contextlib.ExitStack() as stack:
+            for typ in self.domains:
+                stack.enter_context(typ.restrict_domain(self.domains[typ]))
+            yield
+
+    @contextlib.contextmanager
+    def under(self):
+        """Temporarily apply all assumptions encoded in this model to
+        both the relevant type domains and to the global namespace.
+
+        Yields
+        ------
+        AttrWrapper
+            A wrapped version of `self`.
+
+        See also
+        --------
+        `Namespace.under`, `Assignment.under`
+        `CompositionSystem.under_model`: a wrapper on this function
+        `CompositionSystem.assume_model`: for long-running model-based assumptions
+        """
+        with self.under_domains():
+            with self.under_assignments():
+                yield utils.AttrWrapper(self)
+
+    def apply(self):
+        """Apply both domain restrictions and assignment values encoded in this
+        model to current global state."""
+        # exceptions in the middle of these may leave things in a fairly
+        # undefined state, with changes partially applied...
+        get_type_system().modify_domains(self)
+        global_namespace().modify(self)
+
+    def __call__(self, e, **kwargs):
+        """Evaluate `e` (wrapped for `evaluate`)"""
+        return self.evaluate(e, **kwargs)
+
+    def evaluate(self, e, simplify=True):
+        """Evaluate `e` in the context of this model. This applies the
+        assignment values to `e`, optionally simplifying (using any domain
+        restrictions), and returns the result.
+
+        Parameters
+        ----------
+        e : meta.core.TypedExpr or Assignment
+            An expression or assignment to evaluate. If an `Assignment` is
+            provided, this recurses and evaluates every value in the assignment.
+        simplify : bool, default: True
+            Whether to attempt to simplify. This does two simplification
+            passes; it first reduces, then does the assignment substitution,
+            then does a regular simplify pass. Note that any domain restrictions
+            will likely have no impact if this is set to `False`.
+
+        Returns
+        -------
+        An evaluated expression or assignment. Assignments are updated via
+        `new_child`, so history is preserved.
+        """
+        if isinstance(e, Assignment):
+            m = e.new_child()
+            for k in e:
+                if e[k].meta():
+                    continue
+                m[k] = self.evaluate(e[k], simplify=simplify)
+            return m
+        # otherwise, should be a TypedExpr...
+        with self.under():
+            # pre-simplification pass
+            if simplify:
+                e = e.simplify_all(reduce=True, strict_charfuns=self.strict_charfuns)
+            e = e.under_assignment(self)
+            if simplify:
+                e = e.simplify_all(
+                            evaluate=True,
+                            assignment=self,
+                            strict_charfuns=self.strict_charfuns)
+            return e
 

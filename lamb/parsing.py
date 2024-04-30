@@ -4,6 +4,7 @@ from contextlib import contextmanager
 # imported by meta
 from lamb import utils
 from lamb.utils import * # TODO: remove
+from lamb.display import assignment_repr
 
 Tree = utils.get_tree_class()
 
@@ -274,7 +275,9 @@ def parse_te(line, env=None, use_env=False):
     # implementation of the %te magic
     from lamb.meta import te
     line = remove_comments(line)
-    glob, line = magic_opt("globals", line)
+    glob, line = magic_opt("lexicon", line)
+    if not glob:
+        glob, line = magic_opt("lex", line)
     if glob:
         use_env = True
     reduce, line = magic_opt("reduce", line)
@@ -386,7 +389,7 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
                                                         ambiguity=ambiguity)
     if lex_name:
         default = a_ctl.default()
-        db_env = default.modify(var_env)
+        db_env = default.new_child(var_env)
         right_side = parse_right(left_s, right_str, db_env)
         if right_side is None:
             return (dict(), env)
@@ -424,29 +427,22 @@ def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
             return (dict(), env)
 
         # variable assignment case
-        # don't pass assignment here, to allow for redefinition.  TODO: revisit
         from lamb.meta import TypedExpr
-        term = TypedExpr.term_factory(left_s)
-        ts = parsing_ts()
-        u_result = ts.unify(term.type, right_side.type)
-        # there are two ways in which unify could fail.  One is the built-in ad
-        # hoc type_guessed flag, and one is a genuine type mismatch. We want to
-        # silently override guessed types here.
-        if u_result is None:
-            if term.type_guessed:
-                term.type = right_side.type
-            else:
-                from lamb.types import TypeMismatch
-                raise TypeMismatch(term, right_side,
-                                                        "Variable assignment")
-        else:
-            # brute force
-            term.type = u_result
-        if transform:
-            right_side = transform(right_side).simplify_all(reduce=True)
-        # NOTE side-effect here
-        env[term.op] = right_side
-        return ({term.op : right_side}, env)
+        with error_manager():
+            with parse_error_wrap(f"Assignment to `{left_s}` failed"):
+                # don't pass assignment here, to allow for redefinition.  TODO: revisit
+                term = TypedExpr.term_factory(left_s, typ=right_side.type)
+                if term.type != right_side.type:
+                    # the left-side term parsing resulted in a stronger principal
+                    # type
+                    right_side = TypedExpr.ensure_typed_expr(right_side, typ=term.type)
+
+                if transform:
+                    right_side = transform(right_side).simplify_all(reduce=True)
+                # NOTE side-effect here
+                env[term.op] = right_side
+                return ({term.op : right_side}, env)
+        return (dict(), env)
 
 def remove_comments(s):
     """remove comments (prefaced by #) from a single line"""
@@ -477,11 +473,11 @@ def parse_line(s, env=None, transforms=None, ambiguity=False):
 
 def parse_lines(s, env=None, transforms=None, ambiguity=False):
     if env is None:
-        env = collections.OrderedDict()
+        env = {}
     global eq_transforms
     if transforms is None:
         transforms = eq_transforms
-    accum = collections.OrderedDict()
+    accum = {}
     lines = s.splitlines()
     for l in lines:
         (a, env) = parse_line(l, transforms=transforms, env=env,
@@ -502,31 +498,12 @@ def fullvar(d, s):
     else:
         return TypedTerm(s, d[s].type)
 
-def html_output(accum, env):
-    from lamb.lang import Items, Composable
-    lines = []
-    plain_lines = []
-    if len(accum) == 0:
-        # use markdown for consistency...
-        return utils.show(markdown="<i>(Empty lexicon)</i>")
-    for k in accum.keys():
-        if is_te(accum[k]):
-            var = fullvar(accum, k)
-            lines.append(ensuremath(var._repr_latex_()
-                                    + "\\:=\\:"
-                                    + accum[k]._repr_latex_()))
-            plain_lines.append(repr(var) + " = " + repr(accum[k]))
-        elif isinstance(accum[k], Items):
-            # TODO: less ad hoc treatment of this case
-            lines.extend(accum[k].all_latex_strs())
-        elif isinstance(accum[k], Composable):
-            # item will automatically print an equality statement
-            lines.append(accum[k]._repr_latex_())
-            plain_lines.append(repr(accum[k]))
-        else:
-            print("(Unknown class '%s') %s \\:=\\: %s" % (accum[k].__class__,
-                                                          k, accum[k]))
-    return utils.show(markdown="<br />\n".join(lines), plain="\n".join(plain_lines))
+
+def html_output(accum):
+    # legacy function, maybe remove at some point
+    x = utils.Namespace(accum)
+    return utils.show(markdown=x._repr_markdown_(), plain=repr(x))
+
 
 def parse_qtree(s, i=0):
     s = s.strip()

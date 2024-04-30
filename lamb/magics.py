@@ -1,7 +1,6 @@
 import keyword, collections
 import lamb
 from lamb import parsing, utils, lang, meta, types
-from lamb.utils import *
 
 from IPython.core.magic import (Magics, magics_class, line_magic,
                                 cell_magic, line_cell_magic, no_var_expand)
@@ -18,11 +17,13 @@ def process_items(fun, *i, env=None):
 
     Possible forms: a list of lexical entries, a dict, or a lexicon.
     If the dict contains strs, it tries to use the "env" argument."""
+    # TODO: this function is extremely side-effect-y in ways that are probably
+    # unnecessary
     result = list()
     if len(i) == 0:
         return result
     for item in i:
-        if isinstance(item, dict):
+        if isinstance(item, collections.abc.Mapping):
             # argument is probably an env or a lexicon dict
             for k in item.keys():
                 item[k] = process_items(fun, item[k])[0]
@@ -34,12 +35,11 @@ def process_items(fun, *i, env=None):
             # for hamblinizing the contents of a dict that maps strings to
             # hamblinizable things
             env[item] = process_items(fun, env[item])[0]
+            result.append(env[item])
         elif isinstance(item, lang.Item):
             result.append(fun(item))
         else:
             result.append(item) # silently ignore...
-    if len(result) == 0:
-        return None
     return result
 
 
@@ -72,10 +72,10 @@ class LambMagics(Magics):
     @no_var_expand
     def lamb(self, line, cell=None):
         """Magic that works both as %lamb and as %%lamb"""
+        # XX it wouldn't be entirely crazy to use %%lexicon for this...
         self.cur_ambiguity = self.ambiguity
         if cell is None:
             (accum, env) = parsing.parse(line, self.env)
-            self.env = env
         else:
             if len(line) > 0:
                 r = self.control_line(line)
@@ -83,19 +83,20 @@ class LambMagics(Magics):
                     return r #TODO fix this up, not right
             (accum, env) = parsing.parse(cell, self.env,
                                                 ambiguity=self.cur_ambiguity)
-            self.env = env
             self.control_line(line, post=True, accum=accum)
         self.push_accum(accum)
-        IPython.display.display(parsing.html_output(accum, self.env))
+        IPython.display.display(utils.Namespace(accum))
     
     def push_accum(self, accum):
         self.shadow_warnings(accum)
-        self.shell.push(accum)
-        lang.get_system().lexicon.update(accum)
+        self.shell.push(dict(accum)) # IPython will raise if this is not specifically a dict
+
+    @property
+    def env(self):
+        return lang.get_system().lexicon
 
     def reset(self):
-        self.env = dict()
-        lang.get_system().lexicon.reset()
+        self.env.reset()
 
     def control_line(self, line, post=False, accum=None):
         args = line.split(",")
@@ -118,8 +119,8 @@ class LambMagics(Magics):
         if cmd == "reset":
             self.reset()
             return None
-        elif cmd == "all":
-            return parsing.html_output(self.env, self.env)
+        elif cmd == "all" or cmd == "lexicon":
+            return self.env
         elif cmd == "ambiguity":
             self.cur_ambiguity = True
         else:
@@ -130,9 +131,25 @@ class LambMagics(Magics):
                     print("Don't know what to do with '%s'" % cmd)
                 return None
 
+    def preprocess(self, l):
+        return parsing.remove_comments(l.strip())
+
+    @line_magic
+    @no_var_expand
+    def lexicon(self, line):
+        line = self.preprocess(line)
+        if line == "show":
+            IPython.display.display(self.env)
+            # prevent double display...
+            return None
+        if line == "reset":
+            self.reset()
+        return self.env
+
     @line_magic
     @no_var_expand
     def lambctl(self, line):
+        line = self.preprocess(line)
         return self.control_line(line)
 
     @line_magic
@@ -145,6 +162,7 @@ class LambMagics(Magics):
     @line_magic
     @no_var_expand
     def tp(self, line):
+        line = self.preprocess(line)
         with parsing.error_manager():
             return meta.tp(line)
 

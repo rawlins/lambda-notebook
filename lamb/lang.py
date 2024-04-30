@@ -1,11 +1,12 @@
 #!/usr/local/bin/python3
-import collections, itertools, logging, html, enum
+import collections, itertools, logging, html, enum, contextlib
 
 from lamb import utils, types, meta, display
 from lamb.utils import ensuremath
 from lamb.types import type_e, type_t, type_property, TypeMismatch
 from lamb.meta import  TypedExpr, true_term, term, is_te
 from lamb.meta.core import partial, pbody, pcond
+from lamb.meta.meta import Assignment
 from lamb import tree_mini
 
 from lamb.meta.core import te, tp
@@ -276,99 +277,6 @@ class Composable(object):
         r = self * other
         return r
 
-class Assignment(MutableMapping):
-    """This class represents an assignment function that can be incrementally
-    modified.  It uses a dict as its store."""
-    def __init__(self, base=None, name=None):
-        self.store = dict()
-        if base is None:
-            self.base = Assignment(base=dict())
-        else:
-            self.base = base
-        if name is None:
-            self.name = "g"
-        else:
-            self.name = name
-
-    def copy(self):
-        new_a = Assignment(self.base, self.name)
-        new_a.store = self.store.copy()
-        return new_a
-
-    def __getitem__(self, key):
-        if key in self.store:
-            return self.store[key]
-        else:
-            return self.base[key]
-
-    def __setitem__(self, key, value):
-        self.store[key] = value
-
-    def __delitem__(self, key):
-        # TODO: is this the right behavior?
-        del self.store[key]
-
-    def __iter__(self):
-        # flatten before providing iterator
-        tmp = dict(self.store)
-        tmp.update(self.base)
-        return iter(tmp)
-
-    def __len__(self):
-        return len(self.store) + len(self.base)
-
-    def modify(self, updates):
-        new_a = Assignment(self)
-        new_a.update(updates)
-        return new_a
-
-    def merge(self, assignment):
-        """Merge in another assignment.
-
-        This has non-symmetric behavior: if the types are ok, and the value here
-        is a term, the value in `assignment` (at the principal type) will
-        override the value in self."""
-
-        if assignment is None:
-            assignment = Assignment()
-        new_a = Assignment(self)
-        for k in assignment:
-            if k in new_a:
-                # this will raise a TypeMismatch if the merge fails.
-                new_a[k] = meta.core.merge_tes(new_a[k], assignment[k],
-                                                            symmetric=False)
-            else:
-                new_a[k] = assignment[k]
-        return new_a
-
-    def text(self):
-        if isinstance(self.base, Assignment):
-            a_strs = [("%s/%s" % (self.store[k], k))
-                                                    for k in self.store.keys()]
-            return "%s[%s]" % (self.base.text(), ",".join(a_strs))
-        else:
-            return self.name
-
-    def __repr__(self):
-        return self.text()
-
-    def __str__(self):
-        return repr(self)
-
-    def _repr_latex_(self):
-        return self.latex_str()
-
-    def latex_str(self):
-        # the superscripting is the Heim & Kratzer style, but I'm not sure I
-        # really like it...
-        if isinstance(self.base, Assignment):
-            a_strs = [("%s/%s" % (self.store[k]._repr_latex_(), k))
-                                                    for k in self.store.keys()]
-            return ensuremath("{%s}^{%s}" %
-                                    (self.base.latex_str(), ",".join(a_strs)))
-        else:
-            return self.name # TODO: display defaults??
-
 
 class AssignmentController(object):
     """This class is for managing the rendering and maintenance of specialized
@@ -379,8 +287,10 @@ class AssignmentController(object):
 
     See the notebook on adding composition operations for an example.
     """
-    def __init__(self, specials=[], reserved=None):
-        self.specials = list(specials)
+    def __init__(self, specials=None, reserved=None):
+        if specials is None:
+            specials = []
+        self.specials = specials
         self.reserved = {"index"}
         if reserved is not None:
             self.reserved = self.reserved | set(reserved)
@@ -410,11 +320,9 @@ class AssignmentController(object):
                                  a[s.op].latex_str(suppress_parens=True))))
                     else:
                         out_l.append("%s = %s" % (s.op, a[s.op]))
-        if isinstance(a, Assignment):
-            if latex:
-                out_l.append(a.latex_str())
-            else:
-                out_l.append(repr(a))
+        if isinstance(a, Assignment) and a.name:
+            # XX something less dumb here (a - specials?)
+            out_l.append(a.name)
         if latex:
             return ensuremath(", ".join(out_l))
         else:
@@ -437,44 +345,16 @@ class VacuousAssignmentController(object):
     def default(self):
         return Assignment()
 
-class Lexicon(MutableMapping):
-    def __init__(self):
-        self.items = collections.OrderedDict()
 
-    def __getitem__(self, key):
-        return self.items[key]
-
-    def __setitem__(self, key, value):
-        self.items[key] = value
-
-    def __delitem__(self, key):
-        del self.items[key]
-
-    def __iter__(self):
-        # flatten before providing iterator
-        return iter(self.items)
-
-    def __len__(self):
-        return len(self.items)
+# at the moment, this is a fairly cosmetic subclass
+class Lexicon(utils.Namespace):
+    def __init__(self, items=None):
+        if items is None:
+            items = {}
+        super().__init__(items)
 
     def copy(self):
-        n = Lexicon()
-        for k in self:
-            n[k] = self[k]
-        return n
-
-    def update(self, *args, **kwargs):
-        self.items.update(*args, **kwargs)
-
-    def reset(self):
-        self.items = collections.OrderedDict()
-
-    def _repr_markdown_(self):
-        # assumption: parsing output generates markdown code. TODO: unify
-        # these two things in a more elegant way. Probably Lexicon should be
-        # responsible for rendering?
-        from lamb import parsing
-        return parsing.html_output(self, dict())._repr_markdown_()
+        return Lexicon(self.items.copy())
 
 
 class SingletonComposable(Composable):
@@ -509,25 +389,17 @@ class SingletonComposable(Composable):
     def composite_name(self, *others):
         return "[" + " ".join([self.name] + [o.name for o in others]) + "]"
 
-    def __repr__(self):
-        # TODO: make this parse?
-        if isinstance(self.content, Exception):
-            content_str = "Error!"
-        else:
-            content_str = repr(self.content)
-        return f"{text_inbr(self.name)}{self.assign_controller.render(latex=False)} = {content_str}"
-
     def short_str(self, latex=False, i=None, **args):
         if i is None:
             istr = ""
         else:
-            istr = "[%i]" % i
+            istr = f"[{i}]"
         if latex:
             return ensuremath(inbrs(self.name + istr,
                                     self.assign_controller.render(latex=True))
                               + self.type_str_latex())
         else:
-            return text_inbr(self.name + istr)
+            return f"{text_inbr(self.name + istr)}{self.assign_controller.render(latex=False)}"
 
     def type_str_latex(self):
         if self.type is None:
@@ -545,23 +417,48 @@ class SingletonComposable(Composable):
     def step_tree(self):
         return self
 
-    def latex_str(self, i=None, suppress_parens=True):
+    def text(self, i=None, suppress_parens=True, rich=True):
         if self.content is None:
-            # separate rendering for vacuous indexed elements?
-            return ensuremath(self.short_str_latex() + "\\text{ [vacuous]}")
+            # vacuous element
+            # XX separate rendering for vacuous indexed elements?
+            if rich:
+                return ensuremath(self.short_str(latex=True, i=i) + "\\text{ [vacuous]}")
+            else:
+                return self.short_str(latex=False, i=i) + " *vacuous*"
         elif isinstance(self.content, Exception):
+            # error
             # TODO: the relevant exceptions would need markdown to be displayed.
             # they can still be viewed by looking at `content` directly...
-            return ensuremath(self.short_str_latex() + "\\:=\\:" + latexbf("error!"))
+            if rich:
+                return ensuremath(self.short_str(latex=False, i=i) + "\\:=\\:" + latexbf("error!"))
+            else:
+                return self.short_str(latex=False, i=i) + " = **error**!"
         elif isinstance(self.content, PlaceholderTerm):
-            return self.content.latex_str()
-        return (ensuremath(self.short_str(latex=True, i=i)
-                + " \\:=\\: "
-                + self.content.latex_str(suppress_parens=suppress_parens)))
+            # placeholder during tree composition
+            if rich:
+                return self.content.latex_str()
+            else:
+                return repr(self.content)
+
+        # everything else
+        if rich:
+            return (ensuremath(self.short_str(latex=True, i=i)
+                    + " \\:=\\: "
+                    + self.content.latex_str(suppress_parens=suppress_parens)))
+        else:
+            # XX suppress_parens ignored
+            return f"{self.short_str(latex=False, i=i)} = {repr(self.content)}"
+
+    def latex_str(self, i=None, suppress_parens=True):
+        return self.text(i=i, suppress_parens=suppress_parens, rich=True)
+
+    def __repr__(self):
+        # TODO: make this parse?
+        return self.text(rich=False)
 
     def show(self):
         # is using `latex` generally safe here?
-        return utils.show(latex=self.latex_str())
+        return utils.show(latex=self.latex_str(), plain=self.text(rich=False))
 
     def _repr_latex_(self):
         return self.latex_str()
@@ -1594,34 +1491,27 @@ class Items(CompositionResult):
     def __init__(self, item_list):
         CompositionResult.__init__(self, list(), item_list, list())
 
-    def show(self, recurse=True, style=None, failures=False):
-        s = str()
+    def text(self, rich=True):
         if (len(self.results) == 0):
-            s += "Empty item list"
+            return "Empty item list"
         else:
-            n = 0
-            for composite in self.results:
-                #TODO: newlines in mathjax??
-                num = composite.collapsed_count
-                if n > 0:
-                    s += "\n<br />"
-                if num == 1:
-                    s += composite.latex_str(i=n)
-                else:
-                    # should this really be here for Items?
-                    s += ("%s &nbsp;&nbsp;<span style=\"font-size:small\">(%i equivalent items)</span>"
-                                % (composite.latex_str(i=n), num))
-                n += 1
-        return utils.show(markdown=s)
+            rows = []
+            for i in range(len(self.results)):
+                assert self.results[i].collapsed_count == 1
+                rows.append(self.results[i].text(i=i, rich=rich))
 
-    def all_latex_strs(self):
-        # TODO: less ad hoc interface for this?
-        result = []
-        n = 0
-        for composite in self.results:
-            result.append(composite.latex_str(i=n))
-            n += 1
-        return result
+            if rich:
+                join = "\n<br />"
+            else:
+                join = "\n"
+            return join.join(rows)
+
+    def show(self, **kwargs):
+        return utils.show(markdown=self.text(rich=True), plain=self.text(rich=False))
+
+    def __repr__(self):
+        # XX this would work better as _repr_pretty_
+        return self.text(rich=False)
 
     @property
     def name(self):
@@ -1720,9 +1610,9 @@ class Item(TreeComposite):
         if self.index == None:
             return self.content.under_assignment(assignment)
         else:
-            a2 = assignment.copy()
-            a2["index"] = index
-            return self.content.under_assignment(assignment)
+            a2 = meta.subassignment(assignment, index=index)
+            # XX previously this didn't use a2...
+            return self.content.under_assignment(a2)
 
     def build_display_tree(self, derivations=False, recurse=None, style=None):
         defaultstyle = {}
@@ -2297,6 +2187,7 @@ class CompositionSystem(object):
         self.update_typeshifts()
         self.typeshift_depth = 3
         self.typeshift = False
+        self.view_stack = None
 
     def copy(self):
         """Make a copy of the composition system."""
@@ -2305,6 +2196,23 @@ class CompositionSystem(object):
                                     a_controller=self.assign_controller)
         new_sys.lexicon = self.lexicon.copy()
         return new_sys
+
+    @contextlib.contextmanager
+    def under_model(self, model):
+        with model.under():
+            yield
+
+    def assume_model(self, model):
+        if self.view_stack is None:
+            self.view_stack = contextlib.ExitStack()
+        self.view_stack.enter(model.under())
+
+    def reset_assumptions(self):
+        # XX what if this is called during model.under() -- should probably
+        # error?
+        if self.view_stack is not None:
+            self.view_stack.close()
+            self.view_stack = None
 
     def add_rule(self, r):
         """Add a composition rule.  `r` should be a CompositionOp of some
@@ -2991,6 +2899,7 @@ class IndexedPronoun(Item):
         
     def short_str(self, latex=False, i=None, **kwargs):
         name_str = self.namefun(latex=latex)
+        # XX why does this have Items code in it
         if i is None:
             istr = ""
         else:

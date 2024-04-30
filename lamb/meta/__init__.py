@@ -5,7 +5,6 @@ from numbers import Number
 from lamb import types, utils, parsing, display
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from lamb.types import type_property, type_transitive, BasicType, FunType
-# from lamb.utils import *
 
 from lamb.meta import core, boolean, meta, number, ply, quantifiers, sets, test
 from lamb.meta.core import TypedExpr, TypedTerm, CustomTerm, ApplicationExpr
@@ -14,13 +13,14 @@ from lamb.meta.core import Tuple, TupleIndex, Partial, Disjunctive, BinaryGeneri
 from lamb.meta.core import registry, logger, op, op_expr_factory
 from lamb.meta.core import get_type_system, set_type_system, constants_use_custom, ts_unify, ts_compatible
 from lamb.meta.core import te, is_te, tp, term, let_wrapper, check_type, MiniOp
-from lamb.meta.core import unify
+from lamb.meta.core import unify, global_namespace
 
 from lamb.meta.ply import simplify_all, derived, default_sopts, collect, join
 
 from lamb.meta.boolean import true_term, false_term
 
-from lamb.meta.meta import truthtable, truthtable_equiv, MetaTerm
+from lamb.meta.meta import truthtable, truthtable_equiv, MetaTerm, Assignment, Model
+from lamb.meta.meta import compiled, exec
 
 ###############
 #
@@ -34,6 +34,12 @@ def default_metalanguage():
     for m in [boolean, number, sets, quantifiers]:
         m.setup_operators()
     registry.add_operator(core.BinaryGenericEqExpr, None, None)
+
+
+def reset():
+    core.reset()
+    default_metalanguage()
+
 
 default_metalanguage()
 

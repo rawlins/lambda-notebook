@@ -96,6 +96,45 @@ def latexbf(s, math=False):
         return latex_text(f"\\textbf{{{s}}}")
 
 
+def fullvar(k, val):
+    if isinstance(s, TypedTerm):
+        return s
+    else:
+        return TypedTerm(s, d[s].type)
+
+
+def assignment_repr(k, val, rich=True):
+    from lamb.meta import TypedTerm, is_te
+    from lamb.lang import Composable, Items
+    if is_te(val):
+        # construct a var for rendering purposes
+        if isinstance(k, TypedTerm):
+            var = k
+        else:
+            var = TypedTerm(k, val.type)
+
+        if val.meta():
+            # we're showing the mapping directly, don't use any renames that
+            # would be derived from the mapping
+            right = val.latex_str(suppress_parens=True, use_renames=False)
+        else:
+            right = val._repr_latex_()
+        if rich:
+            return utils.ensuremath(f"{var._repr_latex_()}\\:=\\:{right}")
+        else:
+            return f"{repr(var)} = {repr(val)}"
+    elif isinstance(val, Items):
+        return val.text(rich=rich)
+    elif isinstance(val, Composable):
+        # item will automatically print an equality statement
+        if rich:
+            return val._repr_latex_()
+        else:
+            return repr(val)
+    else:
+        return f"(Unknown class '{val.__class__}') {repr(k)} = {repr(val)}"
+
+
 class Direction(enum.Enum):
     TD = 0
     LR = 1

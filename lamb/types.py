@@ -106,7 +106,15 @@ class DomainSet(collections.abc.Container):
         raise NotImplementedError(
             "Can't check membership for an abstract infinite set")
 
-    def element_repr(self, x, rich=False):
+    def element_rename(self, x):
+        if self.type is not None and x in self.type.domain_names:
+            return self.type.domain_names[x]
+        else:
+            return None
+
+    def element_repr(self, x, rich=False, use_renames=True, **kwargs):
+        if use_renames and (rename := self.element_rename(x)):
+            x = rename
         x = demeta(x)
         if not isinstance(x, str):
             x = repr(x)
@@ -146,11 +154,14 @@ class BooleanSet(DomainSet):
         # check, exclude 0/1 from the domain by checking class directly.
         return isinstance(demeta(x), bool)
 
-    @contextlib.contextmanager
-    def restrict_domain(self, values=None, count=None):
+    def modify_domain(self, values=None, count=None):
         # allowing this messes up too many things, and I don't think there's
         # much of a use case for it
-        raise NotImplementedError("Domain restriction for type t is not supported")
+        raise ValueError("Domain restriction for type t is not supported")
+
+    @contextlib.contextmanager
+    def restrict_domain(self, values=None, count=None):
+        raise ValueError("Domain restriction for type t is not supported")
 
     def normalize(self, x):
         return bool(x)
@@ -277,7 +288,7 @@ class ComplexDomainSet(SimpleInfiniteSet):
     def enumerable(self):
         return False
 
-    def element_repr(self, x, rich=False):
+    def element_repr(self, x, rich=False, **kwargs):
         preprefix = (not rich) and "_" or ""
         return f"{preprefix}{self.prefix}[anon]"
 
@@ -306,7 +317,7 @@ class CachableType:
 try:
     from itertools import batched # py3.12 only
 except:
-    # back compat placeholder, XX hopefully his is robust enough
+    # back compat placeholder, XX hopefully this is robust enough
     def batched(iterable, size):
         sourceiter = iter(iterable)
         while True:
@@ -328,6 +339,7 @@ class TypeConstructor(object):
             else:
                 domain = self.domain_class(typ=self)
         self.domain = domain
+        self.domain_names = {}
 
     def __eq__(self, other):
         return self._type_eq(other)
@@ -390,18 +402,60 @@ class TypeConstructor(object):
         values = {demeta(self.domain.normalize(x)) for x in values}
         return DomainSet(values=values, typ=self, superdomain=self.domain)
 
-    @contextlib.contextmanager
-    def restrict_domain(self, values=None, count=None):
-        saved = self.domain
+    def modify_domain(self, values=None, count=None):
+        if not isinstance(self.domain, DomainSet):
+            raise ValueError(f"Can't modify domain for type {self}")
         if values and isinstance(values, DomainSet):
             # XX this doesn't validate the domain set against self!
             self.domain = values
         else:
             self.domain = self.get_subdomain(values=values, count=count)
+
+    @contextlib.contextmanager
+    def restrict_domain(self, values=None, count=None):
+        saved = self.domain
+        self.modify_domain(values=values, count=count)
         try:
             yield self.domain
         finally:
             self.domain = saved
+
+    def reset_domain(self):
+        if not isinstance(self.domain, DomainSet):
+            return
+        while self.domain.superdomain is not None:
+            self.domain = self.domain.superdomain
+
+    def set_name(self, name, elem, force=False):
+        # XX should this be implemented on BasicType only?
+        # XX what happens if assignments here go "out of scope" wrt domain
+        # restrictions?
+        if name is None:
+            if elem in self.domain_names:
+                del self.domain_names[elem]
+        else:
+            if not self.check(elem):
+                raise ValueError(
+                    f"Unknown domain element for type `{repr(self)}`: `{repr(elem)}`")
+            if force or elem not in self.domain_names:
+                self.domain_names[elem] = name
+
+    def get_name(self, elem):
+        return self.domain_names.get(elem, None)
+
+    @contextlib.contextmanager
+    def with_names(self, a, force=False):
+        old = self.domain_names.copy()
+        if force:
+            i = reversed(a)
+        else:
+            i = a
+        try:
+            for k in i:
+                self.set_name(k, a[k], force=force)
+            yield
+        finally:
+            self.domain_names = old
 
     def copy_local(self, *parts):
         """Return a copy of the type with any local properties preserved,
@@ -549,7 +603,7 @@ class BasicType(TypeConstructor):
     def __call__(self, other):
         return FunType(self, other)
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return ensuremath(repr(self))
 
     def _repr_latex_(self):
@@ -623,12 +677,12 @@ class FunDomainSet(ComplexDomainSet):
     def __repr__(self):
         return f"FunDomainSet({self.type})"
 
-    def element_repr(self, x, rich=False):
+    def element_repr(self, x, rich=False, **kwargs):
         if isinstance(x, collections.abc.Set):
-            return f"Fun[{SetType(self.type.left).domain.element_repr(x, rich=rich)}]"
+            return f"Fun[{SetType(self.type.left).domain.element_repr(x, rich=rich, **kwargs)}]"
         elif isinstance(x, collections.abc.Mapping):
-            pairs = [(self.type.left.domain.element_repr(k, rich=rich),
-                      self.type.right.domain.element_repr(x[k], rich=rich)) for k in x]
+            pairs = [(self.type.left.domain.element_repr(k, rich=rich, **kwargs),
+                      self.type.right.domain.element_repr(x[k], rich=rich, **kwargs)) for k in x]
             if rich:
                 mapping = curlybraces(",".join(f"{pair[0]}:{pair[1]}" for pair in pairs), rich=rich)
                 return f"Fun[{mapping}]"
@@ -637,7 +691,7 @@ class FunDomainSet(ComplexDomainSet):
                 return curlybraces(", ".join(f"{pair[0]}: {pair[1]}" for pair in pairs), rich=rich)
         else:
             # not currently used
-            return super().element_repr(x, rich=rich)
+            return super().element_repr(x, rich=rich, **kwargs)
 
     @classmethod
     def element_to_type(cls, x, ctrl):
@@ -726,7 +780,7 @@ class FunType(TypeConstructor):
     def __call__(self, other):
         return FunType(self, other)
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return ensuremath("\\left\\langle{}%s,%s\\right\\rangle{}"
                             % (self.left.latex_str(), self.right.latex_str()))
 
@@ -790,7 +844,7 @@ class SetDomainSet(ComplexDomainSet):
     def __repr__(self):
         return f"SetDomainSet({self.type})"
 
-    def element_repr(self, x, rich=False):
+    def element_repr(self, x, rich=False, **kwargs):
         elements = list(x)
         return curlybraces(
             f"{','.join(self.type[0].domain.element_repr(elements[i], rich=rich) for i in range(len(elements)))}",
@@ -852,7 +906,7 @@ class SetType(TypeConstructor):
     def __repr__(self):
         return "{%s}" % repr(self.content_type)
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return ensuremath("\\left\\{%s\\right\\}"
                                             % self.content_type.latex_str())
 
@@ -915,7 +969,7 @@ class TupleDomainSet(ComplexDomainSet):
         # the non-finite case is not supported for now
         return self.finite
 
-    def element_repr(self, x, rich=False):
+    def element_repr(self, x, rich=False, **kwargs):
         return f"({','.join(self.type[i].domain.element_repr(x[i], rich=rich) for i in range(len(x)))})"
 
     def __repr__(self):
@@ -954,7 +1008,7 @@ class TupleType(TypeConstructor):
         return "(%s)" % ",".join([str(self.signature[i])
                                         for i in range(len(self.signature))])
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return ensuremath("\\left(%s\\right)" % ", ".join(
             [self.signature[i].latex_str()
                                     for i in range(len(self.signature))]))
@@ -1270,7 +1324,7 @@ class Forall(TypeConstructor):
     def _type_hash(self):
         return (hash("∀") ^ self.arg._type_hash())
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         if self.sugar():
             return ensuremath("?")
         return ensuremath(f"\\forall{{}}{self.arg.latex_str()}")
@@ -1514,7 +1568,7 @@ class VariableType(TypeConstructor):
         # never use primes in the repr
         return self._key_str
     
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         # XX the prime thing was cute, but I'm not sure it ends up being very
         # readable...
         if self.number > 3 or self.symbol == "?":
@@ -1579,7 +1633,7 @@ class UnknownType(VariableType):
     def __repr__(self):
         return f"?{self.identifier}"
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return ensuremath(f"?_{{{self.identifier}}}")
 
     def internal(self):
@@ -1645,7 +1699,7 @@ class DisjunctiveDomainSet(ComplexDomainSet):
         # only the finite case is supported right now...
         return self.finite
 
-    def element_repr(self, x, rich=False):
+    def element_repr(self, x, rich=False, **kwargs):
         # not very easy to call, but it's easy to implement
         for t in self.type:
             if x in t.domain:
@@ -1715,7 +1769,7 @@ class DisjunctiveType(TypeConstructor):
     def __repr__(self):
         return "[" + "|".join([repr(t) for t in self.type_list]) + "]"
     
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         # wrap in curly braces to ensure the brackets don't get swallowed
         return ensuremath("{\\left[%s\\right]}" % "\\mid{}".join(
             [self.type_list[i].latex_str()
@@ -2073,7 +2127,7 @@ class TypeSystem(object):
     def type_allowed(self, a):
          return True
 
-    def latex_str(self):
+    def latex_str(self, **kwargs):
         return "Type system with atomic types: " + ensuremath(", ".join(
                                         [a.latex_str() for a in self.atomics]))
 
@@ -2108,6 +2162,21 @@ class TypeSystem(object):
 
     def parse_unify_check(self, t1, t2):
         return self.unify_check(self.type_parser(t1), self.type_parser(t2))
+
+    def modify_domains(self, m):
+        from lamb.meta import Model
+        if isinstance(m, Model):
+            m = m.domains
+        for t in m:
+            if t not in self.atomics:
+                raise ValueError(f"Unknown type {t} in domain modification")
+        for typ in m:
+            typ.modify_domain(m[typ])
+
+    def reset_domains(self):
+        for typ in self.atomics:
+            typ.reset_domain()
+
 
 ########################
 #
@@ -2893,6 +2962,17 @@ def reset():
     global type_e, type_t, type_n, type_property, type_transitive
     global basic_system, poly_system
 
+    basic_system = TypeSystem(atomics={type_e, type_t, type_n},
+                              nonatomics={FunType, TupleType})
+    poly_system = PolyTypeSystem(atomics={type_e, type_t, type_n},
+                                 nonatomics={FunType, TupleType, SetType})
+    poly_system.add_nonatomic(DisjunctiveType, 1)
+
+
+def init():
+    # don't reset these after the first init, so that the module-level
+    # properties are stable
+    global type_e, type_t, type_n, type_property, type_transitive
     type_e = BasicType("e")
     type_t = BasicType("t", BooleanSet())
     BooleanSet.type = type_t
@@ -2900,13 +2980,10 @@ def reset():
     SimpleNumericSet.type = type_n
     type_property = FunType(type_e, type_t)
     type_transitive = FunType(type_e, type_property)
-    basic_system = TypeSystem(atomics={type_e, type_t, type_n},
-                              nonatomics={FunType, TupleType})
-    poly_system = PolyTypeSystem(atomics={type_e, type_t, type_n},
-                                 nonatomics={FunType, TupleType, SetType})
-    poly_system.add_nonatomic(DisjunctiveType, 1)
+    reset()
 
-reset()
+
+init()
 
 
 import unittest

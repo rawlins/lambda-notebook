@@ -1,13 +1,13 @@
 import sys, re, logging, random, functools, inspect, operator
-import collections
+import collections, contextlib
 from numbers import Number
 from dataclasses import dataclass
 
 import lamb
 from lamb import types, parsing, utils
-from lamb.utils import ensuremath, dbg_print
-from lamb.types import TypeMismatch, type_e, type_t, type_n
-from lamb.types import type_property, type_transitive, BasicType, FunType
+from lamb.utils import ensuremath, dbg_print, Namespace
+
+from lamb.types import TypeMismatch, BasicType, FunType
 # meta.ply is the only meta module imported by core
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
 from .ply import simplify_all, symbol_is_var_symbol
@@ -53,14 +53,34 @@ def setup_logger():
 setup_logger()
 
 
-global _constants_use_custom, _type_system
+global _constants_use_custom, _type_system, _allow_coerced_types, _allow_guessed_types
 _constants_use_custom = False
+_allow_coerced_types = True
+_allow_guessed_types = True
 
 
 def constants_use_custom(v):
     """Set whether constants use custom display routines."""
     global _constants_use_custom
     _constants_use_custom = v
+
+
+def set_strict_type_parsing(strict=True, coerced=None):
+    global _allow_coerced_types, _allow_guessed_types
+    if coerced is None:
+        coerced = strict
+    _allow_guessed_types = not strict
+    _allow_coerced_types = not coerced
+
+
+# this will leave _type_system as None if something crashes in setup
+_type_system = None
+registry = None
+_namespace = {}
+
+def global_namespace():
+    global _namespace
+    return _namespace
 
 
 # TODO: could consider associating TypedExpr with a type system rather than
@@ -77,11 +97,6 @@ def reset_type_system():
     global _type_system
     types.reset()
     _type_system = types.poly_system
-
-
-# this will leave _type_system as None if something crashes in setup
-_type_system = None
-reset_type_system()
 
 
 def get_type_system():
@@ -139,9 +154,14 @@ def let_wrapper(s):
     return result
 
 
-def te(s, let=True, assignment=None):
-    """Convenience wrapper for `lang.TypedExpr.factory`."""
-    result = TypedExpr.factory(s, assignment=assignment)
+def te(s, let=True, assignment=None, _globals=None):
+    """Public interface for constructing `TypedExpr` objects; `s` may be a
+    string, in which case it will be parsed."""
+
+    # XX incorporate lexicon namespace into this function somehow?
+    if _globals is None:
+        _globals = global_namespace()
+    result = TypedExpr.factory(s, assignment=assignment, _globals=_globals)
     if let and isinstance(result, TypedExpr):
         result = let_wrapper(result)
     return result
@@ -189,26 +209,26 @@ def check_type(item, typ, raise_tm=True, msg=None):
 
 def default_variable_type(s):
     #TODO something better
-    return type_e
+    return types.type_e
 
 def default_type(s):
     if isinstance(s, TypedExpr):
         return s.type
     elif isinstance(s, bool):
-        return type_t
+        return types.type_t
     elif types.is_numeric(s):
-        return type_n
+        return types.type_n
     elif isinstance(s, str):
         t = utils.num_or_str(s)
         if types.is_numeric(s):
-            return type_n
+            return types.type_n
         elif isinstance(s, bool):
-            return type_t
+            return types.type_t
         elif is_var_symbol(t):
             return default_variable_type(s)
         else:
             #TODO, better default
-            return type_t
+            return types.type_t
     else:
         # TODO: more default special cases?  predicates?
         raise NotImplementedError
@@ -501,10 +521,6 @@ class OperatorRegistry(object):
         BindingOp.compile_ops_re()
 
 
-global registry
-registry = OperatorRegistry()
-
-
 def is_op_symbol(op):
     global registry
     return op in registry.ops
@@ -513,6 +529,20 @@ def is_op_symbol(op):
 def op_expr_factory(op, *args):
     global registry
     return registry.expr_factory(op, *args)
+
+
+def subassignment(assignment, **kwargs):
+    from .meta import Assignment
+    if assignment is None:
+        r = {}
+    elif (isinstance(assignment, collections.ChainMap)
+                    or isinstance(assignment, Namespace)):
+        r = assignment.new_child()
+    else:
+        # including Model
+        r = collections.ChainMap({}, assignment)
+    r.update(**kwargs)
+    return r
 
 
 ############### Type unification-related code
@@ -854,12 +884,12 @@ def merge_tes(te1, te2, symmetric=True):
     if te1_new is None or te2_new is None:
         raise TypeMismatch(te1, te2,
                 error="Failed to merge typed expressions (type adjustment failed)")
-    if te1_new.term():
+    if te1_new.term() and not te1_new.meta():
         if symmetric and te2_new.term() and not (te1_new == te2_new):
             raise TypeMismatch(te1, te2,
                 error="Failed to merge typed expressions; result is not equal")
         return te2_new
-    elif symmetric and te2_new.term():
+    elif symmetric and te2_new.term() and not te2_new.meta():
         return te1_new
     else:
         if not (te1_new == te2_new):
@@ -1161,7 +1191,7 @@ class TypedExpr(object):
         pre_expansion = to_eval
         to_eval = TypedExpr.expand_terms(to_eval, assignment=assignment,
                                                             ignore=lcopy.keys())
-        lcopy.update({'assignment': assignment, 'type_e': type_e})
+        lcopy.update({'assignment': assignment, 'type_e': types.type_e})
 
         # cannot figure out a better way of doing this short of actually parsing
         # TODO: reimplement as a real parser, don't rely on `eval`
@@ -1292,9 +1322,8 @@ class TypedExpr(object):
         try_parse_typed_term)
         Otherwise, fail.
         """
-        # TODO: if handed a complex TypedExpr, make a term referring to it??
+        ts = get_type_system()
         if isinstance(typ, str):
-            ts = get_type_system()
             typ = ts.type_parser(typ)
 
         aname = None
@@ -1323,12 +1352,22 @@ class TypedExpr(object):
                 result = result.try_adjust_type(typ)
             return result
         else:
-            if isinstance(s, str) and typ is None and not preparsed:
+            if isinstance(s, str) and not preparsed:
                 # in principle, if typ is supplied, could try parsing and
                 # confirm the type?
-                v, typ = parsing.try_parse_typed_term(s,
+                v, parsed_typ = parsing.try_parse_typed_term(s,
                                             assignment=assignment, strict=True)
+                if typ is not None and parsed_typ is not None:
+                    principal = ts.unify(typ, parsed_typ)
+                    if principal is None:
+                        raise TypeMismatch(typ, parsed_typ,
+                            f"Term `{s}` instantiated with inconsistent types")
+                    typ = principal
+                elif parsed_typ is not None:
+                    typ = parsed_typ
+                # else: both are None, leave typ as None
             else:
+                # this does not validate term name formatting!
                 v = s
             v = utils.num_or_str(v)
             if typ is not None:
@@ -1338,13 +1377,13 @@ class TypedExpr(object):
                 # casting behavior when parsing: pythonic conversions between
                 # type t and n in both directions. For now this is *only* in
                 # parsing, so (for example) is not visited by try_adjust_type.
-                if v == 0 and not isinstance(v, bool) and typ == type_t:
+                if v == 0 and not isinstance(v, bool) and typ == types.type_t:
                     v = False
-                elif types.is_numeric(v) and not isinstance(v, bool) and typ == type_t:
+                elif types.is_numeric(v) and not isinstance(v, bool) and typ == types.type_t:
                     v = True
-                elif v == 0 and isinstance(v, bool) and typ == type_n:
+                elif v == 0 and isinstance(v, bool) and typ == types.type_n:
                     v = 0
-                elif v == 1 and isinstance(v, bool) and typ == type_n:
+                elif v == 1 and isinstance(v, bool) and typ == types.type_n:
                     v = 1
                 r = MetaTerm(v, typ=typ)
                 if aname is not None:
@@ -1371,7 +1410,7 @@ class TypedExpr(object):
                 arg = Tuple(args)
             else:
                 arg = args[0]
-            if (not f.type.functional()) and f.type_guessed:
+            if (not f.type.functional()) and f.type_guessed and _allow_coerced_types:
                 # special case: see if the type of the operator is guessed and
                 # coerce accordingly
 
@@ -1407,7 +1446,7 @@ class TypedExpr(object):
         return cls._construct_appl(op, *remainder, assignment=assignment)
 
     @classmethod
-    def factory(cls, *args, assignment=None):
+    def factory(cls, *args, assignment=None, _globals=None):
         """Factory method for TypedExprs.  Will return a TypedExpr or subclass.
 
         Special cases:
@@ -1422,12 +1461,19 @@ class TypedExpr(object):
           * multiple args: call the standard constructor.
         """
         ### NOTE: do not edit this function lightly...
+        # XX remove this
         global _parser_assignment
         if assignment is None:
             if _parser_assignment is None:
                 assignment = dict()
             else:
                 assignment = _parser_assignment # not remotely thread-safe
+
+        # `te` sets _globals by default, `factory` does not
+        # n.b. for the case where _parser_assignment is set, `_globals` will
+        # be already present in `assignment` via recursion on this function
+        if _globals:
+            assignment = collections.ChainMap(assignment, _globals)
 
         if len(args) == 1 and isinstance(args[0], TypedExpr):
             # handing this a single TypedExpr always returns a copy of the
@@ -1442,10 +1488,10 @@ class TypedExpr(object):
             # that needs parsed.
             # in the first two cases, return a unary TypedExpr
             s = args[0]
-            if s in type_t.domain: # generalize using get_element_type?
-                return from_python(s, type_t)
-            elif s in type_n.domain:
-                return from_python(s, type_n)
+            if s in types.type_t.domain: # generalize using get_element_type?
+                return from_python(s, types.type_t)
+            elif s in types.type_n.domain:
+                return from_python(s, types.type_n)
             elif isinstance(s, str):
                 #return cls.parse_expr_string(s, assignment)
                 return cls.parse(s, assignment)
@@ -1471,8 +1517,9 @@ class TypedExpr(object):
             else:
                 result = s
         else:
+            # XX consider removing this from this particular function
             try:
-                result = cls.factory(s, assignment=assignment)
+                result = te(s, assignment=assignment)
             except NotImplementedError:
                 raise ValueError(
                     "Do not know how to ensure TypedExpr for '%s'" % repr(s))
@@ -1653,6 +1700,7 @@ class TypedExpr(object):
         if assignment is None:
             a2 = dict()
         else:
+            # XX is this really necessary?
             a2 = {key: self.ensure_typed_expr(assignment[key])
                                                         for key in assignment}
         # if an expression consisting of just a term name is replaced, we may
@@ -1661,7 +1709,8 @@ class TypedExpr(object):
         r = term_replace_unify(self, a2, track_all_names=track_all_names)
         if (let or r.let) and compact:
             r = let_wrapper(r)
-        return r
+        # XX name this differently depending on where the assignment comes from?
+        return derived(r, self, "Assignment substitution")
 
     def free_terms(self, var_only=False):
         """Find the set of variables that are free in the typed expression.
@@ -1914,7 +1963,7 @@ class TypedExpr(object):
         except OutOfDomain as e:
             # n.b. this relies on some assumptions about where OutOfDomain
             # can be thrown from...
-            if self.type == type_t and not strict_charfuns:
+            if self.type == types.type_t and not strict_charfuns:
                 return from_python(False)
             else:
                 raise e
@@ -2431,12 +2480,13 @@ class ApplicationExpr(TypedExpr):
         # argument is reused. (This is, however, non-optimal for constant fns)
         return (1,0)
 
+    def meta_reducible(self):
+        return self.args[0].meta() and is_concrete(self.args[1])
+
     def reducible(self):
         if (isinstance(self.args[0], LFun)
                 or isinstance(self.args[0], Disjunctive)
-                or self.args[0].type.functional()
-                        and self.args[0].meta()
-                        and self.args[1].meta()):
+                or self.meta_reducible()):
             return True
         return False
 
@@ -2458,8 +2508,7 @@ class ApplicationExpr(TypedExpr):
         # assignment.)
         # XX sequencing of this vs reduce is not ideal; if `reduce=True`
         # then an OutOfDomain case will crash before this code gets called.
-        if (get_sopt('evaluate', sopts)
-                        and self.args[0].meta() and self.args[1].meta()):
+        if get_sopt('evaluate', sopts) and self.meta_reducible():
             # _do_reduce should set a derivation
             return self._do_reduce(strict_charfuns=get_sopt('strict_charfuns', sopts))
         return self
@@ -2488,11 +2537,12 @@ def common_tuple_type(t):
     elif len(elem_types) == 1:
         ret, = elem_types
         return ret
-    else:
-        # this will crash if variable types are used; in principle this
-        # could be allowed by concluding a variable type rather than a
-        # disjunctive type
+    elif not t.type.is_polymorphic():
         return types.DisjunctiveType(*elem_types)
+    else:
+        # fall back on an extremely generic type. This permits the construction
+        # of combinators using tuple types.
+        return types.VariableType.any()
 
 
 class Tuple(TypedExpr):
@@ -2615,6 +2665,8 @@ class TypedTerm(TypedExpr):
             # if there's no annotation on the term name, and no info from the
             # assignment, we can fall back on some default types for various
             # term names
+            if not _allow_guessed_types:
+                raise parsing.ParseError(f"No type provided for term `{self.op}` (guessed types disabled)")
             self.type = default_type(varname)
             self.type_guessed = True
         else:
@@ -2734,7 +2786,7 @@ class TypedTerm(TypedExpr):
             return False
         if suppress_constant_predicate_type and not self.meta():
             if (self.constant and self.type.functional()
-                            and not isinstance(self.type, types.VariableType)):
+                            and not self.type.is_polymorphic()):
                 if ((self.type.left == types.type_e
                                 or isinstance(self.type.left, types.TupleType))
                         and self.type.right == types.type_t):
@@ -2759,11 +2811,13 @@ class TypedTerm(TypedExpr):
     def __hash__(self):
         return hash("TypedTerm") ^ super().__hash__()
 
-    def latex_str(self, show_types=True, assignment=None, superscript="", **kwargs):
+    def latex_str(self, show_types=True, assignment=None, superscript="", sf=False, **kwargs):
         if self.latex_op_str is None:
             op = self.op
         else:
             op = self.latex_op_str
+        if sf:
+            op = f"\\textsf{{{op}}}"
         if superscript:
             superscript = f"^{{{superscript}}}"
         if not show_types or not self.should_show_type(assignment=assignment):
@@ -2771,8 +2825,8 @@ class TypedTerm(TypedExpr):
         else:
             return ensuremath(f"{{{op}}}{superscript}_{{{self.type.latex_str()}}}")
 
-    random_term_base = {type_t : "p", type_e : "x", type_n : "n"}
-    atomics = {type_t, type_e, type_n}
+    random_term_base = {types.type_t : "p", types.type_e : "x", types.type_n : "n"}
+    atomics = {types.type_t, types.type_e, types.type_n}
 
     @classmethod
     def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(),
@@ -2870,13 +2924,13 @@ class CustomTerm(TypedTerm):
     def get_custom(self):
         # needs to be dynamic to deal with coerced types
         if self.custom is None:
-            if self.type == type_property:
+            if self.type == types.type_property:
                 if self.verbal:
                     return "s"
                 else:
                     return "is a"
             else:
-                if self.type == type_transitive:
+                if self.type == types.type_transitive:
                     if self.verbal:
                         return "s"
                 return ""
@@ -3084,7 +3138,7 @@ class Partial(TypedExpr):
         # This will implicitly use the same depth for the body and condition
         typ = get_type_system().random_type(max_type_depth, 0.5)
         body = ctrl(typ=typ)
-        condition = ctrl(typ=type_t)
+        condition = ctrl(typ=types.type_t)
         return Partial(body, condition)
 
         
@@ -3458,7 +3512,7 @@ class SyncatOpExpr(TypedExpr):
     @classmethod
     def random(cls, ctrl):
         # this will fail if type_t is wrong for the class, so override
-        return cls(*[ctrl(typ=type_t) for a in range(cls.arity)])
+        return cls(*[ctrl(typ=types.type_t) for a in range(cls.arity)])
 
 
 def to_python(te):
@@ -3474,9 +3528,9 @@ def from_python(p, typ=None):
     # normalize True and False to the singleton instances, in order to make
     # display customization simpler
     # use `is` instead of `==` because 0/1 compare equal to False/True
-    if p is True and (typ is None or typ == type_t):
+    if p is True and (typ is None or typ == types.type_t):
         return true_term
-    elif p is False and (typ is None or typ == type_t):
+    elif p is False and (typ is None or typ == types.type_t):
         return false_term
     else:
         # this will raise if there is no known type domain for python objects
@@ -3662,7 +3716,7 @@ class BinaryGenericEqExpr(SyncatOpExpr):
         arg2 = self.ensure_typed_expr(arg2, self.argtype)
         # some problems with equality using '==', TODO recheck, but for now
         # just use "<=>" in the normalized form
-        super().__init__(type_t, arg1, arg2, tcheck_args = False)
+        super().__init__(types.type_t, arg1, arg2, tcheck_args = False)
 
     def _compile(self):
         # XX is this safe to implement at every type?
@@ -3710,7 +3764,7 @@ class BinaryGenericEqExpr(SyncatOpExpr):
         # leave type t to the simply-typed biconditional operator
         # TODO: it should be possible to handle this in a more generalized way
         return (principal_type is not None
-            and principal_type != type_t
+            and principal_type != types.type_t
             and not isinstance(principal_type, types.SetType))
 
 
@@ -3740,7 +3794,7 @@ class TupleIndex(SyncatOpExpr):
                     error="Tuple indexing expression with invalid index")
         else:
             # we don't know which element will be selected; get a potentially
-            # disjunctive type for the whole expression
+            # polymorphic type for the whole expression.
             output_type = common_tuple_type(arg1)
         super().__init__(output_type, arg1, arg2, tcheck_args=False)
 
@@ -4027,10 +4081,7 @@ class BindingOp(TypedExpr):
             return super().name_of(i)
 
     def scope_assignment(self, assignment=None):
-        if assignment is None:
-            assignment = dict()
-        else:
-            assignment = assignment.copy()
+        assignment = subassignment(assignment)
         if isinstance(self.var_instance, Tuple):
             for v in self.var_instance.tuple():
                 assignment[v.op] = v
@@ -4439,11 +4490,7 @@ class BindingOp(TypedExpr):
             return None
         header, new_struc = result
 
-        if assignment is None: 
-            assignment = dict()
-        else:
-            assignment = assignment.copy()
-
+        assignment = subassignment(assignment)
         for var_tuple in header.var_seq:
             (v,t) = var_tuple
             assignment[v] = TypedTerm(v, t)
@@ -4480,13 +4527,13 @@ class BindingOp(TypedExpr):
         return cur
 
     @classmethod
-    def random(cls, ctrl, body_type=type_t, max_type_depth=1):
+    def random(cls, ctrl, body_type=types.type_t, max_type_depth=1):
         from . import test
         var_type = get_type_system().random_type(max_type_depth, 0.5, allow_variables=False)
         variable = test.random_term(var_type, usedset=test.random_used_vars,
                                                 prob_used=0.2, prob_var=1.0)
         test.random_used_vars |= {variable}
-        return cls(variable, ctrl(typ=type_t))
+        return cls(variable, ctrl(typ=types.type_t))
 
 
 class LFun(BindingOp):
@@ -4619,3 +4666,13 @@ class LFun(BindingOp):
         # not great at reusing bound variables
         ftyp = get_type_system().random_from_class(types.FunType)
         return test.random_lfun(ftyp, ctrl)
+
+
+def reset():
+    global registry, _namespace
+    reset_type_system()
+    _namespace = Namespace()
+
+
+registry = OperatorRegistry()
+reset()

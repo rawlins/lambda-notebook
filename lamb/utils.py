@@ -1,4 +1,5 @@
 import sys, re, html
+import contextlib
 import collections.abc
 from numbers import Number
 
@@ -252,29 +253,101 @@ def num_or_str(x, allow_float=False):
                 pass
         return str(x)
 
-def dict_latex_repr(d):
+
+def latex_repr(x, **kwargs):
+    """Given some (possibly structured) object `x`, return a MathJax-compatible
+    output that renders `x`. If `x` is a set or a dict, will recurse into `x`
+    and use `dict_latex_repr` and `set_latex_repr`. Tries `latex_str`, falling
+    back on plain `repr`.
+
+    Parameters
+    ----------
+    x : Any
+        An object to render.
+    **kwargs : dict, optional
+        options for recursive calls
+
+    See also
+    --------
+    `dict_latex_repr`, `set_latex_repr`
+    """
+    # supports recursing into dicts and sets
+    if isinstance(x, str):
+        return x
+    # XX try latex_str() first?
+    elif isinstance(x, collections.abc.Mapping):
+        # or collections.abc.Mapping?
+        return dict_latex_repr(x, **kwargs)
+    elif isinstance(x, collections.abc.Set):
+        return set_latex_repr(x, **kwargs)
+    else:
+        try:
+            return x.latex_str(**kwargs)
+        except AttributeError:
+            return repr(x)
+
+
+def dict_latex_repr(d, linearized=True, **kwargs):
+    """Given some mapping `d`, render `d` into MathJax-compatible latex code.
+    Recurses into the dict using `latex_repr`.
+
+    Parameters
+    ----------
+    d: collections.abc.Mapping
+        a mapping to render
+    linearized: bool, default: True
+        if ``True``, render in a linearized curly-braced base notation. If
+        ``False``, render using a multi-line array.
+    **kwargs : dict, optional
+        options for recursive calls
+
+    See also
+    --------
+    `set_latex_repr`, `latex_repr`
+    """
     r = list()
     for k in d:
-        try:
-            k_repr = k.latex_str()
-        except AttributeError:
-            k_repr = repr(k)
-        try:
-            val_repr = d[k].latex_str()
-        except AttributeError:
-            val_repr = repr(d[k])
-        r.append("%s: %s" % (k_repr, val_repr))
-    return "{" + ", ".join(r) + "}"
+        k_repr = latex_repr(k, linearized=linearized, **kwargs)
+        val_repr = latex_repr(d[k], linearized=linearized, **kwargs)
+        r.append((k_repr, val_repr))
+    if linearized:
+        # write this as a fancy dict, basically
+        # XX should this use \{\} + ensuremath?
+        r = [f"{e[0]}: {e[1]}" for e in r]
+        return ensuremath(f"\\{{{', '.join(r)}\\}}")
+    elif len(r) == 0:
+        return "[]"
+    elif len(r) == 1:
+        # the array version has ugly whitespace for 1-line dicts
+        return ensuremath(f"\\left[{r[0][0]} \\rightarrow {r[0][1]}\\right]")
+    else:
+        r = [f"{e[0]} & \\rightarrow & {e[1]} \\\\" for e in r]
+        return ensuremath(
+            # some formatting tweaks that would improve this, e.g. `@{ }`, are
+            # not supported by mathjax
+            # XX katex compat?
+            f"\\left[\\begin{{array}}{{lll}} {'\n'.join(r)} \\end{{array}}\\right]")
 
-def set_latex_repr(d):
+
+def set_latex_repr(d, **kwargs):
+    """Given some set `d`, render `d` into MathJax-compatible latex code.
+    Recurses into the collection using `latex_repr`.
+
+    Parameters
+    ----------
+    d: collections.abc.Set
+        a set to render
+    **kwargs : dict, optional
+        options for recursive calls
+
+    See also
+    --------
+    `dict_latex_repr`, `latex_repr`
+    """
     r = list()
     for k in list(d):
-        try:
-            k_repr = k.latex_str()
-        except AttributeError:
-            k_repr = repr(k)
-        r.append("%s" % (k_repr))
-    return "{" + ", ".join(r) + "}"
+        r.append(latex_repr(k, **kwargs))
+    return ensuremath(f"\\{{{', '.join(r)}\\}}")
 
 
 def parens(s, force=False):
@@ -314,9 +387,262 @@ def nltk_tree_wrapper(t):
 
     return tree
 
+
+class AttrWrapper:
+    """Wrap a mapping so that keys are accessible directly as properties. It
+    will also pass a call through to a callable wrapped argument (which may
+    or may not be supported)."""
+    def __init__(self, m):
+        if isinstance(m, AttrWrapper):
+            m = m._m
+        self._m = m
+
+    def __call__(self, *args, **kwargs):
+        """Calls the wrapped object"""
+        # currently only Model implements __call__
+        return self._m(*args, **kwargs)
+
+    def __getattr__(self, k):
+        return self._m[k]
+
+
+class Namespace(collections.abc.MutableMapping):
+    """A mapping implementation with functionality for managing metalanguage
+    namespaces. Underlying uses `collections.ChainMap` for implementation, and
+    so supports many of the features of that class."""
+    def __init__(self, *maps):
+        """Given some (possibly empty) sequence of maps, instantiate a
+        `Namespace` using those maps chained together. Earlier maps have
+        precedence."""
+
+        self.items = collections.ChainMap(*maps)
+
+    def __getitem__(self, key):
+        """Return the current value for `key`"""
+        return self.items[key]
+
+    def __setitem__(self, key, value):
+        """Set a value for `key`"""
+        self.items[key] = value
+
+    def __delitem__(self, key):
+        """Delete a value for `key`. Like the underlying `collections.ChainMap`,
+        this may leave `key` set if deleting the current value reveals another
+        in a chained map."""
+        del self.items[key]
+
+    def __iter__(self):
+        """Iterate over keys"""
+        # flatten before providing iterator
+        return iter(self.items)
+
+    def __len__(self):
+        """Count keys"""
+        return len(self.items)
+
+    def copy(self):
+        """Return a copy of `self`. Subclasses will need to override.
+
+        Returns
+        -------
+        Namespace
+            The copied `Namespace`.
+        """
+        return Namespace(*self.items.maps.copy())
+
+    def flatten(self):
+        """Return a map that flattens any chained mappings in `self`, losing
+        update history. Does not modify `self`.
+
+        Returns
+        -------
+        Namespace
+            The flattened `Namespace`. (Note that in subclasses this will
+            return an object whose type is the current class.)
+        """
+        # inelegant but works with subclasses
+        r = self.copy()
+        r.items = collections.ChainMap(dict(r.items))
+        return r
+
+    def update(self, *args, **kwargs):
+        """Update `self` according to any mappings and key values provided,
+        affecting only the first map in the chain. This function has the
+        same api as `collections.abc.MutableMapping.update`.
+        """
+        self.items.update(*args, **kwargs)
+
+    def modify(self, m=None, /, **kwargs):
+        """Modify `self` by creating a new element in the underlying mapping
+        chain, and updating with `m` and `**kwargs`.
+
+        Parameters
+        ----------
+        m : collections.abc.Mapping, optional
+            A mapping to update with
+        **kwargs : dict, optional
+            Key-value pairs to update with
+        """
+        self.items = self.items.new_child(m, **kwargs)
+
+    def new_child(self, m=None, /, **kwargs):
+        """Return a modified version of `self` (which is unchanged), that has
+        had a new mapping added to the chain with optional updates from `m`
+        and `**kwargs`.
+
+        Parameters
+        ----------
+        m : collections.abc.Mapping, optional
+            A mapping to update with
+        **kwargs : dict, optional
+            Key-value pairs to update with
+
+        Returns
+        -------
+        Namespace
+            The modified namespace. (Note that in subclasses this will
+            return on object whose type is the current class.)
+
+        See also
+        --------
+        This is the same api as `collections.ChainMap.new_child`.
+        """
+
+        r = self.copy()
+        r.modify(m, **kwargs)
+        return r
+
+    def pop_child(self):
+        """Remove and return the mapping at the head of the chain, modifying
+        `self`. Like `collections.ChainMap.parents`, if the chain has only
+        one map, this will reset `self` to an empty `Namespace`.
+
+        Returns
+        -------
+        collections.abc.Mapping
+            The popped mapping.
+        """
+        ret = self.maps[0]
+        self.items = self.items.parents
+        return ret
+
+    @property
+    def parents(self):
+        """Return a `Namespace` object that pops the first mapping (if any).
+        Does not affect `self`. Like `collections.ChainMap.parents`, if the
+        chain has only one map, this will return an empty `Namespace`.
+
+        Returns
+        -------
+        Namespace
+            The parent namespace. (Note that in subclasses this will
+            return on object whose type is the current class.)
+
+        See also
+        --------
+        This is the same api as `collections.ChainMap.parents`.
+        """
+        # written to work with subclasses
+        r = self.copy()
+        r.pop_child()
+        return r
+
+    def reset(self):
+        """Reset `self` to an empty `Namespace`."""
+        self.items = collections.ChainMap({})
+
+    @property
+    def maps(self):
+        """Return the underlying sequence of chained maps.
+
+        See also
+        --------
+        This is the same api as `collections.ChainMap.parents`.
+        """
+        return self.items.maps
+
+    @contextlib.contextmanager
+    def shift(self, assignment=None, **kwargs):
+        """A context manager that, given some updates to the namespace, yields
+        a context with the namespace temporarily shifted. (This doesn't cause
+        this namespace to take any sort of scope!)
+
+        Yields
+        ------
+        AttrWrapper
+            A wrapped version of `self` with keys exposed as properties
+        """
+        # in principle we could work with self.items.maps directly, but it
+        # seems safer to just save `self.items`, so we can exactly return
+        # to the old state. This does rely on `modify` changing self.items.
+        old = self.items
+        try:
+            self.modify(assignment, **kwargs)
+            yield AttrWrapper(self)
+        finally:
+            self.items = old
+
+    @contextlib.contextmanager
+    def under(self, target=None):
+        """Temporarily apply all definitions in this namespace to the targeted
+        namespace (via `shift`), which by default, is the global namespace.
+        Modifying the targeted namespace in the scope of this call will change
+        this namespace! (This behavior can be avoided by copying first.)
+
+        Parameters
+        ----------
+        target: Namespace, optional
+            A namespace to shift. If `None`, this call will use
+            `meta.global_namespace()`.
+
+        Yields
+        ------
+        AttrWrapper
+            A wrapped version of the shifted namespace.
+        """
+
+        from .meta import global_namespace
+        if target is None:
+            target = global_namespace()
+
+        with target.shift(self) as ns:
+            # note: changes to the global namespace in the scope of this call
+            # will change this namespace! Also, ChainMap is perfectly happy
+            # to have multiple refs to identical dicts, so reentering the global
+            # namespace is possible, but is effectively inert.
+            yield ns
+
+    def text(self, rich=True, **kwargs):
+        """Return text for a rich (markdown) or plain repr."""
+        if len(self) == 0:
+            # subclass cosmetics: use the current class' name for the empty
+            # message.
+            emsg = f"(Empty {self.__class__.__name__})"
+            if rich:
+                emsg = f"*{emsg}*"
+            return emsg
+        from .display import assignment_repr
+        lines = [assignment_repr(k, self[k], rich=rich) for k in self]
+        if rich:
+            join = "<br />\n"
+        else:
+            join = "\n"
+        return join.join(lines)
+
+    def _repr_markdown_(self):
+        return self.text(rich=True)
+
+    def __repr__(self):
+        # XX may be better as repr_pretty
+        return self.text(rich=False)
+
+
 # a minimal frozendict implementation, to support type domains that need a hashable
 # function representation. There's lots of bells and whistles one could add
 # here, but at the moment I don't see the need.
+# TODO: possibly consider using https://github.com/MagicStack/immutables, since
+# it has very efficient copying and seems to be (more or less) maintained.
+# Perhaps one day:
 class frozendict(collections.abc.Mapping):
     def __init__(self, mapping):
         if isinstance(mapping, frozendict):

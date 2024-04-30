@@ -14,6 +14,13 @@ basic_testcases = [
     ]
 
 class LangParsingTest(unittest.TestCase):
+    def setUp(self):
+        meta.core.set_strict_type_parsing()
+
+    def tearDown(self):
+        # other tests may want this, but let them decide
+        meta.core.set_strict_type_parsing(False)
+
     def test_parsing(self):
         # really basic stuff:
         state = dict()
@@ -45,9 +52,13 @@ def has_ipython_repr(o):
 # * test transforms
 class LangTest(unittest.TestCase):
     def setUp(self):
+        meta.core.set_strict_type_parsing()
         self.state = dict()
         parsing.parse("\n".join(basic_testcases), state=self.state)
 
+    def tearDown(self):
+        # other tests may want this, but let them decide
+        meta.core.set_strict_type_parsing(False)
 
     def test_basic(self):
         from lamb.lang import Item
@@ -57,7 +68,7 @@ class LangTest(unittest.TestCase):
         gray = Item("gray", "L x_e: Gray_<e,t>(x)")
         john = Item("John", "John_e")
         julius = Item("Julius", "Julius_e")
-        inP = Item("in", "L x: L y: In_<e,<e,t>>(y)(x)")
+        inP = Item("in", "L x_e: L y_e: In_<e,<e,t>>(y)(x)")
         texas = Item("Texas", "Texas_e")
         pvar = meta.TypedTerm("p", types.type_property)
         isV = Item("is", meta.LFun("p", pvar, vartype=types.type_property))

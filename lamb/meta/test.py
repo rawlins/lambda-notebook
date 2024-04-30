@@ -327,8 +327,9 @@ te_classes = [core.ApplicationExpr,
 
 class MetaTest(unittest.TestCase):
     def setUp(self):
+        core.set_strict_type_parsing()
         self.ident = te("L x_e : x") 
-        self.ia = TypedExpr.factory(self.ident, "y")
+        self.ia = TypedExpr.factory(self.ident, "y_e")
         self.ib = LFun(("y", type_e), self.ia)
         self.P = TypedTerm("P", types.FunType(type_e, type_t))
         self.Q = TypedTerm("Q", types.FunType(type_e, type_t))
@@ -339,6 +340,10 @@ class MetaTest(unittest.TestCase):
         self.body = TypedExpr.factory("&", self.t, self.t) | self.t
         self.p = TypedTerm("p", type_t)
         self.testf = LFun(("x", type_e), self.body)
+
+    def tearDown(self):
+        # other tests may want this, but let them decide
+        core.set_strict_type_parsing(False)
 
     def test_basic(self):
         # equality basics
@@ -406,8 +411,12 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(TypedExpr.factory("L x_e : x_e"), self.ident)
         self.assertRaises(parsing.ParseError, TypedExpr.factory, "L x_e : x_t")
         logger.setLevel(logging.WARNING)
-        te("L x: L y: In(y)(x)")
-        logger.setLevel(logging.INFO)
+        core.set_strict_type_parsing(False)
+        try:
+            te("L x: L y: In(y)(x)")
+        finally:
+            core.set_strict_type_parsing(True)
+            logger.setLevel(logging.INFO)
 
     def test_terms(self):
         self.assertTrue(te("x_e").term())
@@ -596,12 +605,14 @@ class MetaTest(unittest.TestCase):
         testsimp(self, meta_s1.equivalent_to(s1), True, exec=True)
         testsimp(self, meta_s1.equivalent_to(meta_s1), True, exec=True)
         # not exactly eq, but close enough
-        elem = te("{_c1, c2}")
+        elem = te("{_c1, _c2}")
         meta_elem = meta.MetaTerm(frozenset({'_c2', '_c1'}))
         testsimp(self, s1[0] << s1, True, exec=True)
         testsimp(self, s1[0] << meta_s1, True, exec=True)
         testsimp(self, meta_elem << s1, True, exec=True)
         testsimp(self, meta_elem << meta_s1, True, exec=True)
+        testsimp(self, elem << s1, True, exec=True)
+        testsimp(self, elem << meta_s1, True, exec=True)
 
         with tp("e").restrict_domain(count=4):
             # these are chosen to avoid certain optimizations involved in <<
@@ -657,7 +668,7 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(te("(L g_<e,e> : (L x_e : (L f_<e,e> : (L y_e : g(f(y))))))(L x_e : x)(y_e)(L x_e : x)(x_e)").reduce_all(),
             self.x)
         # nb variable identity in the output may be a bit too strict
-        self.assertEqual(te("(L f_<e,e> : f((L x_e : x)(Iota y : (L x_e : P_<e,t>(f(x)))(f(y)))))(L x_e : x)").reduce_all(),
+        self.assertEqual(te("(L f_<e,e> : f((L x_e : x)(Iota y_e : (L x_e : P_<e,t>(f(x)))(f(y)))))(L x_e : x)").reduce_all(),
             te("Iota y_e : P_<e,t>(y)"))
 
     def test_polymorphism(self):
@@ -1215,6 +1226,67 @@ class MetaTest(unittest.TestCase):
             testsimp(self, (f_set | t_set) | f_set, t_set, all=True)
             testsimp(self, (t_set - f_set) - f_set, t_set, all=True)
             testsimp(self, (t_set - f_set) - t_set, lf_set, all=True, exec=True)
+
+    def test_model(self):
+        # see model documentation; example based on a Chierchia & McConnell-Ginet
+        # example
+        m1 = meta.Model(
+            {'Bond': '_c1',
+             'Pavarotti': '_c2',
+             'Loren': '_c3',
+             'J': 'Bond',
+             'M': 'Loren',
+             'P': {'Loren', 'Pavarotti'},
+             'Q': {'Loren', 'Bond'},
+             'K': {('Bond', 'Bond'), ('Bond', 'Loren'), ('Loren', 'Pavarotti'), ('Pavarotti', 'Loren')},
+             'G': {('Bond', 'Loren', 'Pavarotti'), ('Loren', 'Loren', 'Bond'),
+                   ('Loren', 'Bond', 'Pavarotti'), ('Pavarotti', 'Pavarotti', 'Loren')}
+            },
+            domain={'_c1', '_c2', '_c3'})
+
+        self.assertRaises(TypeMismatch, m1.evaluate, te("Bond_t"))
+        self.assertRaises(meta.DomainError, m1.evaluate, te("_c4"))
+
+        def mod_eq(m, expr, r):
+            eval_x = m.evaluate(te(expr))
+            self.assertEqual(eval_x, r)
+            with m.under():
+                x = te(expr).simplify_all() # reduce should not be required
+                self.assertEqual(x, eval_x) # probably redundant
+                self.assertEqual(x, r)
+            self.assertEqual(x, eval_x)
+
+        mod_eq(m1, "Bond_e", '_c1')
+        mod_eq(m1, "P_<e,t>(Loren_e)", True)
+        mod_eq(m1, "P_<e,t>(Bond_e)", False)
+        mod_eq(m1, "P_<e,t>(M_e) & Q_<e,t>(Pavarotti_e)", False)
+        mod_eq(m1, "G_<(e,e,e),t>(Bond_e, J_e, _c1)", False)
+        mod_eq(m1, "G_<(e,e,e),t>(Bond_e, M_e, _c2)", True)
+        mod_eq(m1, "~P_<e,t>(Bond_e) <=> K_<(e,e),t>(Loren_e,J_e)", False)
+        mod_eq(m1, "~(Bond_e <=> J_e) >> ~G_<(e,e,e),t>(Bond_e,Bond_e,Bond_e)", True)
+        mod_eq(m1, "Exists x1_e : P_<e,t>(x1)", True)
+        mod_eq(m1, "Forall x1_e : Exists x2_e : K_<(e,e),t>(x1,x2)", True)
+        mod_eq(m1, "Exists x2_e : Forall x1_e : K_<(e,e),t>(x1,x2)", False)
+
+        g1 = meta.Assignment(
+            x1=te('Bond_e'),
+            x2=te('Loren_e'),
+            x3=te('Pavarotti_e'))
+
+        with m1.under() as m:
+            # Check that types are set from model
+            self.assertEqual(te("P(Loren)").simplify_all(), True)
+            # check some cases with multiple scopes
+            with m(g1).under():
+                self.assertEqual(
+                    te("G(x1, J, x1)").simplify_all(),
+                    False)
+                self.assertEqual(
+                    te("~(G(x1,x1,x1) >> (J <=> M)) & (~Q(J) & K(J,M))").simplify_all(),
+                    False)
+                self.assertEqual(
+                    te("~(x1 <=> J) >> ~G(x1,x1,x1)").simplify_all(),
+                    True)
 
     def test_random_reduce(self):
         # XX the functions generated this way do reduce substantially, but it's
