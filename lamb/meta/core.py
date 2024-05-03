@@ -4211,7 +4211,7 @@ class BindingOp(TypedExpr):
 
     def alpha_convert(self, *new_varname):
         """Produce an alphabetic variant of the expression w.r.t. the bound
-        variable, with new_varname as the new name.
+        variable(s), with `new_varname` as the new name(s).
 
         Returns a copy.  Will not affect types of either the expression or the
         variables."""
@@ -4228,15 +4228,20 @@ class BindingOp(TypedExpr):
 
         remap = {vseq[i]: new_varname[i] for i in range(len(new_varname))}
 
-        # this is written in a fairly general way so as to copy `restrictor`
-        # if it is present
+        # this is written in a fairly general way so as to not make assumptions
+        # about other args that subclasses may introduce. In particular, copy
+        # `restrictor` if it is present on RestrictedBindinOp sublcasses. If
+        # subclasses would need to change anything but the var and the body,
+        # they'll need to not rely on this code.
         args = self.args.copy()
         if isinstance(self.var_instance, Tuple):
             args[0] = variable_convert(args[0], remap)
         else:
             args[0] = TypedTerm(new_varname[0], self.vartype)
 
-        args[1] = variable_convert(args[1], remap)
+        if not self.vacuous():
+            args[1] = variable_convert(args[1], remap)
+        # restrictor, if any, is not in the scope of the binder, leave unchanged
         return self.copy_local(*args)
 
     def latex_op_str(self):
@@ -4296,8 +4301,11 @@ class BindingOp(TypedExpr):
     def vacuous(self):
         """Return true just in case the operator's variable is not free in the
         body expression."""
-        # XX this doesn't handle multivar/novar cases...
-        return self.varname not in self[1].free_variables()
+        fv = self[1].free_variables()
+        if isinstance(self.var_instance, Tuple):
+            return any(v in fv for v in self.var_instance)
+        else:
+            return self.varname not in fv
 
     def term(self):
         return False
@@ -4637,7 +4645,7 @@ class LFun(BindingOp):
         """Apply an argument directly to the function.
 
         `__call__` plus `reduce` is (almost) equivalent to `apply`, but using
-        `apply` directly will not generate a derivations."""
+        `apply` directly will not generate a derivation."""
 
         # do I really want flexible equality here??
         # TODO: return to this.  Right now a type mismatch still gets raised

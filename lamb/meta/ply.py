@@ -388,11 +388,15 @@ def alphanorm(e):
 def unsafe_variables(fun, arg):
     """For a function and an argument, return the set of variables that are not
     safe to use in application."""
-    v = arg.free_variables() | fun.free_variables()
-    from .core import LFun
-    # the actual bound variable is always safe during reduction.
-    if isinstance(fun, LFun):
-        v.discard(fun[0].op)
+
+    # a vacuous function is completely safe, nothing needs renaming
+    if fun.vacuous():
+        return set()
+    # otherwise, any free argument variables need to be protected
+    v = arg.free_variables()
+    # However, the actual bound variable name is always safe during reduction,
+    # even if it's free in the argument
+    v.discard(fun.varname)
     return v
 
 
@@ -599,34 +603,38 @@ def alpha_variant(x, blockset):
     return t
 
 
-def alpha_convert_r(t, overlap, conversions):
-    overlap = overlap & t.bound_variables()
-    if overlap:
-        from .core import BindingOp
+def alpha_convert(t, changeset):
+    """ produce an alphabetic variant of `t` that is guaranteed not to have any
+    bound variables in `changeset`. Possibly will not change `t`.
+    """
+    from .core import BindingOp
+
+    # bound variables (somewhere) in `t` are the candidates for alpha conversion
+    overlap = t.bound_variables() & changeset
+    if not overlap:
+        return t
+    # a much longer list of variable names to avoid when renaming. Note that
+    # `changeset` is typically be determined by something outside of `t`, i.e.
+    # the argument to a function
+    blockset = changeset | t.free_variables() | t.bound_variables()
+    # Generate all the renames for overlapping bound variable names.
+    # this relies on alpha_variant's side effect (that full_bl is updated on
+    # each call)
+    conversions = {x : alpha_variant(x, blockset) for x in overlap}
+
+    # recursively find instances of variables in `t` that need changing
+    # according to overlap + conversions
+    def alpha_convert_r(t, overlap):
+        if not (overlap := overlap & t.bound_variables()):
+            return t
         if isinstance(t, BindingOp) and t.varname in overlap:
             # the operator is binding variables in the overlap set.
             # rename instances of this variable that are free in the body of the
             # operator expression.
             t = t.alpha_convert(conversions[t.varname])
-        parts = list()
-        for i in range(len(t.args)):
-            parts.append(alpha_convert_r(t.args[i], overlap, conversions))
-        t = t.copy_local(*parts)
-    return t
+        return t.copy_local(*[alpha_convert_r(sub, overlap) for sub in t])
 
-
-def alpha_convert(t, blocklist):
-    """ produce an alphabetic variant of t that is guaranteed not to have any
-    variables in blocklist.  
-
-    Possibly will not change t."""
-    overlap = t.bound_variables() & blocklist
-    if not overlap:
-        return t
-    full_bl = blocklist | t.free_variables() | t.bound_variables()
-    # note that this relies on the side effect of alpha_variant...
-    conversions = {x : alpha_variant(x, full_bl) for x in overlap}
-    return alpha_convert_r(t, overlap, conversions)
+    return alpha_convert_r(t, overlap)
 
 
 # XX overlap with parsing code...
