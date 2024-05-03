@@ -3,7 +3,7 @@ import random
 import lamb
 from lamb import types, utils
 from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
-from .core import BindingOp, Partial, LFun, get_sopt, ts_unify, is_concrete
+from .core import BindingOp, Partial, LFun, get_sopt, ts_unify, is_concrete, te
 from . import meta, ply, boolean
 from .boolean import true_term, false_term
 from lamb.types import type_t
@@ -480,6 +480,16 @@ class ExistsExact(RestrictedBindingOp):
     op_name_uni="∃!"
     op_name_latex="\\exists{}!"
 
+    @classmethod
+    def _setup_impl(cls):
+        if getattr(cls, '_impl_restricted', None) is not None:
+            return
+        # combinators for the `eliminate` implementation for ExistsExact
+        cls._impl_restricted = te(
+            "L f_<X,t> : L r_{X} : Exists x_X << r : f(x) & (Forall y_X << r : f(y) >> x <=> y)")
+        cls._impl_unrestricted = te(
+            "L f_<X,t> : Exists x_X : f(x) & (Forall y_X : f(y) >> x <=> y)")
+
     def __init__(self, var, body, restrictor=None,
                 varname=None, vartype=None, assignment=None, type_check=True):
         super().__init__(var, body, restrictor=restrictor, typ=types.type_t,
@@ -487,16 +497,21 @@ class ExistsExact(RestrictedBindingOp):
             assignment=assignment, type_check=type_check)
 
     def eliminate(self, assignment=None, **sopts):
-        var1 = self[0].copy()
-        var2 = TypedTerm(self.find_safe_variable(starting=self.varname), typ=var1.type)
-        fun = LFun(var1.copy(), self[1])
-        result = Exists(var1,
-            fun.apply(var1) & Forall(var2,
-                                fun.apply(var2) >> var1.equivalent_to(var2),
-                                restrictor=self.restrictor),
-            restrictor=self.restrictor)
-        result = derived(result, self, "∃! elimination")
-        return result
+        self._setup_impl()
+
+        fun = LFun(self[0], self[1])
+
+        if self.restricted():
+            result = self._impl_restricted(fun)(self.restrictor)
+        else:
+            result = self._impl_unrestricted(fun)
+
+        # suppress derivations for the reduction; we can't shortcut using
+        # apply because this characteristically involves multiple reduction
+        # steps
+        with ply.no_derivations():
+            result = result.reduce_all()
+        return derived(result, self, "∃! elimination")
 
     def _compile(self):
         empty = self.empty_domain()
@@ -526,10 +541,21 @@ class ExistsExact(RestrictedBindingOp):
         return c
 
     def simplify(self, assignment=None, **sopts):
-        # unhandled vacuous case: body is true & len(domain) == 1
         empty = self.empty_domain()
         if empty:
             return derived(false_term, self, "∃! triviality with empty domain")
+        elif self.vacuous() and not self.restricted():
+            # we need to handle this case for simplification generality
+            # XX domain restriction cases are unhandled, but should be handled
+            if self.domain_cardinality() == None:
+                return self # XX can't be determined. Will lead to crashes in simplification...
+            elif self.domain_cardinality() == 0:
+                # is this possible?
+                return derived(false_term, self, "Vacuous ∃! with empty domain")
+            elif self.domain_cardinality() == 1:
+                return derived(self.body, self, "Vacuous ∃! with singleton domain")
+            else:
+                return derived(false_term, self, "Vacuous ∃! with non-trivial domain")
         elif self.domain_cardinality() == 1:
             # this is quite cumbersome, but it works out
             return self.eliminate(assignment=assignment).simplify_all(**sopts)
@@ -562,7 +588,7 @@ class ExistsExact(RestrictedBindingOp):
                 # XX this derivation is a bit clunky
                 if sub is None:
                     raise ValueError(
-                        f"Bug: `find_unique_evaluation` failed to simplify subexpression `{repr(counterexample)}` of `{repr(self)}` during evaluation")
+                        f"Bug: `find_unique_evaluation` failed to simplify subexpression `{repr(counterexample)}` of `{repr(self)}` during evaluation; assignment {repr(a)}")
                 r = derived(false_term, self,
                         f"counterexample for ∃!{self.varname}",
                         subexpression=sub[0],

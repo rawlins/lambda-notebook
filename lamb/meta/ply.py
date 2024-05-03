@@ -1,5 +1,5 @@
 from numbers import Number
-import re, collections
+import re, collections, contextlib
 
 from lamb import display, types, utils
 from lamb.types import TypeMismatch, BasicType
@@ -317,7 +317,7 @@ def multisimplify(e, simplify_fun = None,
                 early = early_check(es[i], es[i+1], **sopts)
                 if early is not None:
                     tmp_d = early.derivation
-                    early.derivation = derivation
+                    set_derivation(early, derivation)
                     if tmp_d:
                         derivation.add_step(DerivationStep(early,
                                                 desc=tmp_d[-1].desc,
@@ -368,7 +368,7 @@ def multisimplify(e, simplify_fun = None,
     if len(derivation) == 0:
         # no non-trivial derivational steps at all, just wipe the object
         derivation = None
-    result.derivation = derivation
+    set_derivation(result, derivation)
     return result
 
 
@@ -390,9 +390,7 @@ def unsafe_variables(fun, arg):
     safe to use in application."""
     v = arg.free_variables() | fun.free_variables()
     from .core import LFun
-    # the actual bound variable is always safe. This check in principle makes
-    # this code heavier, but generally prevents a bunch of unnecessary copying
-    # for common cases.
+    # the actual bound variable is always safe during reduction.
     if isinstance(fun, LFun):
         v.discard(fun[0].op)
     return v
@@ -782,6 +780,27 @@ class DerivationStep(object):
             + self.desc
             + "]")
 
+
+_suppress_derivations = False
+
+
+@contextlib.contextmanager
+def no_derivations():
+    global _suppress_derivations
+    cur = _suppress_derivations
+    _suppress_derivations = True
+    try:
+        yield
+    finally:
+        _suppress_derivations = cur
+
+
+def set_derivation(t, d):
+    if _suppress_derivations:
+        return
+    t.derivation = d
+
+
 class Derivation(object):
     """A derivation sequence, consisting of DerivationSteps."""
 
@@ -1036,12 +1055,16 @@ def derivation_factory(result, desc=None, latex_desc=None, origin=None,
                 latex_desc=latex_desc, subexpression=subexpression, trivial=trivial))
     return drv
 
+
 def derived(result, origin,
             desc=None, latex_desc=None, subexpression=None, note=None,
             allow_trivial=False, force_on_recurse=False):
     """Convenience function to return a derived TypedExpr while adding a
     derivational step. Always return result, adds or updates its derivational
     history as a side effect."""
+
+    if _suppress_derivations:
+        return result
 
     from .core import TypedTerm # can these be done without isinstance checks?
     from .meta import MetaTerm
@@ -1062,20 +1085,20 @@ def derived(result, origin,
         else:
             # a bit hacky, but this scenario has come up
             if result.derivation is None and result is not origin:
-                result.derivation = origin.derivation
+                set_derivation(result, origin.derivation)
             return result
     if result.derivation is None:
         d = origin.derivation
     else:
         d = result.derivation
-    result.derivation = derivation_factory(result, desc=desc,
+    set_derivation(result, derivation_factory(result, desc=desc,
                                                    latex_desc=latex_desc,
                                                    origin=origin,
                                                    steps=d,
                                                    subexpression=subexpression,
                                                    trivial=trivial,
-                                                   note=note)
-    if force_on_recurse:
+                                                   note=note))
+    if force_on_recurse and result.derivation is not None:
         result.derivation[-1].force_on_recurse()
     return result
 
@@ -1091,13 +1114,13 @@ def add_derivation_step(te, result, origin, desc=None, latex_desc=None, note=Non
         d = origin.derivation
     else:
         d = te.derivation
-    te.derivation = derivation_factory(result, desc=desc,
+    set_derivation(te, derivation_factory(result, desc=desc,
                                                latex_desc=latex_desc,
                                                origin=origin,
                                                steps=d,
                                                subexpression=subexpression,
                                                trivial=trivial,
-                                               note=note)
+                                               note=note))
     return te
 
 def add_subexpression_step(te, subexpr, desc=None, latex_desc=None):

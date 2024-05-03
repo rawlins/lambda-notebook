@@ -7,7 +7,7 @@ from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_
 from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality
 from . import meta
 from .meta import MetaTerm
-from .ply import alphanorm_key
+from .ply import alphanorm_key, set_derivation
 from .boolean import BinaryOrExpr, BinaryAndExpr, false_term, true_term
 from .quantifiers import Forall, Exists
 from lamb.utils import dbg_print
@@ -349,7 +349,7 @@ class ListedSet(TypedExpr):
         args = sorted(args, key=alphanorm_key) # for a canonical ordering
         result = self.copy_local(*args)
         result.set_simplified = True
-        result.derivation = self.derivation # copy any derivation, no changes
+        set_derivation(result, self.derivation) # copy any derivation, no changes
         return result
 
     def simplify(self, **sopts):
@@ -550,8 +550,8 @@ class SetContains(SyncatOpExpr):
             derivation = self.derivation
             # XX should this be reduce_all?
             step = (self[1].to_characteristic()(self[0])).reduce()
-            step.derivation = derivation # suppress the intermediate parts of
-                                         # this derivation, if any
+            set_derivation(step, derivation) # suppress the intermediate parts of
+                                             # this derivation, if any
             return derived(step, self, "∈ simplification")
 
         # leave other ListedSets as-is for now.
@@ -565,12 +565,28 @@ class SetContains(SyncatOpExpr):
 
 
 def check_set_types(arg1, arg2, op_name=None):
-    if not isinstance(arg1.type, SetType) or not isinstance(arg2.type, SetType):
+    if isinstance(arg1.type, SetType):
+        primary = arg1
+        other = arg2
+    elif isinstance(arg2.type, SetType):
+        primary = arg2
+        other = arg1
+    else:
         if op_name:
             # XX these errors are a bit odd
             raise types.TypeMismatch(arg1, arg2, f"{op_name} requires set types")
         else:
             return None
+
+    if types.is_type_var(other.type):
+        return primary.type
+    elif not isinstance(other.type, SetType):
+        if op_name:
+            # XX these errors are a bit odd
+            raise types.TypeMismatch(arg1, arg2, f"{op_name} requires set-compatible types")
+        else:
+            return None
+    # at this point, both are SetType instances
     ctype = get_type_system().unify(arg1.type.content_type, arg2.type.content_type)
     if ctype is None:
         if op_name:
@@ -1075,7 +1091,7 @@ class SetSubset(BinarySetOp):
         if simplified is test and not get_sopt('eliminate_sets', sopts):
             # if simplify didn't do anything to this expression, the result is
             # probably not actually simpler than where we started
-            self.derived = old_derivation
+            set_derivation(self, old_derivation)
             return self
         else:
             return simplified
@@ -1099,7 +1115,7 @@ class SetProperSubset(BinarySetOp):
         test = derived(self._set_impl(), self, "proper subset (set elimination)")
         simplified = test.simplify_all(**sopts)
         if simplified is test and not get_sopt('eliminate_sets', sopts):
-            self.derivation = old_derivation
+            set_derivation(self, old_derivation)
             return self
         else:
             return simplified

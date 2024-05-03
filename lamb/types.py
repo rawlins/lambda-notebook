@@ -1230,6 +1230,10 @@ def debind(t, vars=None):
     return t.copy_local(*[debind(sub, vars=vars) for sub in t])
 
 
+def is_type_var(t):
+    return isinstance(debind(t), VariableType)
+
+
 class Forall(TypeConstructor):
     """Unary type constructor that indicates explicit unselective binding of
     any type variables in its scope."""

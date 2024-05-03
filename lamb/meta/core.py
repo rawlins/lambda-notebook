@@ -14,7 +14,7 @@ from .ply import simplify_all, symbol_is_var_symbol
 from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
 from .ply import term_replace_unify, variable_convert, alpha_variant
 from .ply import commutative, associative, left_commutative, right_commutative
-from .ply import Derivation, DerivationStep
+from .ply import Derivation, DerivationStep, set_derivation
 
 ############### Basic stuff
 
@@ -1690,7 +1690,7 @@ class TypedExpr(object):
                                                 result.get_type_env()))
 
         # need to set a derivation step for this in the calling function.
-        result.derivation = self.derivation
+        set_derivation(result, self.derivation)
         return result
 
     def under_assignment(self, assignment, track_all_names=False, compact=False):
@@ -1734,10 +1734,12 @@ class TypedExpr(object):
             result.update(a.bound_variables())
         return result
 
-    def find_safe_variable(self, starting="x", avoid_bound=True):
+    def find_safe_variable(self, starting="x", avoid_bound=True, blockset=None):
         """Find an a safe alpha variant of the starting point (by default: 'x'),
         that is not used in the expression."""
-        blockset = self.free_variables()
+        if blockset is None:
+            blockset = set()
+        blockset = blockset | self.free_variables()
         if avoid_bound:
             blockset = blockset | self.bound_variables()
         varname = alpha_variant(starting, blockset)
