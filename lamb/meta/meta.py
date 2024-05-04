@@ -283,7 +283,6 @@ class MetaTerm(core.TypedTerm):
         if use_renames is None:
             use_renames = True
         elem_renamed = (self.type is not None
-                        and isinstance(self.type.domain, types.DomainSet)
                         and self.type.domain.element_rename(self.op))
         if self.latex_op_str is None:
             if use_renames and self.assignment_name is not None and not elem_renamed:

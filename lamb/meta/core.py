@@ -4152,8 +4152,7 @@ class BindingOp(TypedExpr):
         return self.args[1]        
 
     def finite_safe(self):
-        return (isinstance(self[0].type.domain, types.DomainSet)
-            and self[0].type.domain.enumerable()
+        return (self[0].type.domain.enumerable()
             and self[0].type.domain.finite)
 
     def type_domain_iter(self):
@@ -4168,9 +4167,15 @@ class BindingOp(TypedExpr):
         return self.type_domain_iter()
 
     def domain_cardinality(self):
-        if isinstance(self.vartype.domain, types.DomainSet):
-            return self.vartype.domain.cardinality()
-        return None
+        if isinstance(self.vartype.domain, types.PolymorphicDomainSet):
+            # refuse to try to give an answer. In principle, we could probably
+            # get away with returning `inf`. But this is analytically wrong:
+            # there can be atomic types that (under domain restriction or
+            # otherwise) have cardinality 1, and a type variable could resolve
+            # to this. So None here means that it is simply tbd until the
+            # polymorphism is resolved.
+            return None
+        return self.vartype.domain.cardinality()
 
     @classmethod
     def compile_ops_re(cls):

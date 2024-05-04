@@ -37,6 +37,7 @@ def curlybraces(x, rich=False):
 # no length, which is required for most stronger types in collections.abc.
 class DomainSet(collections.abc.Container):
     type = None # class variable
+    modifiable = True
     def __init__(self, finite=True, values=None, typ=None, superdomain=None):
         self.finite = finite
         self.superdomain = superdomain
@@ -107,7 +108,8 @@ class DomainSet(collections.abc.Container):
             "Can't check membership for an abstract infinite set")
 
     def element_rename(self, x):
-        if self.type is not None and x in self.type.domain_names:
+        # XX this probably doesn't work on non-atomic types
+        if self.type is not None and self.type.domain_names and x in self.type.domain_names:
             return self.type.domain_names[x]
         else:
             return None
@@ -140,7 +142,28 @@ class DomainSet(collections.abc.Container):
             return None
 
 
+# mostly a placeholder class for conveying finite=False
+class PolymorphicDomainSet(DomainSet):
+    modifiable = False
+    def __init__(self, typ=None):
+        super().__init__(finite=False, typ=typ)
+
+    def check(self, x):
+        raise ValueError("Domain membership checking for polymorphic types is not supported")
+
+    def normalize(self, x):
+        raise ValueError("Domain element normalization for polymorphic types is not supported")
+
+    def __repr__(self):
+        return f"PolymorphicDomainSet()"
+
+    def enumerable(self):
+        return False
+
+
 class BooleanSet(DomainSet):
+    # allowing this messes up too many thing
+    modifiable = False
     def __init__(self):
         # to prevent circularity, BooleanSet.type is set in reset()
         super().__init__(finite=True, values=[False,True])
@@ -154,21 +177,11 @@ class BooleanSet(DomainSet):
         # check, exclude 0/1 from the domain by checking class directly.
         return isinstance(demeta(x), bool)
 
-    def modify_domain(self, values=None, count=None):
-        # allowing this messes up too many things, and I don't think there's
-        # much of a use case for it
-        raise ValueError("Domain restriction for type t is not supported")
-
-    @contextlib.contextmanager
-    def restrict_domain(self, values=None, count=None):
-        raise ValueError("Domain restriction for type t is not supported")
-
     def normalize(self, x):
         return bool(x)
 
     def __repr__(self):
         return f"BooleanSet()"
-
 
 class SimpleInfiniteSet(DomainSet):
     """Arbitrary domain type modeling a (countable) non-finite set. Elements are
@@ -328,14 +341,15 @@ except:
 
 class TypeConstructor(object):
     domain_class = None
-    def __init__(self, domain=None):
+    def __init__(self, *, domain=None):
         self.symbol = None
         self.unify_source = None
         self.generic = False
         self.init_type_vars()
         if domain is None:
             if self.domain_class is None:
-                domain = set()
+                # subclass should set
+                domain = None
             else:
                 domain = self.domain_class(typ=self)
         self.domain = domain
@@ -382,6 +396,8 @@ class TypeConstructor(object):
         This function does not change the type's domain itself. See also
         `restrict_domain` for a context manager interface to this function.
         """
+        if not self.domain.modifiable:
+            raise ValueError(f"Can't modify domain for type {self}")
         if count:
             if not self.domain.enumerable():
                 raise ValueError(f"Can't get subdomain by count for non-enumerable domain of type {repr(self)}")
@@ -403,9 +419,9 @@ class TypeConstructor(object):
         return DomainSet(values=values, typ=self, superdomain=self.domain)
 
     def modify_domain(self, values=None, count=None):
-        if not isinstance(self.domain, DomainSet):
+        if not self.domain.modifiable:
             raise ValueError(f"Can't modify domain for type {self}")
-        if values and isinstance(values, DomainSet):
+        if values is not None and isinstance(values, DomainSet):
             # XX this doesn't validate the domain set against self!
             self.domain = values
         else:
@@ -414,15 +430,15 @@ class TypeConstructor(object):
     @contextlib.contextmanager
     def restrict_domain(self, values=None, count=None):
         saved = self.domain
-        self.modify_domain(values=values, count=count)
         try:
+            self.modify_domain(values=values, count=count)
             yield self.domain
         finally:
             self.domain = saved
 
     def reset_domain(self):
-        if not isinstance(self.domain, DomainSet):
-            return
+        if not self.domain.modifiable:
+            raise ValueError(f"Can't modify domain for type {self}")
         while self.domain.superdomain is not None:
             self.domain = self.domain.superdomain
 
@@ -621,9 +637,8 @@ class BasicType(TypeConstructor):
 
 class FunDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        finite = (isinstance(typ.left.domain, DomainSet) and typ.left.domain.finite
-                    and isinstance(typ.right.domain, DomainSet) and typ.right.domain.finite)
-        super().__init__("Fun", typ, finite=finite)
+        super().__init__("Fun", typ,
+            finite=typ.left.domain.finite and typ.right.domain.finite)
 
     def infcheck(self, x):
         # XX variable types
@@ -810,8 +825,7 @@ class FunType(TypeConstructor):
 
 class SetDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        finite = isinstance(typ.content_type.domain, DomainSet) and typ.content_type.domain.finite
-        super().__init__("Set", typ, finite=finite)
+        super().__init__("Set", typ, finite=typ.content_type.domain.finite)
 
     def infcheck(self, x):
         if isinstance(x, collections.abc.Set):
@@ -937,8 +951,7 @@ class SetType(TypeConstructor):
 
 class TupleDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        finite = all(isinstance(t.domain, DomainSet) and t.domain.finite for t in typ)
-        super().__init__("Tuple", typ, finite=finite)
+        super().__init__("Tuple", typ, finite=all(t.domain.finite for t in typ))
 
     def infcheck(self, x):
         if isinstance(x, collections.abc.Sequence) and not isinstance(x, str):
@@ -1238,9 +1251,10 @@ class Forall(TypeConstructor):
     """Unary type constructor that indicates explicit unselective binding of
     any type variables in its scope."""
 
+    domain_class = PolymorphicDomainSet
     def __init__(self, arg):
         self.arg = compact_type_vars(arg, fresh_only=True)
-        TypeConstructor.__init__(self)
+        super().__init__()
 
     def __len__(self):
         return 1
@@ -1394,6 +1408,7 @@ class VariableType(TypeConstructor):
 
     A type variable represents a (not-necessarily-finite) set of types."""
 
+    domain_class = PolymorphicDomainSet
     def __init__(self, symbol, number=None):
         self.number = None
         super().__init__()
@@ -1412,7 +1427,6 @@ class VariableType(TypeConstructor):
             self._key_str = str(self.symbol)
         else:
             self._key_str = f"{self.symbol}{self.number}"
-        self.domain = set()
         self.init_type_vars()
 
     def internal(self):
@@ -1672,8 +1686,8 @@ class UnknownType(VariableType):
 # typed element to its actual type.
 class DisjunctiveDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        finite = all(t.domain.finite for t in typ.disjuncts)
-        super().__init__("Disjunctive", typ, finite=finite)
+        super().__init__("Disjunctive", typ,
+            finite=all(t.domain.finite for t in typ.disjuncts))
 
     def infcheck(self, x):
         for t in self.type:
@@ -2179,7 +2193,8 @@ class TypeSystem(object):
 
     def reset_domains(self):
         for typ in self.atomics:
-            typ.reset_domain()
+            if not isinstance(typ.domain, BooleanSet):
+                typ.reset_domain()
 
 
 ########################

@@ -93,18 +93,11 @@ class RestrictedBindingOp(BindingOp):
         if self.restricted():
             return self.restrictor
         else:
-            if isinstance(self[0].type.domain, types.DomainSet):
-                return self[0].type.domain
-            else:
-                return None # what to do here?
+            return self[0].type.domain
 
     def finite_safe(self):
         from .sets import is_emptyset, ListedSet
         if not self.restricted():
-            if not isinstance(self[0].type.domain, types.DomainSet):
-                # currently: variable type domains. Perhaps these should give
-                # False unconditionally?
-                return None
             if not self[0].type.domain.enumerable() and self[0].type.domain.finite:
                 # This case should really count as True, but we are
                 # currently conflating finite_safe with having a working
@@ -170,6 +163,7 @@ class RestrictedBindingOp(BindingOp):
                 # cardinality 1. (Beyond that, we can't determine exact
                 # cardinality without evaluation.)
                 return 1
+        # restricted but with a non-finite-safe-restriction
         return None
 
     def calc_type_env(self, recalculate=False):

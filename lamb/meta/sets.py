@@ -340,7 +340,7 @@ class ListedSet(TypedExpr):
         domain = self.type.content_type.domain
         # assumption: there is no truly empty domain, so if domain.domain is
         # empty, it is not actually in use.
-        if isinstance(domain, types.DomainSet) and domain.finite and domain.domain and args > domain.domain:
+        if domain.finite and domain.domain and args > domain.domain:
             # if every domain element is present in `args`, drop extraneous
             # elements. E.g. `{True, False, p_t}` simplifies to just {True, False}.
             # sadly, we can't rely on & here; since domain elements are not
@@ -437,6 +437,8 @@ def is_emptyset(s):
 
 
 def is_domainset(s):
+    """Is `s` a TypedExpr that (syntactically) corresponds to the set of all
+    elements in some type domain? (aka `Set x_X : True` for some type X)"""
     # XX could check finite domains for listed cases as well?
     return isinstance(s, ConditionSet) and s[1] == true_term
 
