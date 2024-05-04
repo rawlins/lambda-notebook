@@ -1707,6 +1707,7 @@ class TypedExpr(object):
         # lose the current let state
         let = self.let
         r = term_replace_unify(self, a2, track_all_names=track_all_names)
+        # XX I'm not sure this should be conditional..
         if (let or r.let) and compact:
             r = let_wrapper(r)
         # XX name this differently depending on where the assignment comes from?
@@ -1899,6 +1900,7 @@ class TypedExpr(object):
         # regular interpreter...
 
         result = self
+        initial_let = result.let
         # don't apply `reduce` or `calc_partiality` recursively, since they are
         # already recursive. Any subcall that restarts simplify_all will
         # trigger them, though.
@@ -1910,7 +1912,10 @@ class TypedExpr(object):
             # calculate_partiality may itself call simplify_all.
             sopts['calc_partiality'] = False
 
-        return result._simplify_all_r(pre=pre, **sopts)
+        result = result._simplify_all_r(pre=pre, **sopts)
+        if result.let or initial_let:
+            result = let_wrapper(result)
+        return result
 
     def _simplify_all_r(self, pre=False, **sopts):
         result = self
@@ -4106,6 +4111,7 @@ class BindingOp(TypedExpr):
         # is more confusing than useful. Regular polymorphic variables are
         # still allowed, and in fact often extremely useful / necessary for
         # writing abstract combinators, monads, etc.
+        # XX this may still be useful for writing combinators, consider relaxing?
         if self.vartype.is_let_polymorphic():
             raise parsing.ParseError(
                 f"operator class `{self.canonical_name}` disallows let-polymorphic bound variables (got `{repr(self.var_instance)}`)")

@@ -479,6 +479,7 @@ class ExistsExact(RestrictedBindingOp):
         if getattr(cls, '_impl_restricted', None) is not None:
             return
         # combinators for the `eliminate` implementation for ExistsExact
+        # note: these are (and have to be) let-bound!
         cls._impl_restricted = te(
             "L f_<X,t> : L r_{X} : Exists x_X << r : f(x) & (Forall y_X << r : f(y) >> x <=> y)")
         cls._impl_unrestricted = te(
