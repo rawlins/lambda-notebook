@@ -582,6 +582,14 @@ class ExistsExact(RestrictedBindingOp):
             elif counterexample is not None:
                 # XX this derivation is a bit clunky
                 if sub is None:
+                    if (isinstance(counterexample, BindingOp)
+                                and counterexample.get_type_env().type_var_set):
+                        # this can happen with some vacuous ExistsExact cases
+                        # where the domain can't actually be determined. It
+                        # would be nice to head this off earlier and/or fix,
+                        # but at least the case where the bound variable can
+                        # be detected here, and probably shouldn't error.
+                        return self
                     raise ValueError(
                         f"Bug: `find_unique_evaluation` failed to simplify subexpression `{repr(counterexample)}` of `{repr(self)}` during evaluation; assignment {repr(a)}")
                 r = derived(false_term, self,
