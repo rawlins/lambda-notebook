@@ -110,6 +110,24 @@ def ts_unify(a, b):
     return get_type_system().unify(a, b)
 
 
+def ts_reconcile(a, b, error=None):
+    if a is None:
+        if error and b is None:
+            # Or, TypeMismatch?
+            raise ValueError("No type provided for `ts_reconcile`")
+        return b
+    elif b is None:
+        return a
+    else:
+        r = ts_unify(a, b)
+        if r is not None or error is None:
+            return r
+        elif error is True:
+            raise TypeMismatch(a, b, f"Failed to reconcile types")
+        else:
+            raise TypeMismatch(a, b, error)
+
+
 def ts_unify_with(a, b, error=None):
     """Try to unify the types of expressions `a` and `b`. This does not change
     the expressions themselves at all, but they are used for error reporting.
@@ -3940,14 +3958,33 @@ class BindingOpHeader:
     def factory(self, body, assignment=None):
         self.precheck()
         if self.classprop('allow_novars') or self.classprop('allow_multivars'):
-            # constructor should take an n-ary sequence of varname,type
-            var_arg = self.var_seq
+            # constructor should take an n-ary sequence of variables
+            var_arg = [self.var_init(v) for v in self.var_seq]
         else:
             # constructor should take a single variable
-            var_arg = self.var_seq[0]
+            var_arg = self.var_init(self.var_seq[0])
 
         return self.op_class(var_arg, body, **self.get_kwargs())
 
+    @property
+    def opname(self):
+        return self.op_class.__name__
+
+    def var_init(self, var):
+        if isinstance(var, TypedTerm):
+            # or just return it?
+            varname = var.op
+            vartype = var.type
+        elif isinstance(var, tuple):
+            varname, vartype = var
+        else:
+            # mainly here to help subclass implementers
+            raise NotImplementedError(f"Unknown var for {self.opname}: `{repr(var)}`")
+
+        if not is_var_symbol(varname):
+            raise ValueError(f"{self.opname} needs a variable name (got `{repr(varname)}`)")
+
+        return TypedTerm(varname, typ=vartype)
 
 class BindingOp(TypedExpr):
     """Abstract class for a unary operator with a body that binds a single
@@ -3979,33 +4016,10 @@ class BindingOp(TypedExpr):
     associative = False # x ∀ (y ∀ p) != (x ∀ y) ∀ p [which is not well-formed]
     left_assoc = False # associativity is (must be) right: (x ∀ (y ∀ (z ∀ p)))
 
-    def _var_init_params(self, var, varname=None, vartype=None):
-        if isinstance(var, str):
-            varname = var
-        elif isinstance(var, TypedTerm):
-            varname = var.op
-            vartype = var.type
-        elif isinstance(var, tuple):
-            varname, vartype = var
-        elif var is not None:
-            # mainly here to help subclass implementers
-            raise NotImplementedError(f"Unknown var for BindingOp: `{repr(var)}`")
-
-        if varname is None:
-            # should we really allow this?
-            varname = self.default_varname()
-
-        if vartype is None:
-            raise ValueError(f"BindingOp needs a variable type (got `{repr(vartype)}`)")
-        if not is_var_symbol(varname):
-            raise ValueError(f"BindingOp needs a variable name (got `{repr(varname)}`)")
-
-        return varname, vartype
-
-
-    def __init__(self, var, body,
+    def __init__(self, var, body, /,
                 typ, # require this to be provided, but it may be None (see below)
-                varname=None, vartype=None, body_type=None,
+                *,
+                body_type=None,
                 assignment=None, type_check=True):
         # NOTE: this does not call the superclass constructor
 
@@ -4014,8 +4028,6 @@ class BindingOp(TypedExpr):
         # logical binders.
         if body_type is None:
             body_type = typ
-
-        varname, vartype = self._var_init_params(var, varname=varname, vartype=vartype)
 
         # Warning: can't assume in general that `typ` is not `None`. Several
         # subclasses set it themselves after calling the constructor.
@@ -4027,7 +4039,7 @@ class BindingOp(TypedExpr):
         self.defer = False
         self.let = False
         self.init_args()
-        self.init_var(varname, vartype)
+        self.init_var_by_instance(var) # XX this does an unnecessary copy
         # TODO: consider overriding __eq__ and __hash__.
 
         # generic code for type-checking a body that may contain a bound
@@ -4096,9 +4108,6 @@ class BindingOp(TypedExpr):
             assignment[self.varname] = self.var_instance
         return assignment
 
-    def default_varname(self):
-        return "x"
-
     def init_args(self):
         try:
             a = self.args
@@ -4117,10 +4126,12 @@ class BindingOp(TypedExpr):
                 f"operator class `{self.canonical_name}` disallows let-polymorphic bound variables (got `{repr(self.var_instance)}`)")
 
     def init_var(self, name=None, typ=None):
+        # XX this has a bunch of flexibility for historical reasons that is now
+        # mostly unused. Could still be useful for subclass implementers?
         self.init_args()
         if name is None:
             if typ is None:
-                raise ValueError
+                raise ValueError("Missing `init_var` parameters")
             else:
                 var_instance = TypedTerm(self.varname, typ)
         else:
@@ -4569,8 +4580,7 @@ class LFun(BindingOp):
     left_commutative = False
     collectable = False
 
-    def __init__(self, var, body, vartype=None, let=False,
-                                            assignment=None, type_check=True):
+    def __init__(self, var, body, *, let=False, assignment=None, type_check=True):
         # Use placeholder typ argument of None.  This is because the input type
         # won't be known until self.var is dealt with, which is done in the
         # superclass.
@@ -4578,7 +4588,7 @@ class LFun(BindingOp):
         # This can potentially cause odd side effects if BindingOp.__init__'s
         # handling of type inference is changed without taking this into account.
         super().__init__(var, body, typ=None,
-            body_type=body.type, vartype=vartype,
+            body_type=body.type,
             assignment=assignment,
             type_check=type_check)
         self.type = FunType(self.vartype, body.type)

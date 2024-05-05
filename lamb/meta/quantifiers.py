@@ -4,6 +4,7 @@ import lamb
 from lamb import types, utils
 from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
 from .core import BindingOp, Partial, LFun, get_sopt, ts_unify, is_concrete, te
+from .core import ts_reconcile
 from . import meta, ply, boolean
 from .boolean import true_term, false_term
 from lamb.types import type_t
@@ -52,24 +53,24 @@ def deriv_generic(instantiated, generic, varname):
 class RestrictedBindingOp(BindingOp):
     allow_restrictor = True
 
-    def __init__(self, var, body, restrictor,
-                typ,
-                varname=None, vartype=None, body_type=None,
+    # similar to superclass: typ is required but may be None
+    def __init__(self, var, body, /,
+                restrictor, typ, *,
+                body_type=None,
                 assignment=None, type_check=True):
 
-        # awkward sequencing
-        varname, vartype = self._var_init_params(var, varname=varname, vartype=vartype)
         if restrictor is not None:
-            rtype = ts_unify(restrictor.type, types.SetType(vartype))
+            rtype = ts_unify(restrictor.type, types.SetType(var.type))
             if rtype is None:
-                raise types.TypeMismatch(vartype, restrictor,
+                raise types.TypeMismatch(var.type, restrictor,
                     error=f"Failed to unify restrictor and variable type for operator class `{self.canonical_name}`")
-            vartype = rtype[0]
+            if rtype[0] != var.type:
+                var = TypedTerm(var.op, rtype[0])
             if rtype != restrictor.type:
                 restrictor = self.ensure_typed_expr(restrictor, typ=rtype,
                                 assignment=assignment)
 
-        super().__init__((varname, vartype), body, typ,
+        super().__init__(var, body, typ,
                          body_type=body_type,
                          assignment=assignment, type_check=type_check)
 
@@ -234,10 +235,9 @@ class Forall(RestrictedBindingOp):
     op_name_uni = "∀"
     op_name_latex = "\\forall{}"
 
-    def __init__(self, var, body, restrictor=None,
-                 varname=None, vartype=None, assignment=None, type_check=True):
+    def __init__(self, var, body, /, restrictor=None, *,
+                 assignment=None, type_check=True):
         super().__init__(var, body, restrictor, typ=types.type_t,
-            varname=varname, vartype=vartype,
             assignment=assignment, type_check=type_check)
 
     def to_conjunction(self, assignment=None):
@@ -339,10 +339,9 @@ class Exists(RestrictedBindingOp):
     op_name_uni="∃"
     op_name_latex="\\exists{}"
 
-    def __init__(self, var, body, restrictor=None,
-                varname=None, vartype=None, assignment=None, type_check=True):
+    def __init__(self, var, body, /, restrictor=None, *,
+                assignment=None, type_check=True):
         super().__init__(var, body, restrictor, typ=types.type_t,
-            varname=varname, vartype=vartype,
             assignment=assignment, type_check=type_check)
 
     def to_disjunction(self, assignment=None):
@@ -485,10 +484,9 @@ class ExistsExact(RestrictedBindingOp):
         cls._impl_unrestricted = te(
             "L f_<X,t> : Exists x_X : f(x) & (Forall y_X : f(y) >> x <=> y)")
 
-    def __init__(self, var, body, restrictor=None,
-                varname=None, vartype=None, assignment=None, type_check=True):
+    def __init__(self, var, body, /, restrictor=None, *,
+                assignment=None, type_check=True):
         super().__init__(var, body, restrictor=restrictor, typ=types.type_t,
-            varname=varname, vartype=vartype,
             assignment=assignment, type_check=type_check)
 
     def eliminate(self, assignment=None, **sopts):
@@ -617,7 +615,7 @@ class ExistsExact(RestrictedBindingOp):
 
 
 class Iota(RestrictedBindingOp):
-    """Iota operator.  This is best construed as Russellian."""
+    """Iota operator.  This is best construed as Fregean."""
     canonical_name = "Iota"
     op_name_uni = "ι"
     op_name_latex="\\iota{}"
@@ -625,10 +623,14 @@ class Iota(RestrictedBindingOp):
 
     commutative = False # a bit meaningless, since ιx:ιy can't occur..
 
-    def __init__(self, var, body, restrictor=None,
-                varname=None, vartype=None, assignment=None, type_check=True):
-        super().__init__(var, body, restrictor=restrictor, typ=None,
-            varname=varname, vartype=vartype, body_type=types.type_t,
+    def __init__(self, var, body, /, restrictor=None, *,
+                typ=None, assignment=None, type_check=True):
+        vartype = ts_reconcile(var.type, typ,
+            error=f"Incompatible types for variable in `Iota {repr(var)} : {repr(body)}")
+        if vartype != var.type:
+            var = TypedTerm(var.op, vartype)
+        super().__init__(var, body, restrictor=restrictor,
+            typ=None, body_type=types.type_t,
             assignment=assignment, type_check=type_check)
         self.type = self.vartype
 
@@ -637,12 +639,12 @@ class Iota(RestrictedBindingOp):
         # ignores restrictor...
         return LFun(self.var_instance, self.body).apply(x)
 
+    # XX temporary
+    def copy_local(self, *args, typ=None, type_check=True):
+        return self.copy_core(type(self)(*args, typ=typ, type_check=type_check))
+
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        sub_var = TypedTerm(self.varname, unified_type)
-        # TODO: does this need to pass in assignment?
-        new_condition = self.to_test(sub_var)
-        result = self.copy_local(sub_var, new_condition, self.restrictor)
-        return result
+        return self.copy_local(*self, typ=unified_type)
 
     def _compile(self):
         # XX code dup
@@ -715,10 +717,11 @@ class IotaPartial(Iota):
     secondary_names = {}
     pre_simplify = True
 
-    def __init__(self, var, body, restrictor=None,
-        varname=None, vartype=None, assignment=None, type_check=True):
+    def __init__(self, var, body, /, restrictor=None, *,
+        typ=None,
+        assignment=None, type_check=True):
         super().__init__(var, body, restrictor=restrictor,
-            varname=varname, vartype=vartype,
+            typ=typ,
             assignment=assignment, type_check=type_check)
 
     def _compile(self):
@@ -762,10 +765,8 @@ class ExistsUnary(Exists):
     # op_name_latex="\\exists{}"
     allow_restrictor = False
 
-    def __init__(self, var, body, varname=None, vartype=None, assignment=None,
-                                                            type_check=True):
+    def __init__(self, var, body, *, assignment=None, type_check=True):
         super().__init__(var, body, restrictor=None,
-            varname=varname, vartype=vartype,
             assignment=assignment, type_check=type_check)
 
 
@@ -776,18 +777,14 @@ class ForallUnary(Forall):
     # op_name_latex = "\\forall{}"
     allow_restrictor = False
 
-    def __init__(self, var, body, varname=None, vartype=None, assignment=None,
-                                                            type_check=True):
+    def __init__(self, var, body, *, assignment=None, type_check=True):
         super().__init__(var, body, restrictor=None,
-            varname=varname, vartype=vartype,
             assignment=assignment, type_check=type_check)
 
 
 class IotaUnary(Iota):
     allow_restrictor = False
 
-    def __init__(self, var, body, varname=None, vartype=None, assignment=None,
-                                                            type_check=True):
+    def __init__(self, var, body, *, assignment=None, type_check=True):
         super().__init__(var, body, restrictor=None,
-            varname=varname, vartype=vartype,
             assignment=assignment, type_check=type_check)

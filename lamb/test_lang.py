@@ -71,7 +71,7 @@ class LangTest(unittest.TestCase):
         inP = Item("in", "L x_e: L y_e: In_<e,<e,t>>(y)(x)")
         texas = Item("Texas", "Texas_e")
         pvar = meta.TypedTerm("p", types.type_property)
-        isV = Item("is", meta.LFun("p", pvar, vartype=types.type_property))
+        isV = Item("is", meta.LFun(meta.TypedTerm("p", typ=types.type_property), pvar))
         system = lang.td_system.copy()
         system.add_items(cat, gray, john, julius, inP, texas, isV)
 

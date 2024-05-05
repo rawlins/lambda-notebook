@@ -43,23 +43,25 @@ def reset():
 
 default_metalanguage()
 
-# TODO, move these tests elsewhere?
+# TODO, remove these tests? Right now they are a reload sanity check...
+# everything here has an approximate analog in meta/test.py
 def test_setup():
     ident = te("L x_e : x")
-    ia = TypedExpr.factory(ident, "y")
-    ib = LFun('y', ia, vartype=type_e)
+    y = TypedTerm("y", type_e)
+    ia = ident(y)
+    ib = LFun(y, ia)
     P = TypedTerm("P", FunType(type_e, type_t))
     Q = TypedTerm("Q", FunType(type_e, type_t))
     x = TypedTerm("x", type_e)
-    y = TypedTerm("y", type_e)
-    t = TypedExpr.factory(P, x)
-    t2 = TypedExpr.factory(Q, x)
-    body = TypedExpr.factory("&", t, t) | t
+    t = P(x)
+    t2 = Q(x)
+    body = t & t | t
     p = TypedTerm("p", type_t)
-    testf = LFun(None, body, vartype=type_e)
+    testf = LFun(x, body)
 
-    pmw_test1 = LFun('p', LFun('x', t & p, vartype=type_e), vartype=type_t)
-    pmw_test1b = LFun('x', t & t2, vartype=type_e)
+    pmw_test1 = LFun(TypedTerm('p', typ=type_t),
+                    LFun(TypedTerm('x', typ=type_e), t & p))
+    pmw_test1b = LFun(TypedTerm('x', type_e), t & t2)
     # test: when a free variable in a function scopes under an operator, do not
     # bind the variable on application
     assert pmw_test1.apply(t2) != pmw_test1b

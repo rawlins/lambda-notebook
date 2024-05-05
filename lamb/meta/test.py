@@ -330,7 +330,7 @@ class MetaTest(unittest.TestCase):
         core.set_strict_type_parsing()
         self.ident = te("L x_e : x") 
         self.ia = TypedExpr.factory(self.ident, "y_e")
-        self.ib = LFun(("y", type_e), self.ia)
+        self.ib = LFun(TypedTerm("y", typ=type_e), self.ia)
         self.P = TypedTerm("P", types.FunType(type_e, type_t))
         self.Q = TypedTerm("Q", types.FunType(type_e, type_t))
         self.x = TypedTerm("x", type_e)
@@ -339,7 +339,7 @@ class MetaTest(unittest.TestCase):
         self.t2 = TypedExpr.factory(self.Q, self.x)
         self.body = TypedExpr.factory("&", self.t, self.t) | self.t
         self.p = TypedTerm("p", type_t)
-        self.testf = LFun(("x", type_e), self.body)
+        self.testf = LFun(TypedTerm("x", typ=type_e), self.body)
 
     def tearDown(self):
         # other tests may want this, but let them decide
@@ -628,8 +628,9 @@ class MetaTest(unittest.TestCase):
 
         # test: when a free variable in a function scopes under an operator, do
         # not bind the variable on application        
-        pmw_test1 = LFun(("p", type_t), LFun(("x", type_e), self.t & self.p))
-        pmw_test1b = LFun(("x", type_e), self.t & self.t2)
+        pmw_test1 = LFun(TypedTerm("p", typ=type_t),
+                        LFun(TypedTerm("x", typ=type_e), self.t & self.p))
+        pmw_test1b = LFun(TypedTerm("x", typ=type_e), self.t & self.t2)
         self.assertNotEqual(pmw_test1.apply(self.t2), pmw_test1b)
 
         # Different version of the same test: direct variable substitution
