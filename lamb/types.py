@@ -39,7 +39,7 @@ class DomainSet(collections.abc.Container):
     type = None # class variable
     modifiable = True
     def __init__(self, finite=True, values=None, typ=None, superdomain=None):
-        self.finite = finite
+        self._finite = finite
         self.superdomain = superdomain
         if values is None:
             values = set()
@@ -47,6 +47,10 @@ class DomainSet(collections.abc.Container):
         if typ is not None:
             # override class value at the instance level
             self.type = typ
+
+    @property
+    def finite(self):
+        return self._finite
 
     def __repr__(self):
         if not self.finite:
@@ -283,7 +287,11 @@ def is_type(x):
 class ComplexDomainSet(SimpleInfiniteSet):
     def __init__(self, prefix, typ, finite=False):
         super().__init__(prefix, typ=typ)
-        self.finite = finite
+        self._finite = finite
+
+    @property
+    def finite(self):
+        return self._finite
 
     def __iter__(self):
         raise NotImplementedError(
@@ -637,8 +645,11 @@ class BasicType(TypeConstructor):
 
 class FunDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        super().__init__("Fun", typ,
-            finite=typ.left.domain.finite and typ.right.domain.finite)
+        super().__init__("Fun", typ)
+
+    @property
+    def finite(self):
+        return self.type.left.domain.finite and self.type.right.domain.finite
 
     def infcheck(self, x):
         # XX variable types
@@ -825,7 +836,11 @@ class FunType(TypeConstructor):
 
 class SetDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        super().__init__("Set", typ, finite=typ.content_type.domain.finite)
+        super().__init__("Set", typ)
+
+    @property
+    def finite(self):
+        return self.type.content_type.domain.finite
 
     def infcheck(self, x):
         if isinstance(x, collections.abc.Set):
@@ -952,6 +967,10 @@ class SetType(TypeConstructor):
 class TupleDomainSet(ComplexDomainSet):
     def __init__(self, typ):
         super().__init__("Tuple", typ, finite=all(t.domain.finite for t in typ))
+
+    @property
+    def finite(self):
+        return all(t.domain.finite for t in self.type)
 
     def infcheck(self, x):
         if isinstance(x, collections.abc.Sequence) and not isinstance(x, str):
@@ -1686,8 +1705,11 @@ class UnknownType(VariableType):
 # typed element to its actual type.
 class DisjunctiveDomainSet(ComplexDomainSet):
     def __init__(self, typ):
-        super().__init__("Disjunctive", typ,
-            finite=all(t.domain.finite for t in typ.disjuncts))
+        super().__init__("Disjunctive", typ)
+
+    @property
+    def finite(self):
+        return all(t.domain.finite for t in self.type.disjuncts)
 
     def infcheck(self, x):
         for t in self.type:
