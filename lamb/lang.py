@@ -2097,11 +2097,9 @@ class PlaceholderTerm(meta.TypedTerm):
     """This class represents a placeholder for some denotation that is unknown
     or not yet composed.  The primary use is in incrementally doing top-down
     composition."""
-    def __init__(self, varname, placeholder_for, system=None, assignment=None,
-                                                               type_check=True):
+    def __init__(self, varname, placeholder_for, system=None, **kwargs):
         meta.TypedTerm.__init__(self, varname, types.VariableType.any(),
-                                assignment=assignment, type_check=type_check,
-                                validate_name=False)
+                                validate_name=False, **kwargs)
         self._variable = False
         self._constant = True
         self.let = True
@@ -2158,9 +2156,9 @@ class PlaceholderTerm(meta.TypedTerm):
     def copy(self):
         return self.copy_local()
 
-    def copy_local(self, type_check=True):
+    def copy_local(self, **kwargs):
         result = PlaceholderTerm(self.op, self.placeholder_for,
-                                    system=self.system, type_check=type_check)
+                                    system=self.system, **kwargs)
         result.let = self.let
         result.type = self.type # type may have changed, e.g. via alphabetic
                                 # conversion to a fresh type

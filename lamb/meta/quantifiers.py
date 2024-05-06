@@ -53,26 +53,31 @@ def deriv_generic(instantiated, generic, varname):
 class RestrictedBindingOp(BindingOp):
     allow_restrictor = True
 
-    # similar to superclass: typ is required but may be None
+    # similar to superclass: typ is required but may be None; it is *not*
+    # validated in any way
     def __init__(self, var, body, /,
                 restrictor, typ, *,
-                body_type=None,
-                assignment=None, type_check=True):
+                body_type=None, copying=False,
+                **kwargs):
 
-        if restrictor is not None:
-            rtype = ts_unify(restrictor.type, types.SetType(var.type))
-            if rtype is None:
-                raise types.TypeMismatch(var.type, restrictor,
-                    error=f"Failed to unify restrictor and variable type for operator class `{self.canonical_name}`")
+        # type constraint: restrictor's type is SetType of variable's type
+        if not copying and restrictor is not None:
+            restrictor, rtype = self.type_constraint(restrictor, types.SetType(var.type),
+                error=f"Failed to reconcile restrictor and variable type for operator class `{self.canonical_name}`")
             if rtype[0] != var.type:
                 var = TypedTerm(var.op, rtype[0])
-            if rtype != restrictor.type:
-                restrictor = self.ensure_typed_expr(restrictor, typ=rtype,
-                                assignment=assignment)
 
         super().__init__(var, body, typ,
-                         body_type=body_type,
-                         assignment=assignment, type_check=type_check)
+                        body_type=body_type, copying=copying, **kwargs)
+        if not copying and restrictor is not None and self.vartype != restrictor.type[0]:
+            # inference on the variable led to another update, and the restrictor
+            # needs to be brought in sync again. The variable should be strictly
+            # stronger at this point, so can no longer change.
+            # test case: te("Exists x_X << {y_X} : P_<e,t>(x)", let=False)
+            restrictor = self.type_constraint(
+                restrictor, types.SetType(self.vartype),
+                constant=True,
+                error=f"Failed to reconcile restrictor and variable type for operator class `{self.canonical_name}`")
 
         if restrictor is not None:
             self.args.extend([restrictor])
@@ -236,9 +241,9 @@ class Forall(RestrictedBindingOp):
     op_name_latex = "\\forall{}"
 
     def __init__(self, var, body, /, restrictor=None, *,
-                 assignment=None, type_check=True):
-        super().__init__(var, body, restrictor, typ=types.type_t,
-            assignment=assignment, type_check=type_check)
+                 typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__(var, body, restrictor, typ=typ, **kwargs)
 
     def to_conjunction(self, assignment=None):
         if self.vacuous():
@@ -340,9 +345,9 @@ class Exists(RestrictedBindingOp):
     op_name_latex="\\exists{}"
 
     def __init__(self, var, body, /, restrictor=None, *,
-                assignment=None, type_check=True):
-        super().__init__(var, body, restrictor, typ=types.type_t,
-            assignment=assignment, type_check=type_check)
+                typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__(var, body, restrictor, typ=typ, **kwargs)
 
     def to_disjunction(self, assignment=None):
         if self.finite_safe():
@@ -485,9 +490,9 @@ class ExistsExact(RestrictedBindingOp):
             "L f_<X,t> : Exists x_X : f(x) & (Forall y_X : f(y) >> x <=> y)")
 
     def __init__(self, var, body, /, restrictor=None, *,
-                assignment=None, type_check=True):
-        super().__init__(var, body, restrictor=restrictor, typ=types.type_t,
-            assignment=assignment, type_check=type_check)
+                typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__(var, body, restrictor=restrictor, typ=typ, **kwargs)
 
     def eliminate(self, assignment=None, **sopts):
         self._setup_impl()
@@ -624,27 +629,14 @@ class Iota(RestrictedBindingOp):
     commutative = False # a bit meaningless, since ιx:ιy can't occur..
 
     def __init__(self, var, body, /, restrictor=None, *,
-                typ=None, assignment=None, type_check=True):
-        vartype = ts_reconcile(var.type, typ,
-            error=f"Incompatible types for variable in `Iota {repr(var)} : {repr(body)}")
-        if vartype != var.type:
-            var = TypedTerm(var.op, vartype)
+                typ=None, **kwargs):
+        # type constraint: var and self have the same type
+        var, typ = self.type_constraint(var, typ)
         super().__init__(var, body, restrictor=restrictor,
-            typ=None, body_type=types.type_t,
-            assignment=assignment, type_check=type_check)
+            typ=typ, body_type=types.type_t, **kwargs)
+        # superclass may have updated vartype again while doing type inference
+        # on the body
         self.type = self.vartype
-
-    def to_test(self, x):
-        """Build a boolean test by substituting `x` into the body."""
-        # ignores restrictor...
-        return LFun(self.var_instance, self.body).apply(x)
-
-    # XX temporary
-    def copy_local(self, *args, typ=None, type_check=True):
-        return self.copy_core(type(self)(*args, typ=typ, type_check=type_check))
-
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        return self.copy_local(*self, typ=unified_type)
 
     def _compile(self):
         # XX code dup
@@ -717,12 +709,8 @@ class IotaPartial(Iota):
     secondary_names = {}
     pre_simplify = True
 
-    def __init__(self, var, body, /, restrictor=None, *,
-        typ=None,
-        assignment=None, type_check=True):
-        super().__init__(var, body, restrictor=restrictor,
-            typ=typ,
-            assignment=assignment, type_check=type_check)
+    def __init__(self, var, body, /, restrictor=None, **kwargs):
+        super().__init__(var, body, restrictor=restrictor, **kwargs)
 
     def _compile(self):
         # pretty simple: defer to the `Partial` object generated by simplify.
@@ -765,9 +753,8 @@ class ExistsUnary(Exists):
     # op_name_latex="\\exists{}"
     allow_restrictor = False
 
-    def __init__(self, var, body, *, assignment=None, type_check=True):
-        super().__init__(var, body, restrictor=None,
-            assignment=assignment, type_check=type_check)
+    def __init__(self, var, body, **kwargs):
+        super().__init__(var, body, restrictor=None, **kwargs)
 
 
 class ForallUnary(Forall):
@@ -777,14 +764,12 @@ class ForallUnary(Forall):
     # op_name_latex = "\\forall{}"
     allow_restrictor = False
 
-    def __init__(self, var, body, *, assignment=None, type_check=True):
-        super().__init__(var, body, restrictor=None,
-            assignment=assignment, type_check=type_check)
+    def __init__(self, var, body, **kwargs):
+        super().__init__(var, body, restrictor=None, **kwargs)
 
 
 class IotaUnary(Iota):
     allow_restrictor = False
 
-    def __init__(self, var, body, *, assignment=None, type_check=True):
-        super().__init__(var, body, restrictor=None,
-            assignment=assignment, type_check=type_check)
+    def __init__(self, var, body, **kwargs):
+        super().__init__(var, body, restrictor=None, **kwargs)

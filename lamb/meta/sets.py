@@ -91,13 +91,15 @@ class ConditionSet(BindingOp):
     op_name_latex="Set"
     commutative = False # A bit meaningless, since Set x: Set y: can't occur
 
-    def __init__(self, var, body, *,
-                assignment=None, type_check=True):
-        # XX why is ensure_typed_expr precalled
-        body = self.ensure_typed_expr(body, typ=types.type_t, assignment=assignment)
-        super().__init__(var, body, typ=None,
-                body_type=types.type_t,
-                assignment=assignment, type_check=type_check)
+    def __init__(self, var, body, *, typ=None, **kwargs):
+        # type constraint: self.type == SetType(var.type)
+        typ, wvar = self.type_constraint(typ, SetType(var.type))
+        # the type constraint may have adjusted the variable type, update it
+        if var.type != wvar[0]:
+            var = TypedTerm(var.op, wvar[0])
+
+        super().__init__(var, body, body_type=types.type_t, typ=typ, **kwargs)
+        # superclass may have updated vartype while reconciling with the body
         self.type = SetType(self.vartype)
 
     def apply_var_constraints(self):
@@ -181,13 +183,6 @@ class ConditionSet(BindingOp):
 
         return self
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        inner_type = unified_type.content_type
-        char = self.to_characteristic()
-        sub_var = TypedTerm(self.varname, inner_type)
-        new_condition = char.apply(sub_var)
-        return self.copy_local(sub_var, new_condition)
-
 
 class ListedSet(TypedExpr):
     """A ListedSet is a set that simply lists members. The elements can be
@@ -247,28 +242,39 @@ class ListedSet(TypedExpr):
     op_name_latex="ListedSet"
     pre_simplify = True # I think this is formally unnecessary, but it reduces work
 
-    def __init__(self, iterable, typ=None, assignment=None, type_check=True):
-        # note! uniqueness is not enforced here.
-        # * Syntactic duplicates are removed on `simplify()`
-        # * the standard metalanguage parser filters out duplicates in advance
-        #   of constructing the ListedSet object.
+    def __init__(self, iterable, typ=None, assignment=None, **kwargs):
+        """Construct a `ListedSet` instance. note! uniqueness is not enforced here.
+        Syntactic duplicates are removed only on simplify. (However, the
+        metalanguage parser will filter out duplicates in advances as part of
+        parsing a set expression.)"""
+        # XX reconcile APIs...typ should be self's type, not the inner type
+        # XX is this pre-call necessary
         args = [self.ensure_typed_expr(a,assignment=assignment) for a in iterable]
         # `typ` here is the content type.
         if len(args) == 0 and typ is None:
+            # XX should this be VariableType.any()? or set let=True?
             typ = types.UnknownType() # could be a set of anything
         elif typ is None:
             # inherit the type from the first argument
             typ = args[0].type
-        for i in range(len(args)):
-            # type checking TODO: this isn't right, would need to pick the
-            # strongest type
-            try:
-                args[i] = self.ensure_typed_expr(args[i], typ)
-            except types.TypeMismatch as e:
-                e.error = "Set elements must have compatible types"
-                raise e
+
+        def _update_types(typ, args):
+            # take a single pass through elements and apply `typ` as an element
+            # constraint
+            for i in range(len(args)):
+                typ, args[i] = self.type_constraint(typ, args[i],
+                    error=f"Set elements must have compatible types (`{repr(args[i])}` at type `{typ}`)")
+            return typ
+
+        styp = _update_types(typ, args)
+        if styp != typ:
+            # we strengthened, somewhere along the line. `styp` should now be
+            # the strongest principal type compatible with all elements. Make
+            # sure that all elements do have this type.
+            _update_types(styp, args)
+
         super().__init__("ListedSet", *args)
-        self.type = SetType(typ)
+        self.type = SetType(styp)
         self.set_simplified = False
 
     def calc_type_env(self, recalculate=False):
@@ -280,11 +286,19 @@ class ListedSet(TypedExpr):
             # otherwise, rely on the contained elements
             return super().calc_type_env(recalculate=recalculate)
 
-    def copy_local(self, *args, type_check=True):
+    def copy_local(self, *args, typ=None, **kwargs):
         # explicit handling of empty sets in order to get the type right
         if len(args) == 0:
-            return emptyset(self.type)
-        return self.copy_core(ListedSet(args, typ=self.type.content_type))
+            # don't allow any types weaker than self.type to be inferred for
+            # an empty set
+            if typ is None:
+                typ = self.type
+            return emptyset(typ)
+
+        # XX reconcile APIs...
+        if typ is not None:
+            typ = typ.content_type
+        return self.copy_core(ListedSet(args, typ=typ))
 
     @classmethod
     def join(self, l):
@@ -379,17 +393,8 @@ class ListedSet(TypedExpr):
             return utils.ensuremath(f"\\{{{inner}\\}}")
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        if len(self.args) == 0:
-            # handle empty sets directly.
-            # no actual type checking here -- this code shouldn't be reachable
-            # unless unify has already succeeded.
-            return emptyset(unified_type)
-
-        inner_type = unified_type.content_type
-        content = [a.try_adjust_type(inner_type,
-                        derivation_reason=derivation_reason) for a in self.args]
-        result = self.copy_local(*content)
-        return result
+        # XX generalize to superclass
+        return self.copy_local(*self, typ=unified_type)
 
     @classmethod
     def random(self, ctrl, max_type_depth=1, max_members=6, typ=None, allow_empty=True):
@@ -466,7 +471,7 @@ class SetContains(SyncatOpExpr):
     op_name_latex = "\\in{}"
     commutative = False
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         # seems like the best way to do the mutual type checking here?
         # Something more elegant?
         arg1 = self.ensure_typed_expr(arg1)
@@ -602,7 +607,7 @@ def check_set_types(arg1, arg2, op_name=None):
 class BinarySetOp(SyncatOpExpr):
     arity = 2
 
-    def __init__(self, arg1, arg2, op_name, typ=None, type_check=True):
+    def __init__(self, arg1, arg2, op_name, typ=None, **kwargs):
         t = check_set_types(arg1, arg2, op_name=op_name)
         arg1 = self.ensure_typed_expr(arg1, t)
         arg2 = self.ensure_typed_expr(arg2, t)
@@ -661,7 +666,7 @@ class SetUnion(BinarySetOp):
     # recursive steps.
     pre_simplify = True
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(arg1, arg2, "Set union")
 
     def _set_impl(self):
@@ -721,7 +726,7 @@ class SetIntersection(BinarySetOp):
     associative = True
     pre_simplify = True
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(arg1, arg2, "Set intersection")
 
     def _set_impl(self):
@@ -823,7 +828,7 @@ class SetDifference(BinarySetOp):
     associative = False
     pre_simplify = True
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(arg1, arg2, "Set difference")
 
     def _set_impl(self):
@@ -919,7 +924,7 @@ class SetEquivalence(BinarySetOp):
     op_name_latex = "="
     commutative = True
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(arg1, arg2, "Set equivalence", typ=type_t)
 
     def _set_impl(self):
@@ -1080,7 +1085,7 @@ class SetSubset(BinarySetOp):
     op_name_latex = "\\subseteq{}"
     commutative = False
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(arg1, arg2, "Subset", typ=type_t)
 
     def _set_impl(self):
@@ -1106,7 +1111,7 @@ class SetProperSubset(BinarySetOp):
     op_name_latex = "\\subset{}"
     commutative = False
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(arg1, arg2, "Proper subset", typ=type_t)
 
     def _set_impl(self):
@@ -1131,7 +1136,7 @@ class SetSupset(BinarySetOp):
     op_name_latex = "\\supseteq{}"
     commutative = False
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(arg1, arg2, "Superset", typ=type_t)
 
     def _set_impl(self):
@@ -1151,7 +1156,7 @@ class SetProperSupset(BinarySetOp):
     op_name_latex = "\\supset{}"
     commutative = True
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(arg1, arg2, "Proper superset", typ=type_t)
 
     def _set_impl(self):

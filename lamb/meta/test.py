@@ -1173,6 +1173,14 @@ class MetaTest(unittest.TestCase):
                 print(f"Simplify failure on depth 3 set expression '{repr(x)}'")
                 raise
 
+    def test_listedset(self):
+        # these are not exhaustive, but relatively target to specific issues
+        self.assertEqual(te("{y_X}").try_adjust_type(tp("{e}")).type, tp("{e}"))
+        s = te("{x_Z, y_<e,Y>, z_<X,t>}", let=False)
+        self.assertEqual(s.type, tp("{<e,t>}"))
+        for e in s:
+            self.assertEqual(e.type, tp("<e,t>"))
+
     def test_set_identities(self):
         t_set = te("Set x_e : True")
         cf_set = te("Set x_e : False")

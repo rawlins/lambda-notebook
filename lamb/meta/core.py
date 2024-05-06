@@ -944,18 +944,28 @@ class TypedExpr(object):
 
     originally based on logic.Expr (from aima python), now long diverged.
     """
-    def __init__(self, op, *args, defer=False):
+    def __init__(self, op, *args, defer=False, typ=None):
         """
-        Constructor for TypedExpr class.  This should generally not be called
-        directly, rather, the factory function should be used.  In fact,
-        TypedExpr is not currently ever directly instantiated.
+        Constructor for TypedExpr class. This class is an abstract class and
+        should not be used directly. `TypedExpr.factory` may be used on this
+        class to construct non-abstract `TypedExpr` instances. A subclass that
+        does not call `__init__` should make sure that all necessary values
+        here are still set.
+
+        Parameters
+        ----------
+        op : str
+            The operator's name. This is often cosmetic, but for terms, contains
+            the term name.
+        *args: list
+            A sequence of arguments, to be assigned to self.args as a list.
 
         This is intended only for calls from subclass `__init__`.  It (at this
         stage) amounts to a convenience function that sets some common
         variables -- a subclass that does not call this should ensure that
         these are all set.  self.args must be a list (not a tuple).
 
-        WARNING: this function does not set self.type, which _must_ be set.
+        WARNING: this function may not set self.type, which _must_ be set.
         It does not perform any type-checking.
 
         `defer`: annotate with this if the TypedExpr does not conform to type
@@ -965,9 +975,11 @@ class TypedExpr(object):
         self.derivation = None
         self.defer = defer
         self.let = False
+        if typ is not None:
+            self.type = typ
 
         if (len(args) == 0):
-            args = list()
+            args = []
 
         self.op = op
         self.args = list(args)
@@ -989,6 +1001,76 @@ class TypedExpr(object):
 
     def _type_cache_set(self, t, result):
         self._type_cache[t] = result
+
+    # this is a classmethod primarily for the error messaging
+    @classmethod
+    def type_constraint(cls, a, b, constant=False, error=None):
+        """Given some elements `a` and `b`, attempt to reconcile types;
+        return reconciled versions of `a` and optionally `b`.
+
+        Parameters
+        ----------
+        a : `types.TypeConstructor` or `TypedExpr`
+            The left element to attempt to reconcile
+        b : `types.TypeConstructor` or `TypedExpr`
+            The right element to attempt to reconcile
+        constant : bool, default: False
+            If `True`, treat the `b` element as a constant and don't return
+            any modified versions. In this case, will fail if updating would
+            adjust `b`.
+        error : str, optional
+            An error message to use when raising TypeMismatch. If set to `None`,
+            will construct one based on the class name. If set to False, don't
+            error, but return None on failure.
+
+        Returns
+        -------
+        tuple or `types.TypeConstructor` or `TypedExpr`
+            If `constant` is False, return a tuple of (a,b) with any needed
+            modifications. Otherwise, return a (potentially changed) version
+            of `a`. May return `None` or `(None, None)`but only if `error` is
+            `None`.
+        """
+        if cls.canonical_name:
+            name = cls.canonical_name
+        else:
+            name = cls.__name__
+        if is_te(a):
+            a_te = a
+            a = a_te.type
+        else:
+            a_te = None
+        if is_te(b):
+            b_te = b
+            b = b_te.type
+        else:
+            b_te = None
+        if error is None:
+            error = f"Failed to reconcile type constraint for {name}: {a} == {b}"
+        principal = ts_reconcile(a, b, error=error)
+        if constant and b != principal:
+            # is this unnecessarily strict?
+            if error:
+                raise TypeMismatch(f"Type constraint for {name} ({a} == constant {b}) would require adjusting constant")
+            else:
+                return None
+        if principal is not None and a_te is not None:
+            # a = a_te.try_adjust_type(principal)
+            a = cls.ensure_typed_expr(a_te, principal)
+            if not error and a is None:
+                raise TypeMismatch(a, principal, error=error)
+        else:
+            a = principal
+        if constant:
+            return a
+        if principal is not None and b_te is not None:
+            # b = b_te.try_adjust_type(principal)
+            b = cls.ensure_typed_expr(b_te, principal)
+            if not error and b is None:
+                raise TypeMismatch(b, principal, error=error)
+        else:
+            b = principal
+        return (a, b)
 
     def try_adjust_type_caching(self, new_type, derivation_reason=None,
                                             let_step=None):
@@ -1576,13 +1658,13 @@ class TypedExpr(object):
         other.let = self.let
         return other
 
-    def copy_local(self, *args, type_check=True):
+    def copy_local(self, *args, **kwargs):
         """
         Make a copy of the element preserving everything *except* the AST.
 
         The default implementation calls the constructor with `args`, so if this
         isn't appropriate, you must override."""
-        return self.copy_core(type(self)(*args))
+        return self.copy_core(type(self)(*args, **kwargs))
 
     def deep_copy(self):
         accum = list()
@@ -1591,7 +1673,7 @@ class TypedExpr(object):
                 accum.append(p.deep_copy())
             else:
                 accum.append(p)
-        return self.copy_local(*accum, type_check=False)
+        return self.copy_local(*accum, copying=True)
 
     def regularize_type_env(self, assignment=None, constants=False,
                                                                 target=None):
@@ -1660,7 +1742,7 @@ class TypedExpr(object):
         accum = list()
         for p in self:
             accum.append(p.under_type_injection(mapping))
-        r = self.copy_local(*accum, type_check=False)
+        r = self.copy_local(*accum, copying=True)
         r.type = r.type.sub_type_vars(mapping)
         if r.term():
             r.get_type_env(force_recalc=True)
@@ -2317,8 +2399,8 @@ TypedExpr.add_local('TypedExpr', TypedExpr)
 
 
 class ApplicationExpr(TypedExpr):
-    def __init__(self, fun, arg, defer=False, assignment=None, type_check=True):
-        if type_check and not defer:
+    def __init__(self, fun, arg, defer=False, assignment=None, copying=False, **kwargs):
+        if not copying and not defer:
             # this call may raise
             tc_result = self.fa_type_inference(fun, arg, assignment)
             if tc_result is None:
@@ -2355,9 +2437,9 @@ class ApplicationExpr(TypedExpr):
         else:
             self.type_guessed = args[0].type_guessed
 
-    def copy_local(self, fun, arg, type_check=True):
+    def copy_local(self, fun, arg, **kwargs):
         result = self.copy_core(
-            ApplicationExpr(fun, arg, defer=self.defer, type_check=type_check))
+            ApplicationExpr(fun, arg, defer=self.defer, **kwargs))
         result.type_guessed = self.type_guessed
         return result
 
@@ -2403,7 +2485,7 @@ class ApplicationExpr(TypedExpr):
                                         derivation_reason=derivation_reason)
         if new_arg is None:
             return None
-        result = self.copy_local(new_fun, new_arg, type_check=False)
+        result = self.copy_local(new_fun, new_arg, copying=True)
         return result
 
     def try_coerce_new_argument(self, typ, remove_guessed=False,
@@ -2576,12 +2658,12 @@ class Tuple(TypedExpr):
     This works basically as a python tuple would, and is indicated using commas
     within a parenthetical. `args` is a list containing the elements of the
     tuple."""
-    def __init__(self, args, typ=None, type_check=True):
+    def __init__(self, args, typ=None, copying=False, **kwargs):
         # XX why doesn't this accept *args syntax...
         new_args = list()
         type_accum = list()
         for i in range(len(args)):
-            if typ is None or not type_check:
+            if typ is None or copying:
                 a_i = self.ensure_typed_expr(args[i])
             else:
                 a_i = self.ensure_typed_expr(args[i], typ=typ[i])
@@ -2594,8 +2676,8 @@ class Tuple(TypedExpr):
     def copy(self):
         return self.copy_core(Tuple(self.args))
 
-    def copy_local(self, *args, type_check=True):
-        return self.copy_core(Tuple(args, typ=self.type))
+    def copy_local(self, *args, **kwargs):
+        return self.copy_core(Tuple(args, typ=self.type, **kwargs))
 
     def _compile(self):
         # n.b. it is possible to more quickly access individual elements, but
@@ -2668,8 +2750,8 @@ class TypedTerm(TypedExpr):
     The attribute 'type_guessed' is flagged if the type was not specified; this
     may result in coercion as necessary."""
     def __init__(self, varname, typ=None, latex_op_str=None, assignment=None,
-                                    defer_type_env=False, type_check=True,
-                                    validate_name=True):
+                                    defer_type_env=False, copying=False,
+                                    validate_name=True, **kwargs):
         # NOTE: does not call super
         self.op = varname
         self.derivation = None
@@ -2697,7 +2779,7 @@ class TypedTerm(TypedExpr):
         else:
             self.type = typ
 
-        if type_check and not defer_type_env:
+        if not copying and not defer_type_env:
             # initialize a type environment based on self.type
             env = self.calc_type_env()
 
@@ -2735,20 +2817,19 @@ class TypedTerm(TypedExpr):
     constant = property(operator.attrgetter('_constant'))
 
     def copy(self):
-        return self.copy_local()
+        return self.copy_local(copying=True)
 
     def copy_core(self, other):
         other = super().copy_core(other)
         other.type_guessed = self.type_guessed
         other.from_assignment = self.from_assignment
+        other.latex_op_str = self.latex_op_str
         return other
 
-    def copy_local(self, type_check=False):
-        result = TypedTerm(self.op, typ=self.type,
-                                    latex_op_str=self.latex_op_str,
-                                    type_check=type_check)
+    def copy_local(self, copying=False, **kwargs):
+        result = TypedTerm(self.op, typ=self.type, copying=copying, **kwargs)
         result = self.copy_core(result)
-        if not type_check:
+        if copying:
             result.set_type_env(self.get_type_env().copy())
         return result
 
@@ -2901,9 +2982,8 @@ class CustomTerm(TypedTerm):
     This isn't fully implemented as that metalanguage is actually extremely
     difficult to get right computationally..."""
     def __init__(self, varname, custom_english=None, suppress_type=True,
-                 small_caps=True, typ=None, assignment=None, type_check=True):
-        TypedTerm.__init__(self, varname, typ=typ, assignment=assignment,
-                                                        type_check=type_check)
+                 small_caps=True, **kwargs):
+        TypedTerm.__init__(self, varname, **kwargs)
         self.custom = custom_english
         self.sc = small_caps
         self.suppress_type = suppress_type
@@ -2916,7 +2996,7 @@ class CustomTerm(TypedTerm):
                                    small_caps=self.sc,
                                    typ=self.type))
 
-    def copy_local(self, type_check=True):
+    def copy_local(self, **kwargs):
         return self.copy()
 
     def copy(self, op):
@@ -2988,7 +3068,7 @@ class CustomTerm(TypedTerm):
 # possibly these belong in boolean, or somewhere else?
 
 class Partial(TypedExpr):
-    def __init__(self, body, condition, type_check=True):
+    def __init__(self, body, condition, **kwargs):
         if condition is None:
             condition = from_python(True)
         condition = TypedExpr.ensure_typed_expr(condition, types.type_t)
@@ -3168,7 +3248,7 @@ class Partial(TypedExpr):
 
         
 class Body(TypedExpr):
-    def __init__(self, body, type_check=True):
+    def __init__(self, body, **kwargs):
         super().__init__("Body", body)
         self.type = body.type
 
@@ -3197,7 +3277,7 @@ class Body(TypedExpr):
 
 
 class Condition(TypedExpr):
-    def __init__(self, body, type_check=True):
+    def __init__(self, body, **kwargs):
         super().__init__("Condition", body)
         self.type = types.type_t
 
@@ -3276,7 +3356,7 @@ def partial(body, *conditions, force=False):
 # In a very roundabout way, this class acts like a dictionary mapping types to
 # expressions.
 class Disjunctive(TypedExpr):
-    def __init__(self, *disjuncts, type_check=True):
+    def __init__(self, *disjuncts, **kwargs):
         ts = get_type_system()
         principal_type = types.DisjunctiveType(*[d.type for d in disjuncts])
         t_adjust = set()
@@ -3301,7 +3381,7 @@ class Disjunctive(TypedExpr):
         self.type = types.DisjunctiveType(*t_adjust)
         super().__init__("Disjunctive", *disjuncts)
         
-    def copy_local(self, *disjuncts, type_check=True):
+    def copy_local(self, *disjuncts, **kwargs):
         return self.copy_core(Disjunctive(*disjuncts))
     
     def term(self):
@@ -3434,7 +3514,7 @@ class SyncatOpExpr(TypedExpr):
     def copy(self):
         return self.copy_local(*self.args)
 
-    def copy_local(self, *args, type_check=True):
+    def copy_local(self, *args, **kwargs):
         """This must be overriden by classes that are not produced by the
         factory."""
         # TODO: is this necessary?
@@ -3667,7 +3747,7 @@ def op(op, arg_type, ret_type,
         if not (arity == 1 or arity == 2):
             raise ValueError("@op needs function of arity 1 or 2 (got %d)" % arity)
         class WrappedOp(SyncatOpExpr):
-            def __init__(self, *args):
+            def __init__(self, *args, **kwargs):
                 # XX this updates __name__ but not __class__
                 functools.update_wrapper(self, func)
                 if len(args) != arity:
@@ -3733,7 +3813,7 @@ class BinaryGenericEqExpr(SyncatOpExpr):
 
     """Type-generic equality.  This places no constraints on the type of `arg1`
     and `arg2` save that they be equal."""
-    def __init__(self, arg1, arg2):
+    def __init__(self, arg1, arg2, **kwargs):
         self.argtype = ts_unify_with(arg1, arg2,
                                 error="Equality requires compatible types")
         arg1 = self.ensure_typed_expr(arg1, self.argtype)
@@ -3798,7 +3878,7 @@ class TupleIndex(SyncatOpExpr):
     canonical_name = "[]" # not a normal SyncatOpExpr!
     commutative = False
 
-    def __init__(self, arg1, arg2, type_check=True):
+    def __init__(self, arg1, arg2, **kwargs):
         arg1 = self.ensure_typed_expr(arg1)
         if not isinstance(arg1.type, types.TupleType):
             raise types.TypeMismatch(arg1, arg2,
@@ -3823,7 +3903,7 @@ class TupleIndex(SyncatOpExpr):
             output_type = common_tuple_type(arg1)
         super().__init__(output_type, arg1, arg2, tcheck_args=False)
 
-    def copy_local(self, arg1, arg2, type_check=True):
+    def copy_local(self, arg1, arg2, **kwargs):
         # because `[]` isn't handled like a normal operator, this can't rely
         # on generic superclass code
         return self.copy_core(TupleIndex(arg1, arg2))
@@ -4020,7 +4100,7 @@ class BindingOp(TypedExpr):
                 typ, # require this to be provided, but it may be None (see below)
                 *,
                 body_type=None,
-                assignment=None, type_check=True):
+                assignment=None, copying=False):
         # NOTE: this does not call the superclass constructor
 
         # default assumption for body type: type of the whole thing = type
@@ -4029,8 +4109,7 @@ class BindingOp(TypedExpr):
         if body_type is None:
             body_type = typ
 
-        # Warning: can't assume in general that `typ` is not `None`. Several
-        # subclasses set it themselves after calling the constructor.
+        # Warning: typ may be `None` depending on subclass implementation
         if typ is not None:
             self.type = typ
 
@@ -4042,13 +4121,11 @@ class BindingOp(TypedExpr):
         self.init_var_by_instance(var) # XX this does an unnecessary copy
         # TODO: consider overriding __eq__ and __hash__.
 
-        # generic code for type-checking a body that may contain a bound
-        # variable with our variable's type. At this point, we should know
-        # the provided variable name and the body type for sure (otherwise
-        # this will crash). If the variable type is inferrable from the body,
-        # and is left out here, it will be inferred.
-        # without type_check=True, all sorts of things are not validated.
-        if type_check:
+        # type constraint: self.var_instance is consistent with variables of
+        # the same name within body, and has the corresponding principal type.
+        # with copying=True, this constraint (which is fairly heavy) is
+        # not ensured.
+        if not copying:
             # note! here we intentionally construct an assignment that includes
             # only the bound variable; we don't actually want to *do* variable
             # replacement generally, and type checking for the rest of the
@@ -4077,6 +4154,9 @@ class BindingOp(TypedExpr):
             self.init_var_by_instance(
                 self.var_instance.under_type_assignment(self.body.get_type_env().type_mapping,
                                                         merge_intersect=False))
+            # note for subclasses: if your subclass type is related to the
+            # variable type, you should do further updates as needed after
+            # this call
         else:
             self.init_body(body)
         self._reduced_cache = [None] * len(self.args)
@@ -4084,14 +4164,17 @@ class BindingOp(TypedExpr):
     def copy(self):
         # on the assumption that type checking in subclasses is generally
         # expensive, don't redo it
-        return self.copy_local(*self, type_check=False)
+        return self.copy_local(*self, copying=True)
 
-    def copy_local(self, *args, type_check=True):
+    def copy_local(self, *args, **kwargs):
         # this assertion is here because right now, the superclass function
         # signature doesn't match the subclasses, but in a way that will fail
         # silently
         assert type(self) != BindingOp
-        return self.copy_core(type(self)(*args, type_check=type_check))
+        return self.copy_core(type(self)(*args, **kwargs))
+
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
+        return self.copy_local(*self, typ=unified_type)
 
     def name_of(self, i):
         if i == len(self) - 1:
@@ -4580,17 +4663,17 @@ class LFun(BindingOp):
     left_commutative = False
     collectable = False
 
-    def __init__(self, var, body, *, let=False, assignment=None, type_check=True):
+    def __init__(self, var, body, *, let=False, typ=None, **kwargs):
         # Use placeholder typ argument of None.  This is because the input type
         # won't be known until self.var is dealt with, which is done in the
         # superclass.
         #
         # This can potentially cause odd side effects if BindingOp.__init__'s
         # handling of type inference is changed without taking this into account.
+        assert typ is None
         super().__init__(var, body, typ=None,
             body_type=body.type,
-            assignment=assignment,
-            type_check=type_check)
+            **kwargs)
         self.type = FunType(self.vartype, body.type)
         self.let = let
 
@@ -4633,7 +4716,6 @@ class LFun(BindingOp):
         # now that type inference has succeeded, we remove the bound variable
         # from the type environment, since type environments store only free
         # terms
-        # if self.varname in env.terms():
         env.remove_term(self.varname)
         new_fun = new_fun.under_type_assignment(env.type_mapping)
         return new_fun     

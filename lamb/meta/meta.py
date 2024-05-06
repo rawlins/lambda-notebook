@@ -49,7 +49,7 @@ class OutOfDomain(DomainError):
 
 class MetaTerm(core.TypedTerm):
     """Term class for storing direct references to underlying objects in a type domain."""
-    def __init__(self, name, typ=None, setfun=False):
+    def __init__(self, name, typ=None, setfun=False, **kwargs):
         type_verified = False
         if isinstance(name, MetaTerm):
             # essentially, copy `name`
@@ -73,7 +73,7 @@ class MetaTerm(core.TypedTerm):
         # be reused?
         name = typ.domain.normalize(name)
 
-        super().__init__(name, typ=typ, type_check=False, validate_name=False)
+        super().__init__(name, typ=typ, copying=True, validate_name=False)
         self._variable = False
         self._constant = True
 
@@ -81,7 +81,7 @@ class MetaTerm(core.TypedTerm):
         if self.type == type_t or self.type == type_n:
             self.suppress_type = True
 
-        # not set by superclass with type_check=False
+        # not set by superclass with copying=True
         self.set_type_env(self.calc_type_env())
         self.assignment_name = None
 
@@ -196,7 +196,7 @@ class MetaTerm(core.TypedTerm):
     def copy(self):
         return self.copy_local()
 
-    def copy_local(self, type_check=True):
+    def copy_local(self, **kwargs):
         r = self.copy_core(MetaTerm(self.op, typ=self.type))
         r.latex_op_str = self.latex_op_str
         r.assignment_name = self.assignment_name

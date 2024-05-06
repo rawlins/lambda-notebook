@@ -48,7 +48,7 @@ class BinaryAndExpr(SyncatOpExpr):
     commutative = True
     associative = True
 
-    def __init__(self, arg1, arg2):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(type_t, arg1, arg2)
 
     def _compile(self):
@@ -98,7 +98,7 @@ class BinaryOrExpr(SyncatOpExpr):
     commutative = True
     associative = True
 
-    def __init__(self, arg1, arg2):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(type_t, arg1, arg2)
 
     def _compile(self):
@@ -150,7 +150,7 @@ class BinaryArrowExpr(SyncatOpExpr):
     commutative = False
     associative = False
 
-    def __init__(self, arg1, arg2):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(type_t, arg1, arg2)
 
     def _compile(self):
@@ -184,7 +184,7 @@ class BinaryBiarrowExpr(SyncatOpExpr):
     commutative = True
     associative = True
 
-    def __init__(self, arg1, arg2):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(type_t, arg1, arg2)
 
     def _compile(self):
@@ -241,7 +241,7 @@ class BinaryNeqExpr(SyncatOpExpr):
     commutative = True
     associative = True
 
-    def __init__(self, arg1, arg2):
+    def __init__(self, arg1, arg2, **kwargs):
         super().__init__(type_t, arg1, arg2)
 
     def _compile(self):
