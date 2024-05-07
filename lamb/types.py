@@ -2094,12 +2094,6 @@ class TypeSystem(object):
     def parse(self, s, require_exact_type=False):
         return self.type_parser(s, require_exact_type=require_exact_type)
 
-    def fun_arg_check_bool(self, fun, arg):
-        return (fun.type.functional() and
-                self.type_allowed(fun.type) and
-                self.type_allowed(arg.type) and
-                self.eq_check(fun.type.left, arg.type))
-
     def check_type(self, t):
         return (t in self.atomics or t.__class__ in self.nonatomics)
 
@@ -2127,38 +2121,54 @@ class TypeSystem(object):
         # found, it is the principal type.
         return UnificationResult(result, t1, t2)
 
+    def unify_fun(self, fun, arg, ret, assignment=None):
+        # in the simple type system this function needs two out of three
+        if fun is None:
+            if arg is not None and ret is not None:
+                return FunType(arg, ret)
+            # fallthrough to failure
+        elif isinstance(fun, FunType): # no other types handled!
+            if arg is None:
+                if ret is not None:
+                    if (r := self.unify(fun.right, ret, assignment=assignment)) is not None:
+                        return FunType(fun.left, r)
+                # fallthrough to failure
+            elif ret is None: # and arg is not None
+                if (r := self.unify(fun.left, arg, assignment=assignment)) is not None:
+                    return FunType(r, fun.right)
+                # fallthrough to failure
+            else: # we have all three
+                return self.unify(fun, FunType(arg, ret), assignment=assignment)
+        # fallthrough to failure
+
+        return None
+
     def unify_ar(self, arg, ret, assignment=None):
-        return FunType(arg, ret)
+        return self.unify_fun(None, arg, ret, assignment=assignment)
 
     def unify_fr(self, fun, ret, assignment=None):
-        if fun.functional():
-            r = self.unify(fun.right, ret)
-            if r is None:
-                return (None, None, None)
-            else:
-                return (fun, fun.left, r)
-        else:
-            return (None, None, None)
+        """Find principal types if `ret` is a return value for `fun`.
+
+        Returns a triple of the principal types of the function, its left type,
+        and its right type.  Returns (None, None, None) on failure."""
+
+        return self.unify_fun(fun, None, ret, assignment=assignment)
 
     def unify_fa(self, fun, arg, assignment=None):
-        """Try unifying the input type of the function with the argument's type.
-        If it succeeds, it returns a (possibly changed) tuple of the function's
-        type, the argument's type, and the output type. If this fails, returns
-        (None, None, None)."""
+        """Find principal types if `ret` is a return value for `fun`.
 
-        if fun.functional():
-            a = self.unify(fun.left, arg)
-            if a is None:
-                return (None, None, None)
-            else:
-                return (fun, a, fun.right)
-        else:
-            return (None, None, None)
+        Returns a triple of the principal types of the function, its left type,
+        and its right type.  Returns (None, None, None) on failure."""
+
+        return self.unify_fun(fun, arg, None, assignment=assignment)
 
     def fun_arg_check(self, fun, arg):
         if not self.fun_arg_check_bool(fun, arg):
             raise TypeMismatch(fun.type, arg.type,
                                             "function-argument combination")
+
+    def fun_arg_check_bool(self, fun, arg):
+        return self.unify_fun(fun.type, arg.type, None) is not None
 
     def eq_check(self, a, b):
         result = self.unify(a,b)
@@ -2666,70 +2676,76 @@ class PolyTypeSystem(TypeSystem):
         else:
             return t1.unify(t2, self._unify_r_control, assignment=assignment)
 
-    def _build_hyp_fun(self, arg, ret):
+    def _build_hyp_fun(self, arg, ret, force_funtype=False):
         if arg is None:
-            arg = Forall(VariableType('X', 0))
+            arg = VariableType.any()
         if ret is None:
-            ret = Forall(VariableType('X', 0))
-        if isinstance(ret, Forall) and isinstance(arg, Forall):
+            ret = VariableType.any()
+        if not force_funtype and isinstance(ret, Forall) and isinstance(arg, Forall):
             # for this case, we can safely scope ∀ over the whole thing (and
             # the results are better if we do so)
+            # (XX: is this really true?)
             return Forall(FunType(arg, ret)).normalize()
         else:
             return FunType(arg, ret)
 
     def unify_fun(self, fun, arg, ret, assignment=None):
         # the code below works for non-polymorphic types, but uses much
-        # heavier infrastructure
-        if not fun.is_polymorphic():
+        # heavier infrastructure. First try to use the superclass for some
+        # common cases.
+
+        # XX can super().unify_fun be run in more cases? it defers to unify...
+        # there's annoying code dup here, but this remains the clearest version
+        # of this I have come up with
+        if fun is None and arg is not None and ret is not None:
+            # arg + ret: this works fine even with polymorphic arg + ret
+            return super().unify_fun(fun, arg, ret, assignment=assignment)
+        elif isinstance(fun, FunType) and not fun.is_polymorphic():
             if arg is not None and not arg.is_polymorphic() and ret is None:
-                return super().unify_fa(fun, arg)
+                # fun + arg
+                return super().unify_fun(fun, arg, ret, assignment=assignment)
             elif ret is not None and not ret.is_polymorphic() and arg is None:
-                return super().unify_fr(fun, ret)
+                # fun + ret
+                return super().unify_fun(fun, arg, ret, assignment=assignment)
 
-        hyp_fun = self._build_hyp_fun(arg, ret)
-        try:
-            # order matters here
-            result = self.unify_details(hyp_fun, fun, assignment=assignment)
-        except OccursCheckFailure as e:
-            if arg is None:
-                e.error = f"Occurs check failure while trying to infer function type given return type {ret}"
-            else:
-                # assumption: one or the other is not None if we have reached here
-                e.error = f"Occurs check failure while trying to infer function type given argument `{arg}`"
-            e.swap_order()
-            raise e
-
-        if result is None: # `fun` is not a function or cannot be made into one
-            return (None, None, None)
+        hyp_fun = self._build_hyp_fun(arg, ret, force_funtype=fun is None)
+        if fun is None:
+            principal = hyp_fun
         else:
-            principal = result.principal
-            if isinstance(principal, Forall):
-                # we can't sensibly access left/right, there's nothing for it
-                # but to go to fresh types. (XX: refactor so that this is on
-                # the caller to handle)
+            try:
+                # use unify_details so that occurs checks can be intercepted
+                # and reraised. (XX refactor?)
+                # order matters here
+                result = self.unify_details(hyp_fun, fun, assignment=assignment)
+            except OccursCheckFailure as e:
+                if arg is None:
+                    e.error = f"Occurs check failure while trying to infer function type given return type {ret}"
+                else:
+                    # assumption: one or the other is not None if we have reached here
+                    e.error = f"Occurs check failure while trying to infer function type given argument type `{arg}`"
+                e.swap_order()
+                raise e
+
+            if result is None: # `fun` is not a function or cannot be made into one
+                return None
+            else:
+                principal = result.principal
+
+        if isinstance(principal, Forall):
+            if is_type_var(principal):
+                # maybe unreachable
+                # if it's just a let-bound variable, produce a functional
+                # variant. No constraints on the relationship between left and
+                # right.
+                principal = FunType(principal, principal)
+            else:
+                # otherwise, we have something that can't be trivially returned
+                # as a FunType. There's nothing for it but to try going to
+                # fresh types. Hopefully whatever results makes .left/.right
+                # work... (the normal case is something like `∀<Y,Z>`, which
+                # does need to be handled this way.)
                 principal = debind(principal)
-            return (principal, principal.left, principal.right)
-
-    def unify_fr(self, fun, ret, assignment=None):
-        """Find principal types if `ret` is a return value for `fun`.
-
-        Returns a triple of the principal types of the function, its left type,
-        and its right type.  Returns (None, None, None) on failure."""
-
-        return self.unify_fun(fun, None, ret, assignment=assignment)
-
-    def unify_fa(self, fun, arg, assignment=None):
-        """Find principal types if `ret` is a return value for `fun`.
-
-        Returns a triple of the principal types of the function, its left type,
-        and its right type.  Returns (None, None, None) on failure."""
-
-        return self.unify_fun(fun, arg, None, assignment=assignment)
-
-    def fun_arg_check_bool(self, fun, arg):
-        f, a, r = self.unify_fun(fun.type, arg.type, None)
-        return f is not None
+        return principal
 
     def alpha_equiv(self, t1, t2, mapping=None):
         """Are `t1` and `t2` alpha equivalents of each other?"""
@@ -2790,7 +2806,6 @@ class PolyTypeSystem(TypeSystem):
             return injective(mapping)
         else:
             return False
-
 
     def compact_type_vars(self, t1, unsafe=None):
         """Compact the type variables in `t1` so as to make them more

@@ -1046,17 +1046,17 @@ class TypedExpr(object):
         else:
             b_te = None
         if error is None:
-            error = f"Failed to reconcile type constraint for {name}: {a} == {b}"
+            error = f"Failed to reconcile type constraint for `{name}`: {a} == {b}"
         principal = ts_reconcile(a, b, error=error)
         if constant and b != principal:
             # is this unnecessarily strict?
             if error:
-                raise TypeMismatch(f"Type constraint for {name} ({a} == constant {b}) would require adjusting constant")
+                raise TypeMismatch(f"Type constraint for `{name}` ({a} == constant {b}) would require adjusting constant")
             else:
                 return None
         if principal is not None and a_te is not None:
-            # a = a_te.try_adjust_type(principal)
-            a = cls.ensure_typed_expr(a_te, principal)
+            a = a_te.try_adjust_type(principal,
+                derivation_reason=f"Type constraint from {name}: {a} == {b}")
             if not error and a is None:
                 raise TypeMismatch(a, principal, error=error)
         else:
@@ -1064,8 +1064,8 @@ class TypedExpr(object):
         if constant:
             return a
         if principal is not None and b_te is not None:
-            # b = b_te.try_adjust_type(principal)
-            b = cls.ensure_typed_expr(b_te, principal)
+            b = b_te.try_adjust_type(principal,
+                derivation_reason=f"Type constraint from {name}: {a} == {b}")
             if not error and b is None:
                 raise TypeMismatch(b, principal, error=error)
         else:
@@ -2473,7 +2473,7 @@ class ApplicationExpr(TypedExpr):
     def try_adjust_type_local(self, new_type, derivation_reason, env):
         fun = self.args[0]
         arg = self.args[1]
-        (new_fun_type, new_arg_type, new_ret_type) = get_type_system().unify_fr(
+        new_fun_type = get_type_system().unify_fr(
                             fun.type, new_type, assignment=env.type_mapping)
         if new_fun_type is None:
             return None
@@ -2481,7 +2481,8 @@ class ApplicationExpr(TypedExpr):
                                         derivation_reason=derivation_reason)
         if new_fun is None:
             return None
-        new_arg = arg.try_adjust_type(new_arg_type,
+        # assumption: .left works here
+        new_arg = arg.try_adjust_type(new_fun_type.left,
                                         derivation_reason=derivation_reason)
         if new_arg is None:
             return None
@@ -2512,29 +2513,31 @@ class ApplicationExpr(TypedExpr):
     def fa_type_inference(cls, fun, arg, assignment):
         history = False
         try:
-            (f_type, a_type, out_type) = get_type_system().unify_fa(fun.type, arg.type)
+            principal = get_type_system().unify_fa(fun.type, arg.type)
         except TypeMismatch as e:
+            # XX is this only on OccursCheckError?
             # replace pure types with the function and argument in question
             e.i1 = fun
             e.i2 = arg
             raise e
-        if f_type is None:
+        if principal is None:
             return None
 
-        if fun.type != f_type:
-            fun = fun.try_adjust_type_caching(f_type,
+        if fun.type != principal:
+            fun = fun.try_adjust_type_caching(principal,
                                 derivation_reason="Type inference (external)")
             history = True
 
-        if a_type != arg.type:
-            arg = arg.try_adjust_type_caching(a_type,
+        # assumption: .left works here
+        if principal.left != arg.type:
+            arg = arg.try_adjust_type_caching(principal.left,
                                 derivation_reason="Type inference (external)")
             history = True
 
         if fun is None or arg is None:
             return None
 
-        # assumption: by now, fun.type supports indexing to get the output type
+        # assumption: by now, fun.type.right works
         return (fun, arg, fun.type.right, history)
 
     def nucleus(self):
@@ -4664,16 +4667,24 @@ class LFun(BindingOp):
     collectable = False
 
     def __init__(self, var, body, *, let=False, typ=None, **kwargs):
-        # Use placeholder typ argument of None.  This is because the input type
-        # won't be known until self.var is dealt with, which is done in the
-        # superclass.
-        #
-        # This can potentially cause odd side effects if BindingOp.__init__'s
-        # handling of type inference is changed without taking this into account.
-        assert typ is None
-        super().__init__(var, body, typ=None,
-            body_type=body.type,
+        # type constraint: typ == <var.type, body.type>
+        # unify_fun handles None parameters gracefully
+        principal = get_type_system().unify_fun(typ, var.type, body.type)
+        if principal is None:
+            # this is a bug if unify_fun fails to combine arbitrary arg/ret
+            # pairs in absence of a target type
+            assert typ is not None
+            raise TypeMismatch(var, body,
+                error=f"Type inference on Lambda expression failed: target type {repr(typ)}")
+        # we should now have a principal type that both var and body can meet exactly
+        var = self.type_constraint(var, principal.left, constant=True)
+        body = self.type_constraint(body, principal.right, constant=True)
+
+        super().__init__(var, body, typ=principal, body_type=body.type,
             **kwargs)
+        # superclass may trigger further type inference when reconciling the
+        # bound variable with the body, so set the type here. No further
+        # changes required to self.
         self.type = FunType(self.vartype, body.type)
         self.let = let
 
@@ -4690,35 +4701,6 @@ class LFun(BindingOp):
 
     def functional(self):
         return True # no need to do any calculations
-
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        # `env` will not start with bound variable in it, initialize with the
-        # current type
-        env.add_term_mapping(self.varname, self.argtype)
-        # update mapping for the variable with new type
-        left_principal = env.try_add_term_mapping(self.varname,
-                                                            unified_type.left)
-        if left_principal is None:
-            env.remove_term(self.varname)
-            return None
-        new_body = self.body
-        if self.argtype != left_principal:
-            # arg type needs to be adjusted.
-            new_var = TypedTerm(self.varname, left_principal)
-        else:
-            new_var = self.var_instance
-
-        if self.type.right != unified_type.right:
-            new_body = new_body.try_adjust_type(unified_type.right,
-                                            derivation_reason=derivation_reason)
-        new_fun = self.copy_local(new_var, new_body)
-        env.merge(new_body.get_type_env())
-        # now that type inference has succeeded, we remove the bound variable
-        # from the type environment, since type environments store only free
-        # terms
-        env.remove_term(self.varname)
-        new_fun = new_fun.under_type_assignment(env.type_mapping)
-        return new_fun     
 
     def _compile(self):
         body = self[1]._compiled
