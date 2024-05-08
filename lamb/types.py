@@ -2646,6 +2646,19 @@ class PolyTypeSystem(TypeSystem):
         else:
             return self._unify_r(t1, t2, assignment=assignment)
 
+    def _get_type_ranking(self, cls):
+        try:
+            return self.type_ranking[cls]
+        except KeyError:
+            err = ""
+            if (name := getattr(cls, '__name__', None)) is not None:
+                for t in self.type_ranking:
+                    if t.__name__ == name:
+                        err = f"Stale type class (`{name}`) in unification, try restarting the kernel?"
+            if not err:
+                err = f"Unknown type class (`{repr(cls)}`) in unification"
+            raise ValueError(err) from None
+
     def _unify_r_swap(self, t1, t2, assignment, swap=True):
         return self._unify_r_control(t1, t2, assignment, swap=swap)
 
@@ -2669,7 +2682,7 @@ class PolyTypeSystem(TypeSystem):
         # non-polymorphic equally-ranked types, but for such types, symmetry
         # is guaranteed. (Polymorphic unification is only symmetric up to
         # alphabetic variants.)
-        if self.type_ranking[t1.__class__] <= self.type_ranking[t2.__class__]:
+        if self._get_type_ranking(t1.__class__) <= self._get_type_ranking(t2.__class__):
             # XX if t1=t2, the recursion could be short-circuited, but I'm
             # unclear if this is a useful optimization
             return t2.unify(t1, self._unify_r_swap, assignment=assignment)
