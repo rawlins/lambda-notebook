@@ -510,6 +510,7 @@ def term_replace_unify(expr, m, track_all_names=False):
                 if result.term() and not result.meta() and result.op == e.op:
                     return e
                 else:
+                    # XX this seems weird
                     return result
             elif unify == result.type: # unify consistent with result
                 return result

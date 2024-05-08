@@ -1756,8 +1756,7 @@ class TypedExpr(object):
             return self
         dirty = False
         parts = list()
-        copy = self
-        for part in copy:
+        for part in self:
             new_part = part.under_type_assignment(mapping, reset=reset)
             if new_part is not part:
                 dirty = True
@@ -1768,12 +1767,12 @@ class TypedExpr(object):
             parts.append(new_part)
         # this may or may not be recalculated by copy_local.  The main case
         # where it isn't is terms.
-        copy_type = copy.type.sub_type_vars(mapping)
+        copy_type = self.type.sub_type_vars(mapping)
         # Note: we still need to reset the subordinate type environments even
         # in this case.
         if copy_type == self.type and not dirty:
             return self
-        result = copy.copy_local(*parts)
+        result = self.copy_local(*parts)
         if result.term():
             result.type = copy_type
         if reset:
@@ -2830,7 +2829,9 @@ class TypedTerm(TypedExpr):
         return other
 
     def copy_local(self, copying=False, **kwargs):
-        result = TypedTerm(self.op, typ=self.type, copying=copying, **kwargs)
+        # XX the constructor logic here is a bit convoluted, but we don't
+        # want to build a type env until `from_assignment` is set...
+        result = TypedTerm(self.op, typ=self.type, copying=copying, defer_type_env=True, **kwargs)
         result = self.copy_core(result)
         if copying:
             result.set_type_env(self.get_type_env().copy())
@@ -2856,6 +2857,14 @@ class TypedTerm(TypedExpr):
 
         if self.type is not None:
             env.add_term_mapping(self.op, self.type)
+
+        # if we do not have a let-bound assignment value, don't store the
+        # constraint for all posterity
+        # (XX: is this right?)
+        if self.from_assignment is not None and not (
+                            self.from_assignment.let
+                            or isinstance(self.from_assignment.type, types.Forall)):
+            self.from_assignment = None
         return env
 
     def free_terms(self, var_only=False):
