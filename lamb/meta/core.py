@@ -1051,10 +1051,11 @@ class TypedExpr(object):
         if constant and b != principal:
             # is this unnecessarily strict?
             if error:
-                raise TypeMismatch(f"Type constraint for `{name}` ({a} == constant {b}) would require adjusting constant")
+                raise TypeMismatch(a, b, f"Type constraint for `{name}` ({a} == constant {b}) would require adjusting constant to {principal}")
             else:
                 return None
         if principal is not None and a_te is not None:
+            # XX maybe let caller set name for more information?
             a = a_te.try_adjust_type(principal,
                 derivation_reason=f"Type constraint from {name}: {a} == {b}")
             if not error and a is None:
@@ -2398,49 +2399,50 @@ TypedExpr.add_local('TypedExpr', TypedExpr)
 
 
 class ApplicationExpr(TypedExpr):
-    def __init__(self, fun, arg, defer=False, assignment=None, copying=False, **kwargs):
-        if not copying and not defer:
-            # this call may raise
-            tc_result = self.fa_type_inference(fun, arg, assignment)
-            if tc_result is None:
-                if not fun.functional():
-                    raise TypeMismatch(fun, arg,
-                        error=f"Function-argument expression: `{repr(fun)}` is not a function")
-                else:
-                    raise TypeMismatch(fun, arg,
-                        error=f"Function-argument expression: mismatched argument types `{repr(fun.type.left)}` and `{arg.type}`")
-            f, a, out_type, history = tc_result
-            op = "Apply"
-            args = [f, a]
-            self.type = out_type
-        else:
-            history = False
-            op = "Apply"
-            args = [fun, arg]
+    canonical_name = "Apply"
+    def __init__(self, fun, arg, typ=None, defer=False, copying=False, **kwargs):
+        if copying or defer:
             try:
                 self.type = fun.type.right
             except AttributeError:
                 # the input `fun` type is not itself functional, so we can't
-                # even determine the output type. Use UnknownType as a
-                # placeholder.
-                self.type = types.UnknownType()
-        super().__init__(op, *args, defer=defer)
+                # even determine the output type. XX simple type placeholder?
+                self.type = types.VariableType.any()
+            super().__init__("Apply", fun, arg, defer=defer)
+            return
+
+        # this call may raise on OccursCheckFailure?
+        ftype = get_type_system().unify_fun(fun.type, arg.type, typ)
+        if ftype is None:
+            raise TypeMismatch(fun, arg,
+                error=f"Incompatible function-argument types `{fun.type}` and `{arg.type}`")
+        f = self.type_constraint(fun, ftype, constant=True)
+        a = self.type_constraint(arg, ftype.left, constant=True)
+        history = f.type != fun.type or a.type != arg.type
+
+        super().__init__("Apply", f, a, typ=ftype.right)
 
         if history:
             # bit of a hack: build a derivation with the deferred version as
-            # the origin
-            old = ApplicationExpr(fun, arg, defer=True)
-            derived(self, old, desc="Type inference")
-        if isinstance(args[0], LFun):
-            args[1].type_not_guessed()
+            # the origin. Note: relies on derived not making a copy for this
+            # case!
+            derived(self, ApplicationExpr(fun, arg, defer=True),
+                                    desc="Function-argument type inference")
+
+        if isinstance(self[0], LFun):
+            self[1].type_not_guessed()
         else:
-            self.type_guessed = args[0].type_guessed
+            self.type_guessed = self[0].type_guessed
+
+    def copy_core(self, other):
+        other = super().copy_core(other)
+        other.type_guessed = self.type_guessed
+        return other
 
     def copy_local(self, fun, arg, **kwargs):
-        result = self.copy_core(
+        # note: defer needs to be provided up front to the constructor
+        return self.copy_core(
             ApplicationExpr(fun, arg, defer=self.defer, **kwargs))
-        result.type_guessed = self.type_guessed
-        return result
 
     def latex_str(self, suppress_parens=False, **kwargs):
         # n.b. parens generated here never should be suppressed
@@ -2470,23 +2472,8 @@ class ApplicationExpr(TypedExpr):
             return f"{repr(fun)}{arg_str}"
 
     def try_adjust_type_local(self, new_type, derivation_reason, env):
-        fun = self.args[0]
-        arg = self.args[1]
-        new_fun_type = get_type_system().unify_fr(
-                            fun.type, new_type, assignment=env.type_mapping)
-        if new_fun_type is None:
-            return None
-        new_fun = fun.try_adjust_type(new_fun_type,
-                                        derivation_reason=derivation_reason)
-        if new_fun is None:
-            return None
-        # assumption: .left works here
-        new_arg = arg.try_adjust_type(new_fun_type.left,
-                                        derivation_reason=derivation_reason)
-        if new_arg is None:
-            return None
-        result = self.copy_local(new_fun, new_arg, copying=True)
-        return result
+        # XX refactor to superclass
+        return self.copy_local(*self, typ=new_type)
 
     def try_coerce_new_argument(self, typ, remove_guessed=False,
                                                         assignment=None):
@@ -2507,37 +2494,6 @@ class ApplicationExpr(TypedExpr):
             return copy
         else:
             return None
-
-    @classmethod
-    def fa_type_inference(cls, fun, arg, assignment):
-        history = False
-        try:
-            principal = get_type_system().unify_fa(fun.type, arg.type)
-        except TypeMismatch as e:
-            # XX is this only on OccursCheckError?
-            # replace pure types with the function and argument in question
-            e.i1 = fun
-            e.i2 = arg
-            raise e
-        if principal is None:
-            return None
-
-        if fun.type != principal:
-            fun = fun.try_adjust_type_caching(principal,
-                                derivation_reason="Type inference (external)")
-            history = True
-
-        # assumption: .left works here
-        if principal.left != arg.type:
-            arg = arg.try_adjust_type_caching(principal.left,
-                                derivation_reason="Type inference (external)")
-            history = True
-
-        if fun is None or arg is None:
-            return None
-
-        # assumption: by now, fun.type.right works
-        return (fun, arg, fun.type.right, history)
 
     def nucleus(self):
         # find the functional element at the center of potentially repeated
