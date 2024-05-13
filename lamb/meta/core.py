@@ -111,6 +111,8 @@ def ts_unify(a, b):
 
 
 def ts_reconcile(a, b, error=None):
+    if error is True:
+        error = f"Failed to reconcile types"
     if a is None:
         if error and b is None:
             # Or, TypeMismatch?
@@ -120,10 +122,8 @@ def ts_reconcile(a, b, error=None):
         return a
     else:
         r = ts_unify(a, b)
-        if r is not None or error is None:
+        if r is not None or not error:
             return r
-        elif error is True:
-            raise TypeMismatch(a, b, f"Failed to reconcile types")
         else:
             raise TypeMismatch(a, b, error)
 
@@ -1012,12 +1012,12 @@ class TypedExpr(object):
         ----------
         a : `types.TypeConstructor` or `TypedExpr`
             The left element to attempt to reconcile
-        b : `types.TypeConstructor` or `TypedExpr`
+        b : `types.TypeConstructor` or `TypedExpr` or subclass of `types.TypeConstructor`
             The right element to attempt to reconcile
         constant : bool, default: False
             If `True`, treat the `b` element as a constant and don't return
             any modified versions. In this case, will fail if updating would
-            adjust `b`.
+            adjust `b`. If `b` is a type constructor class, this must be True.
         error : str, optional
             An error message to use when raising TypeMismatch. If set to `None`,
             will construct one based on the class name. If set to False, don't
@@ -1035,11 +1035,28 @@ class TypedExpr(object):
             name = cls.canonical_name
         else:
             name = cls.__name__
+
+        if constant and isinstance(b, type) and issubclass(b, types.TypeConstructor):
+            if not isinstance(a, b):
+                raise TypeMismatch(a, b,
+                    f"Failed to reconcile type constraint for `{name}`: {a} is a {b.__name__}")
+            # nothing else to be done
+            return a
+
+        if constant and isinstance(b, types.BasicType) and not is_te(a) and a in b.domain:
+            # in principle this doesn't need the BasicType check, but it gets
+            # expensive without, and I don't want to make a practice of
+            # resolving domain elements via this call. This branch is primarily
+            # for type_n and type_t...
+            from .meta import MetaTerm
+            return MetaTerm(a, typ=b, copying=True)
+
         if is_te(a):
             a_te = a
             a = a_te.type
         else:
             a_te = None
+
         if is_te(b):
             b_te = b
             b = b_te.type
@@ -1508,7 +1525,7 @@ class TypedExpr(object):
     def _construct_appl(cls, *appl_args, assignment=None):
         def _appl_factory(f, *args):
             if len(args) > 1:
-                arg = Tuple(args)
+                arg = Tuple(*args)
             else:
                 arg = args[0]
             if (not f.type.functional()) and f.type_guessed and _allow_coerced_types:
@@ -2595,47 +2612,22 @@ class ApplicationExpr(TypedExpr):
         return ApplicationExpr(fun, arg)
 
 
-def common_tuple_type(t):
-    elem_types = list(set(t.type))
-    if len(elem_types) == 0:
-        return None # could probably be better handled
-    elif len(elem_types) == 1:
-        ret, = elem_types
-        return ret
-    elif not t.type.is_polymorphic():
-        return types.DisjunctiveType(*elem_types)
-    else:
-        # fall back on an extremely generic type. This permits the construction
-        # of combinators using tuple types.
-        return types.VariableType.any()
-
-
 class Tuple(TypedExpr):
     """TypedExpr wrapper on a tuple.
 
     This works basically as a python tuple would, and is indicated using commas
     within a parenthetical. `args` is a list containing the elements of the
     tuple."""
-    def __init__(self, args, typ=None, copying=False, **kwargs):
-        # XX why doesn't this accept *args syntax...
-        new_args = list()
-        type_accum = list()
-        for i in range(len(args)):
-            if typ is None or copying:
-                a_i = self.ensure_typed_expr(args[i])
-            else:
-                a_i = self.ensure_typed_expr(args[i], typ=typ[i])
-            new_args.append(a_i)
-            type_accum.append(a_i.type)
-        super().__init__("Tuple", *new_args)
-        self.type = types.TupleType(*type_accum)
-        common_tuple_type(self) # ensure that there is a usable common type
 
-    def copy(self):
-        return self.copy_core(Tuple(self.args))
+    canonical_name = "Tuple"
 
-    def copy_local(self, *args, **kwargs):
-        return self.copy_core(Tuple(args, typ=self.type, **kwargs))
+    def __init__(self, *args, typ=None, copying=False, **kwargs):
+        ttype = types.TupleType(*[a.type for a in args])
+        if not copying or typ is not None:
+            ttype, _ = self.type_constraint(ttype, typ)
+            args = [self.type_constraint(args[i], ttype[i], constant=True) for i in range(len(args))]
+
+        super().__init__("Tuple", *args, typ=ttype)
 
     def _compile(self):
         # n.b. it is possible to more quickly access individual elements, but
@@ -2655,10 +2647,8 @@ class Tuple(TypedExpr):
         return tuple(self.args)
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        content = [self.args[i].try_adjust_type(unified_type[i],
-                                derivation_reason=derivation_reason)
-                    for i in range(len(self.args))]
-        return self.copy_local(*content)
+        # XX refactor to superclass
+        return self.copy_local(*self, typ=unified_type)
 
     def __repr__(self):
         return "(" + ", ".join([repr(a) for a in self.args]) + ")"
@@ -2683,7 +2673,7 @@ class Tuple(TypedExpr):
         signature = [get_type_system().random_type(max_type_depth, 0.5, allow_variables=False)
                                                         for i in range(length)]
         args = [ctrl(typ=t) for t in signature]
-        return Tuple(args)
+        return Tuple(*args)
 
 
 
@@ -3159,7 +3149,7 @@ class Partial(TypedExpr):
         return tuple(self.args)
     
     def meta_tuple(self):
-        return Tuple(self.args)
+        return Tuple(*self.args)
     
     def __repr__(self):
         return f"Partial({repr(self.body)}, {repr(self.condition)})"
@@ -3628,7 +3618,7 @@ def from_python_container(p, default=None):
     from .sets import sset
     if isinstance(p, tuple): # or collections.abc.Sequence
         # should an empty tuple force a MetaTerm?
-        return Tuple(tuple(from_python_container(elem, default=elem) for elem in p))
+        return Tuple(*tuple(from_python_container(elem, default=elem) for elem in p))
     elif isinstance(p, collections.abc.Set):
         return sset((from_python_container(elem, default=elem) for elem in p))
     elif isinstance(p, dict) and len(p) == 0:
@@ -3846,89 +3836,211 @@ class TupleIndex(SyncatOpExpr):
     canonical_name = "[]" # not a normal SyncatOpExpr!
     commutative = False
 
-    def __init__(self, arg1, arg2, **kwargs):
-        arg1 = self.ensure_typed_expr(arg1)
-        if not isinstance(arg1.type, types.TupleType):
-            raise types.TypeMismatch(arg1, arg2,
-                    error="Tuple indexing expression with a non-tuple")
-        arg2 = self.ensure_typed_expr(arg2, types.type_n)
-        if arg2.op in types.type_n.domain:
-            try:
-                # this effectively enforces an undeclared subtype of type_n
-                # based on the following exceptions
-                output_type = arg1.type[arg2.op]
-            except IndexError:
-                # XX this isn't really a type mismatch...
-                raise TypeMismatch(arg1, arg2,
-                    error="Tuple indexing expression with out-of-range index")
-            except TypeError:
-                # XX this isn't really a type mismatch...
-                raise TypeMismatch(arg1, arg2,
-                    error="Tuple indexing expression with invalid index")
-        else:
-            # we don't know which element will be selected; get a potentially
-            # polymorphic type for the whole expression.
-            output_type = common_tuple_type(arg1)
-        super().__init__(output_type, arg1, arg2, tcheck_args=False)
+    def __init__(self, arg1, i, typ=None, valid_indices=None, copying=False, **kwargs):
+        # this constructor is overall quite complicated because it allows for
+        # variables in the index slot and the tuple slot. Because of the latter,
+        # assuming that `arg1` supports the tuple api isn't safe. We do require
+        # that its type be a TupleType. (Variable types on the left are not
+        # supported!)
+        # XX support metalanguage slicing?
+        self.type_constraint(arg1.type, types.TupleType, constant=True)
 
-    def copy_local(self, arg1, arg2, **kwargs):
-        # because `[]` isn't handled like a normal operator, this can't rely
-        # on generic superclass code
-        return self.copy_core(TupleIndex(arg1, arg2))
-
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        if self.args[1].op in types.type_n.domain:
-            ttype = list(self.args[0].type)
-            ttype[self.args[1].op] = unified_type
-            adjusted_tuple = self.args[0].try_adjust_type(
-                                                    types.TupleType(*ttype))
-            return self.copy_local(adjusted_tuple, self.args[1])
+        if valid_indices is None:
+            # by default: all indices for the tuple are valid
+            self._valid_indices = range(-len(arg1.type), len(arg1.type))
         else:
-            logger.warning(
-                "Using non-constant index; not well-supported at present.")
+            self._valid_indices = valid_indices
+
+        if copying:
+            if typ is None:
+                raise ValueError("Bug: TupleIndex copying requires `typ` to be specified")
+            super().__init__(typ, arg1, i, tcheck_args=False)
+            return
+
+        i = self.type_constraint(i, types.type_n, constant=True)
+        # type constraint call ensures that any bare ints are wrapped
+
+        # minimally init self.args
+        super().__init__(None, arg1, i, tcheck_args=False)
+
+        raw_i = self.resolve_index()
+        if raw_i is not None:
+            # concrete index
+            self._valid_indices = {raw_i, raw_i - len(arg1)}
+            output_type, _ = self.type_constraint(arg1.type[raw_i], typ)
+            if output_type != typ:
+                # we need to adjust the tuple based on index i
+                sig = list(arg1.type.signature)
+                sig[raw_i] = output_type
+                ttype = types.TupleType(*sig)
+                # XX is this constant?
+                arg1, ttype = self.type_constraint(arg1, ttype)
+        elif typ is not None:
+            # non-concrete index, but a type constraint is being imposed. We
+            # need to filter valid indices by whether anything matches the
+            # type constraint.
+            sig = [self.type_constraint(t, typ, error=False)[0] for t in arg1.type]
+            self._valid_indices = {j for j in self._valid_indices if sig[j] is not None}
+            # this couldn't be handled in the fallthrough, but it's useful to
+            # specifically error here given that we know `typ` was provided
+            if not self._valid_indices:
+                raise TypeMismatch(arg1, typ,
+                    error=f"No possible tuple elements for index `{repr(i)}` that match type requirement")
+            for j in range(len(sig)):
+                if sig[j] is None:
+                    # ignore types at non-matching indices
+                    # XX this is an extremely heavy way to go about this
+                    sig[j] = types.VariableType.any()
+            # update self.args[0] in place with any necessary type adjustments
+            self.args[0], _ = self.type_constraint(arg1, types.TupleType(*sig))
+        # else case: index is not concrete, and no type constraint is provided
+        # to the constructor. The output type is determined entirely by the
+        # `resolve_type()` call below, and may be ∀X. See comment in
+        # that function.
+
+        self.type = self.resolve_type()
+        if self.type is None:
+            # this shouldn't be very easy to reach
+            raise TypeMismatch(arg1, i,
+                error=f"No possible tuple elements in indices {repr(self._valid_indices)}")
+
+
+    def resolve_index(self, i=None):
+        if i is None:
+            i = self[1]
+        if i.meta():
+            # this effectively enforces an undeclared subtype of type_n
+            # based on the range check. Note: this subtyping effect does *not*
+            # participate in type inference!
+            raw_i = i.op
+            if raw_i not in self._valid_indices:
+                from .meta import MetaIndexError
+                if isinstance(raw_i, int):
+                    if raw_i in range(len(self[0].type)):
+                        # it would be nice to show the type here, but the order
+                        # of operations makes it hard
+                        err = f"Tuple indexing with index that doesn't meet type constraints`"
+                    else:
+                        err = "Tuple indexing with out-of-range index"
+                else:
+                    err = "Tuple indexing with invalid index"
+                # raise a DomainError on analogy with partial functions / Iota
+                # XX the resulting messages aren't very good
+                raise MetaIndexError(i, self[0], extra=err)
+            # note! the above check should protect against both IndexError and
+            # TypeError for the following indexings. If it doesn't this is a
+            # bug...
+            return raw_i
+        else:
             return None
 
+    def resolve_type(self):
+        # negative indexing is allowed, but redundant here
+        elem_types = {self[0].type[i] for i in self._valid_indices if i >= 0}
+        if len(elem_types) == 0:
+            # _valid_indices is empty
+            return None
+        elif len(elem_types) == 1:
+            ret, = elem_types
+            return ret
+        elif not self[0].type.is_polymorphic():
+            # disjunctive types don't support type variables (see below)
+            return types.DisjunctiveType(*list(elem_types))
+        else:
+            # currently there is not a perfect way for expressions in this else
+            # case to be well-typed. Ideally, type variables in disjunctive
+            # types would be allowed, but this is quite technically difficult
+            # and I don't currently have a use case, so it's on hold. Instead
+            # we fall back on an extremely generic type. This works, but it
+            # can lead to some potentially surprising effects. Essentially,
+            # type adjustment acts on currently valid indices for the index
+            # expression, so if there are type variables in multiple disjuncts
+            # they all are impacted.
+            #
+            # Example 1, this case works ~ as you'd expect.
+            #     te('L x_n : (a_e, y_Y)[x]').try_adjust_type(tp('<n,n>'))
+            # The function itself is type <n,∀X>. (Where ideally, it might be
+            # type <n,(e,Y)>, but this is what's currently not supported.)
+            # Adjusting this to <n,n> requires that x != 1, and this is
+            # supported. The resulting expression has the constraint that
+            # x == 1, and the function's type is <n,Y>.
+            #
+            # Example 2, possibly unexpected behavior.
+            #     te("L x_n : t_(X,Y)[x]").try_adjust_type(tp("<n,n>"))
+            # There's a potentially desirable behavior here with conditional
+            # type variable mappings, where if n is 0, X=e, and if it's 1, Y=e.
+            # Currently, type adjustment unconditionally infers that both type
+            # variables have to be `n`. That is, the result is the
+            # straightforward function: `L x_n : t_(n,n)[x]`. One way to think
+            # about this is that the expression `t_(X,Y)[x]` has no index-based
+            # subtyping, so `x` can be 0 or 1 at the time of construction, and
+            # therefore type inference takes that constraint as primary and
+            # adjusts both type variables in consequence.
+            #
+            # If the type were allowed, this would essentially be the question
+            # of how `[X|Y]` unifies with `n`. This code as acting ad hoc as
+            # if the answer is [n|n] (which == n) with X=Y=n, where you'd want
+            # a weaker type if this were done generally.
+
+            # An alternative would be to just raise an exception here...
+            return types.VariableType.any()
+
+    def copy_local(self, arg1, arg2, typ=None, copying=False, **kwargs):
+        # because `[]` isn't handled like a normal operator, this can't rely
+        # on generic superclass code
+        # this is a bit hacky, but we need to reconstruct any inferences on the
+        # output type...
+        if copying and typ is None:
+            typ = self.type
+        # XX is passing valid_indices here right
+        return self.copy_core(TupleIndex(arg1, arg2, typ=typ, valid_indices=self._valid_indices, **kwargs))
+
+    def try_adjust_type_local(self, unified_type, derivation_reason, env):
+        return self.copy_local(*self, typ=unified_type)
+
     def __repr__(self):
+        # XX some of the complex adjustment cases don't fully repr...
         return "(%s[%s])" % (repr(self.args[0]), repr(self.args[1]))
 
     def latex_str(self, suppress_parens=False, **kwargs):
-        return ensuremath("(%s[%s])" % (self.args[0].latex_str(**kwargs),
-                                        self.args[1].latex_str(**kwargs)))
+        base = f"{self.args[0].latex_str(**kwargs)}[{self.args[1].latex_str(**kwargs)}]"
+        if not self[1].meta() and not isinstance(self.type, types.Forall):
+            # add a type annotation if the type isn't visible from a concrete
+            # index. Showing the Forall also isn't very helpful in practice.
+            # XX don't show if tuple is monotyped?
+            base += f"_{{{self.type.latex_str(**kwargs)}}}"
+
+        if not suppress_parens:
+            base = f"({base})"
+        return ensuremath(base)
 
     def _compile(self):
-        index = self[1]._compiled
         if isinstance(self[0], Tuple):
+            if (raw_i := self.resolve_index()) is not None:
+                # constant case: no need to compile the whole Tuple.
+                elem = self.args[0].tuple()[raw_i]._compiled
+                return lambda context: elem(context)
             # precompile elements but defer supplying context
             # XX can this be generalized to some non-Tuple self[0]s?
             tup = tuple(a._compiled for a in self[0])
+            index = self[1]._compiled
             return lambda context: tup[index(context)](context)
         else:
             # if we don't have a Tuple, it's hard to avoid supplying context
-            # immediately
+            # immediately. This case also covers when self[0] is a MetaTerm;
             tup = self[0]._compiled
+            index = self[1]._compiled
             return lambda context: tup(context)[index(context)]
 
-    def reduce(self):
-        if self.args[1] in types.type_n.domain:
-            # args[1] is a numeric MetaTerm
-            if isinstance(self.args[0], Tuple):
-                result = self.args[0].tuple()[self.args[1].op].copy()
-                return derived(result, self, "Resolution of index")
-            elif self.args[0].meta():
-                # XX this code should be on the tuple object somehow
-                result = term(self.args[0].op[self.args[1].op])
-                return derived(result, self, "Resolution of index")
+    def simplify(self, **kwargs):
+        if (raw_i := self.resolve_index()) is not None:
+            if isinstance(self.args[0], Tuple) or self.args[0].meta():
+                # XX why is copy() necessary
+                return derived(self.args[0].tuple()[raw_i].copy(),
+                    self, "Resolution of index")
             # else fallthrough: non-meta term of a tuple type
-        # else fallthrough: index that is not a metaterm
+        # else fallthrough: non-concrete index
         return self
-
-    def reducible(self):
-        if (self.args[1] in types.type_n.domain
-                and (isinstance(self.args[0], Tuple) or self.args[0].meta())):
-            return True
-        # no support for non-constant indices at present, not even ones that
-        # should be mathematically simplifiable
-        return False
 
     @classmethod
     def random(cls, ctrl, max_type_depth=1):

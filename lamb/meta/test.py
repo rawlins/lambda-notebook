@@ -1173,6 +1173,98 @@ class MetaTest(unittest.TestCase):
                 print(f"Simplify failure on depth 3 set expression '{repr(x)}'")
                 raise
 
+    def test_tuple(self):
+        # a few basic type adjustment cases
+        x = te('(a_n, b_e, c_X, d_<Y,Z>)')
+        self.assertEqual(x.type, tp('(n,e,X,<Y,Z>)'))
+        self.assertEqual(
+            x.try_adjust_type(tp('(n,e,e,<e,t>)')).type,
+            tp('(n,e,e,<e,t>)'))
+        self.assertEqual(
+            x.try_adjust_type(tp('(n,e,X,X)')).type,
+            tp('(n,e,<Y,Z>,<Y,Z>)'))
+        self.assertEqual(
+            x.try_adjust_type(tp('(n,e,e,<X,X>)')).type,
+            tp('(n,e,e,<e,e>)'))
+
+        # the above tests, but in the context of using a tuple as a function
+        # argument
+        x = te('f_<∀X,t>(a_n, b_e, c_X, d_<Y,Z>)')
+        self.assertEqual(
+            te('f_<∀X,t>(a_n, b_e, c_X, d_<Y,Z>)')[0].type,
+            tp('<(n,e,X,<Y,Z>),t>'))
+        self.assertEqual(
+            te('f_<(n,e,e,<e,t>),t>(a_n, b_e, c_X, d_<Y,Z>)')[0].type,
+            tp('<(n,e,e,<e,t>),t>'))
+        self.assertEqual(
+            te('f_<(n,e,X,X),t>(a_n, b_e, c_X, d_<Y,Z>)')[0].type,
+            tp('<(n,e,<Y,Z>,<Y,Z>),t>'))
+        self.assertEqual(
+            te('f_<(n,e,e,<X,X>),t>(a_n, b_e, c_X, d_<Y,Z>)')[0].type,
+            tp('<(n,e,e,<e,e>),t>'))
+
+        # tests for tuple indices
+        testsimp(self, te('(_c1, 23)[0]'), '_c1', exec=True)
+        testsimp(self, te('(_c1, 23)[1]'), 23, exec=True)
+
+        # test the meta variant
+        x = meta.MetaTerm(('_c1', 23))
+        testsimp(self, core.TupleIndex(x, 0), '_c1', exec=True)
+        testsimp(self, core.TupleIndex(x, 1), 23, exec=True)
+
+        # basic index variable cases
+        x = te('L x_n : (_c1, 23)[x]')
+        self.assertEqual(x.type, tp('<n,[e|n]>'))
+        # these are a bit weird, but they are the current behavior:
+        self.assertEqual(x(0).type, tp('[e|n]'))
+        self.assertEqual(x(1).type, tp('[e|n]'))
+        self.assertEqual(x(2).type, tp('[e|n]')) # doesn't raise until reduction!
+        testsimp(self, x(0), '_c1', exec=True, reduce=True)
+        testsimp(self, x(1), 23, exec=True, reduce=True)
+        self.assertRaises(meta.MetaIndexError, x(2).reduce_all)
+
+        # test the meta version of this (not constructable in the metalanguage
+        # parser, but should have identical behavior)
+        x = meta.core.LFun(te('x_n'),
+                    meta.core.TupleIndex(meta.MetaTerm(('_c1', 23)), te('x_n')))
+        self.assertEqual(x.type, tp('<n,[e|n]>'))
+        # these are a bit weird, but they are the current behavior:
+        self.assertEqual(x(0).type, tp('[e|n]'))
+        self.assertEqual(x(1).type, tp('[e|n]'))
+        self.assertEqual(x(2).type, tp('[e|n]')) # doesn't raise until reduction!
+        testsimp(self, x(0), '_c1', exec=True, reduce=True)
+        testsimp(self, x(1), 23, exec=True, reduce=True)
+        self.assertRaises(meta.MetaIndexError, x(2).reduce_all)
+
+        # now test some type adjustment cases
+        x = te('L x_n : (_c1, 23)[x]').try_adjust_type(tp('<n,e>'))
+        self.assertEqual(x.type, tp('<n,e>'))
+        self.assertEqual(x(0).type, tp('e'))
+        self.assertEqual(x(1).type, tp('e')) # does not raise on application!
+        # self.assertEqual(x(0).reduce_all(), te('a_e'))
+        testsimp(self, x(0), te('_c1'), exec=True, reduce=True)
+        self.assertRaises(meta.MetaIndexError, x(1).reduce_all)
+        self.assertEqual(
+            te('L x_n : (_c1, 23)[x]').try_adjust_type(tp('<n,t>')),
+            None)
+
+        x = te('L x_n : (_c1, b_Y)[x]').try_adjust_type(tp('<n,n>'))
+        self.assertEqual(x.type, tp('<n,n>'))
+        self.assertEqual(x(0).type, tp('n'))
+        self.assertEqual(x(1).type, tp('n'))
+        self.assertRaises(meta.MetaIndexError, x(0).simplify_all, reduce=True)
+        testsimp(self, x(1), te('b_n'), all=True, reduce=True)
+
+        # Weird case (see extensive comment in TupleIndex.resolve_type). The
+        # type adjustment applies to both type variables. This behavior may
+        # change in the future, but this tests the current contract.
+        x = te('L x_n : (a_X, b_Y)[x]').try_adjust_type(tp('<n,n>'))
+        self.assertEqual(x.type, tp('<n,n>'))
+        self.assertEqual(x(0).type, tp('n'))
+        self.assertEqual(x(1).type, tp('n'))
+        testsimp(self, x(0), te('a_n'), all=True, reduce=True)
+        testsimp(self, x(1), te('b_n'), all=True, reduce=True)
+
     def test_listedset(self):
         # these are not exhaustive, but relatively target to specific issues
         self.assertEqual(te("{y_X}").try_adjust_type(tp("{e}")).type, tp("{e}"))

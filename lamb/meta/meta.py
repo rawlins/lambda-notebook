@@ -47,15 +47,27 @@ class OutOfDomain(DomainError):
         return f"`{self.element}` missing from function domain (`{repr(self.f)}`)"
 
 
+# used primarily for TupleIndex
+class MetaIndexError(DomainError):
+    def __init__(self, index, indexable, extra=""):
+        super().__init__(index, indexable, extra=extra)
+
+    def __str__(self):
+        extra = self.extra
+        if extra:
+            extra = f" ({extra})"
+        return f"Invalid index `{repr(self.element)}` for indexable expression `{repr(self.domain)}`{extra}"
+
+
 class MetaTerm(core.TypedTerm):
     """Term class for storing direct references to underlying objects in a type domain."""
-    def __init__(self, name, typ=None, setfun=False, **kwargs):
+    def __init__(self, name, typ=None, setfun=False, copying=False, **kwargs):
         type_verified = False
         if isinstance(name, MetaTerm):
             # essentially, copy `name`
             if typ is None:
                 typ = name.type
-                type_verified = True
+                copying = True
             name = name.op
 
         # though super sets this, for various error cases on the type check it
@@ -63,7 +75,7 @@ class MetaTerm(core.TypedTerm):
         self.op = name
         self.type = None
 
-        if not type_verified:
+        if not copying:
             typ = self.check_type_domain(typ=typ, setfun=setfun)
 
         # this is kind of clunky, but enforce various normalized representations
@@ -161,7 +173,7 @@ class MetaTerm(core.TypedTerm):
     def tuple(self):
         if not isinstance(self.type, types.TupleType):
             raise TypeError(f"Can't convert MetaTerm of type {repr(self.type)} to a tuple")
-        return tuple(MetaTerm(elem, typ=self.type.content_type) for elem in self.op)
+        return tuple(MetaTerm(self.op[i], typ=self.type[i]) for i in range(len(self.op)))
 
     def apply(self, arg):
         if not self.type.functional() or not core.get_type_system().eq_check(self.type.left, arg.type):
