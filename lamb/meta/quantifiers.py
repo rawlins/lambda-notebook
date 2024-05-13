@@ -228,7 +228,7 @@ class RestrictedBindingOp(BindingOp):
         from .sets import ListedSet
         if random.randint(0,1):
             restrictor = ListedSet.random(ctrl, max_type_depth=max_type_depth,
-                typ=base.vartype)
+                typ=types.SetType(base.vartype))
             return base.copy_local(base.var_instance, base.body, restrictor)
         else:
             return base

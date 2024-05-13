@@ -1277,7 +1277,7 @@ class MetaTest(unittest.TestCase):
         t_set = te("Set x_e : True")
         cf_set = te("Set x_e : False")
         # reminder, te("{}") has a polymorphic type out of the gate
-        lf_set = sets.emptyset(typ=tp("e"))
+        lf_set = sets.emptyset(innertype=tp("e"))
         testsimp(self, cf_set, lf_set, all=True, exec=True)
         for f_set in [cf_set, lf_set]:
             # if the output is t_set, compilation is not possible

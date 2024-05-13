@@ -177,7 +177,7 @@ class ConditionSet(BindingOp):
             elif self[1][1] == self[0]:
                 target = self[1][0]
             if target is not None:
-                return derived(sset([target.copy()], self.type),
+                return derived(ListedSet(target.copy(), typ=self.type),
                     self,
                     "condition directly characterizes")
 
@@ -242,32 +242,32 @@ class ListedSet(TypedExpr):
     op_name_latex="ListedSet"
     pre_simplify = True # I think this is formally unnecessary, but it reduces work
 
-    def __init__(self, iterable, typ=None, assignment=None, **kwargs):
+    def __init__(self, *elements, typ=None, assignment=None, **kwargs):
         """Construct a `ListedSet` instance. note! uniqueness is not enforced here.
         Syntactic duplicates are removed only on simplify. (However, the
         metalanguage parser will filter out duplicates in advances as part of
         parsing a set expression.)"""
-        # XX reconcile APIs...typ should be self's type, not the inner type
         # XX is this pre-call necessary
-        args = [self.ensure_typed_expr(a,assignment=assignment) for a in iterable]
-        # `typ` here is the content type.
-        if len(args) == 0 and typ is None:
-            # XX should this be VariableType.any()? or set let=True?
-            typ = types.UnknownType() # could be a set of anything
-        elif typ is None:
+        args = [self.ensure_typed_expr(a, assignment=assignment) for a in elements]
+        if len(args) == 0:
+            # could be a set of anything
+            typ, _ = self.type_constraint(typ, SetType(types.VariableType.any()))
+        else:
             # inherit the type from the first argument
-            typ = args[0].type
+            typ, _ = self.type_constraint(typ, SetType(args[0].type))
 
-        def _update_types(typ, args):
+        inner_type = typ[0]
+
+        def _update_types(ityp, args):
             # take a single pass through elements and apply `typ` as an element
             # constraint
             for i in range(len(args)):
-                typ, args[i] = self.type_constraint(typ, args[i],
-                    error=f"Set elements must have compatible types (`{repr(args[i])}` at type `{typ}`)")
-            return typ
+                ityp, args[i] = self.type_constraint(ityp, args[i],
+                    error=f"Set elements must have compatible types (`{repr(args[i])}` at type `{ityp}`)")
+            return ityp
 
-        styp = _update_types(typ, args)
-        if styp != typ:
+        styp = _update_types(inner_type, args)
+        if styp != inner_type:
             # we strengthened, somewhere along the line. `styp` should now be
             # the strongest principal type compatible with all elements. Make
             # sure that all elements do have this type.
@@ -288,17 +288,12 @@ class ListedSet(TypedExpr):
 
     def copy_local(self, *args, typ=None, **kwargs):
         # explicit handling of empty sets in order to get the type right
-        if len(args) == 0:
+        if len(args) == 0 and typ is None:
             # don't allow any types weaker than self.type to be inferred for
             # an empty set
-            if typ is None:
-                typ = self.type
-            return emptyset(typ)
+            typ = self.type
 
-        # XX reconcile APIs...
-        if typ is not None:
-            typ = typ.content_type
-        return self.copy_core(ListedSet(args, typ=typ))
+        return self.copy_core(ListedSet(*args, typ=typ))
 
     @classmethod
     def join(self, l):
@@ -395,37 +390,36 @@ class ListedSet(TypedExpr):
     @classmethod
     def random(self, ctrl, max_type_depth=1, max_members=6, typ=None, allow_empty=True):
         if typ is None:
-            typ = get_type_system().random_type(max_type_depth, 0.5)
+            typ = SetType(get_type_system().random_type(max_type_depth, 0.5))
         if allow_empty:
             r = range(max_members+1)
         else:
             r = range(max_members+1)[1:]
         length = random.choice(r)
-        members = [ctrl(typ=typ) for i in range(length)]
+        members = [ctrl(typ=typ[0]) for i in range(length)]
         if not length and random.choice([True, False]):
             # untyped (`{?}`) empty set
-            return ListedSet(members)
+            return sset(members)
         else:
-            return sset(members, typ=typ)
+            return sset(members, settype=typ)
 
 
-def sset(iterable, settype=None, typ=None, assignment=None):
-    # XX the typ api for ListedSet remains kind of awkward, this attempts to
-    # fill in the gaps a bit. `settype` is intentionally ordered before `typ`!
-    if settype is not None:
-        if not isinstance(settype, SetType):
+def sset(iterable, settype=None, innertype=None, assignment=None):
+    # factory that calls do_simplify
+    if innertype is None:
+        if settype is not None and not isinstance(settype, SetType):
             raise ValueError("Set construction by set type requires a SetType!")
-        if typ is not None:
+    else:
+        if settype is not None:
             raise ValueError("Set construction requires either a content type or a set type, not both!")
-        typ = settype.content_type
-    return ListedSet(iterable, typ=typ, assignment=assignment).do_simplify()
+        settype = SetType(innertype)
+    return ListedSet(*list(iterable), typ=settype, assignment=assignment).do_simplify()
 
 
-def emptyset(settype=None, typ=None):
+def emptyset(settype=None, **kwargs):
     """Convenience factory for empty sets"""
-    # if settype is not None and isinstance(settype, SetType):
-    #     settype = settype.content_type
-    return sset(set(), settype=settype, typ=typ)
+
+    return sset(set(), settype=settype, **kwargs)
 
 
 def is_emptyset(s):
@@ -544,7 +538,7 @@ class SetContains(SyncatOpExpr):
                     # rerun simplify, essentially for the sake of only the
                     # singleton case above. (XX can the elif order be adjusted
                     # to get this directly, with derivational history?)
-                    return derived(SetContains(self[0], sset(news, settype=self[1].type)),
+                    return derived(SetContains(self[0], sset(news, self[1].type)),
                         self,
                         "∈ simplification (concrete filtering)").simplify(**sopts)
         elif isinstance(self[1], ConditionSet):
@@ -639,8 +633,6 @@ class BinarySetOp(SyncatOpExpr):
         if typ is None:
             typ = SetType(get_type_system().random_type(max_type_depth, 0.5))
         # XX random ConditionSet
-        # s1 = ListedSet.random(ctrl, max_type_depth=max_type_depth, typ=typ)
-        # s2 = ListedSet.random(ctrl, max_type_depth=max_type_depth, typ=typ)
         return cls(ctrl(typ=typ), ctrl(typ=typ))
 
 
