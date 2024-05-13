@@ -48,8 +48,9 @@ class BinaryAndExpr(SyncatOpExpr):
     commutative = True
     associative = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(type_t, arg1, arg2)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__(typ, arg1, arg2)
 
     def _compile(self):
         l = self[0]._compiled
@@ -98,8 +99,9 @@ class BinaryOrExpr(SyncatOpExpr):
     commutative = True
     associative = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(type_t, arg1, arg2)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__(typ, arg1, arg2)
 
     def _compile(self):
         l = self[0]._compiled
@@ -150,8 +152,9 @@ class BinaryArrowExpr(SyncatOpExpr):
     commutative = False
     associative = False
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(type_t, arg1, arg2)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__(typ, arg1, arg2)
 
     def _compile(self):
         l = self[0]._compiled
@@ -184,8 +187,9 @@ class BinaryBiarrowExpr(SyncatOpExpr):
     commutative = True
     associative = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(type_t, arg1, arg2)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__(typ, arg1, arg2)
 
     def _compile(self):
         l = self[0]._compiled
@@ -241,8 +245,9 @@ class BinaryNeqExpr(SyncatOpExpr):
     commutative = True
     associative = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(type_t, arg1, arg2)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__(typ, arg1, arg2)
 
     def _compile(self):
         l = self[0]._compiled

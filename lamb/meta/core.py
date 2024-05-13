@@ -14,7 +14,7 @@ from .ply import simplify_all, symbol_is_var_symbol
 from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
 from .ply import term_replace_unify, variable_convert, alpha_variant
 from .ply import commutative, associative, left_commutative, right_commutative
-from .ply import Derivation, DerivationStep, set_derivation
+from .ply import Derivation, DerivationStep, set_derivation, no_derivations
 
 ############### Basic stuff
 
@@ -479,7 +479,7 @@ class OperatorRegistry(object):
         else:
             return e
 
-    def expr_factory(self, op, *args):
+    def expr_factory(self, op, *args, **kwargs):
         """Given some operator/relation symbol with arguments, construct an
         appropriate TypedExpr subclass for that operator."""
 
@@ -510,7 +510,7 @@ class OperatorRegistry(object):
                 "Ambiguous %d-ary operator symbol `%s` for args `%s`"
                     % (len(args), op, repr(args)))
 
-        return self.apply_custom_transforms(matches[0].cls, matches[0].cls(*args))
+        return self.apply_custom_transforms(matches[0].cls, matches[0].cls(*args, **kwargs))
 
     def add_binding_op(self, op):
         """Register an operator to be parsed."""
@@ -544,9 +544,9 @@ def is_op_symbol(op):
     return op in registry.ops
 
 
-def op_expr_factory(op, *args):
+def op_expr_factory(op, *args, **kwargs):
     global registry
-    return registry.expr_factory(op, *args)
+    return registry.expr_factory(op, *args, **kwargs)
 
 
 def subassignment(assignment, **kwargs):
@@ -1054,29 +1054,56 @@ class TypedExpr(object):
         if is_te(a):
             a_te = a
             a = a_te.type
+            a_repr = f'`{repr(a_te)}`'
         else:
             a_te = None
+            a_repr = f'type `{a}`'
 
         if is_te(b):
             b_te = b
             b = b_te.type
+            b_repr = f'`{repr(b_te)}`'
         else:
             b_te = None
-        if error is None:
-            error = f"Failed to reconcile type constraint for `{name}`: {a} == {b}"
-        principal = ts_reconcile(a, b, error=error)
+            b_repr = f'type `{b}`'
+
+        def failed_constraint(a=a, b=b, a_te=None, b_te=None, error=error):
+            if error is False:
+                if constant:
+                    return None
+                else:
+                    return None, None
+            if a_te is not None:
+                a = a_te
+            if b_te is not None:
+                b = b_te
+            if is_te(a):
+                a_repr = f'`{repr(a)}`'
+            else:
+                a_repr = f'type `{a}`'
+            if is_te(b):
+                b_repr = f'`{repr(b)}`'
+            else:
+                b_repr = f'type `{b}`'
+            if error is None:
+                error = f"Failed to reconcile type constraint for `{name}`: {a_repr} == {b_repr}"
+            else:
+                error = str.format(error, a_repr=a_repr, b_repr=b_repr, name=name)
+            raise TypeMismatch(a, b, error=error)
+
+        principal = ts_reconcile(a, b)
+        if principal is None:
+            return failed_constraint(a, b, a_te, b_te)
         if constant and b != principal:
             # is this unnecessarily strict?
-            if error:
-                raise TypeMismatch(a, b, f"Type constraint for `{name}` ({a} == constant {b}) would require adjusting constant to {principal}")
-            else:
-                return None
+            return failed_constraint(a, b,
+                f"Type constraint for `{name}` ({{a_repr}} == constant {{b_repr}}) would require adjusting constant to {principal}")
         if principal is not None and a_te is not None:
             # XX maybe let caller set name for more information?
             a = a_te.try_adjust_type(principal,
                 derivation_reason=f"Type constraint from {name}: {a} == {b}")
-            if not error and a is None:
-                raise TypeMismatch(a, principal, error=error)
+            if a is None:
+                return failed_constraint(a_te, principal)
         else:
             a = principal
         if constant:
@@ -1084,8 +1111,8 @@ class TypedExpr(object):
         if principal is not None and b_te is not None:
             b = b_te.try_adjust_type(principal,
                 derivation_reason=f"Type constraint from {name}: {a} == {b}")
-            if not error and b is None:
-                raise TypeMismatch(b, principal, error=error)
+            if b is None:
+                return failed_constraint(b_te, principal)
         else:
             b = principal
         return (a, b)
@@ -1125,7 +1152,6 @@ class TypedExpr(object):
             self._type_cache_set(self.type, self)
             return self
         else:
-            assert not isinstance(self.op, TypedExpr)
             if derivation_reason is None:
                 derivation_reason = "Type adjustment"
             if self.term():
@@ -1156,11 +1182,7 @@ class TypedExpr(object):
                     return derived(result, self, derivation_reason)
 
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        # write an error instead of throwing an exception -- this is easier for
-        # the user to handle atm
-        logger.error("Unimplemented `try_adjust_type_local` in class '%s'"
-                                                        % type(self).__name__)
-        return None
+        return self.copy_local(*self, typ=unified_type)
 
     @property
     def _type_env(self):
@@ -2488,10 +2510,6 @@ class ApplicationExpr(TypedExpr):
             # assumption: LFun adds its own parens
             return f"{repr(fun)}{arg_str}"
 
-    def try_adjust_type_local(self, new_type, derivation_reason, env):
-        # XX refactor to superclass
-        return self.copy_local(*self, typ=new_type)
-
     def try_coerce_new_argument(self, typ, remove_guessed=False,
                                                         assignment=None):
         """For guessed types, see if it is possible to coerce a new argument.
@@ -2646,10 +2664,6 @@ class Tuple(TypedExpr):
         """Return a python `tuple` version of the Tuple object."""
         return tuple(self.args)
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        # XX refactor to superclass
-        return self.copy_local(*self, typ=unified_type)
-
     def __repr__(self):
         return "(" + ", ".join([repr(a) for a in self.args]) + ")"
 
@@ -2691,6 +2705,7 @@ global suppress_bound_var_types
 suppress_bound_var_types = True
 
 class TypedTerm(TypedExpr):
+    canonical_name = "TypedTerm"
     """used for terms of arbitrary type.  Note that this is not exactly
     standard usage of 'term'. In general, these cover variables and constants.
     The name of the term is 'op', and 'args' is empty.
@@ -2774,10 +2789,17 @@ class TypedTerm(TypedExpr):
         other.latex_op_str = self.latex_op_str
         return other
 
-    def copy_local(self, copying=False, **kwargs):
-        # XX the constructor logic here is a bit convoluted, but we don't
-        # want to build a type env until `from_assignment` is set...
-        result = TypedTerm(self.op, typ=self.type, copying=copying, defer_type_env=True, **kwargs)
+    def copy_local(self, copying=False, typ=None, **kwargs):
+        # XX the type logic here is a bit convoluted.
+        # * we don't want to build a type env until `from_assignment` is set,
+        #   so constructor type env handling is deferred
+        # * Type inference doesn't happen in the constructor for this class, so
+        #   if a caller passes `typ` it needs to be handled here, rather than
+        #   there. That is, `type` is essentially a *local* property for this
+        #   class, unlike most others.
+        # * copying=True cases explicitly need to copy the type env
+        typ, _ = self.type_constraint(self.type, typ)
+        result = TypedTerm(self.op, typ=typ, copying=copying, defer_type_env=True, **kwargs)
         result = self.copy_core(result)
         if copying:
             result.set_type_env(self.get_type_env().copy())
@@ -3026,15 +3048,23 @@ class CustomTerm(TypedTerm):
 # possibly these belong in boolean, or somewhere else?
 
 class Partial(TypedExpr):
-    def __init__(self, body, condition, **kwargs):
+    canonical_name = "Partial"
+    def __init__(self, body, condition, typ=None, **kwargs):
         if condition is None:
             condition = from_python(True)
-        condition = TypedExpr.ensure_typed_expr(condition, types.type_t)
 
-        super().__init__("Partial", body, condition)
-        self.type = body.type
-        self.condition = condition
-        self.body = body
+        condition = self.type_constraint(condition, types.type_t, constant=True)
+        body, typ = self.type_constraint(body, typ)
+
+        super().__init__("Partial", body, condition, typ=typ)
+
+    @property
+    def body(self):
+        return self[0]
+
+    @property
+    def condition(self):
+        return self[1]
 
     def undefined(self):
         # note: returning True doesn't mean defined!
@@ -3153,16 +3183,6 @@ class Partial(TypedExpr):
     
     def __repr__(self):
         return f"Partial({repr(self.body)}, {repr(self.condition)})"
-
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        # the trick: convert to a Tuple of type (X,t), adjust type, and
-        # convert back again. Not well tested.
-        tuple_version = self.meta_tuple()
-        revised_type = types.TupleType(unified_type, types.type_t)
-        result = tuple_version.try_adjust_type(revised_type, derivation_reason,
-                                                                        env)
-        # XX this should raise on None?
-        return self.copy_local(result[0], result[1])
         
     def latex_str(self, suppress_parens=False, **kwargs):
         body_str = self.body.latex_str(suppress_parens=True, **kwargs)
@@ -3206,9 +3226,10 @@ class Partial(TypedExpr):
 
         
 class Body(TypedExpr):
-    def __init__(self, body, **kwargs):
-        super().__init__("Body", body)
-        self.type = body.type
+    canonical_name = "Body"
+    def __init__(self, body, typ=None, **kwargs):
+        body, typ = self.type_constraint(body, typ)
+        super().__init__("Body", body, typ=typ)
 
     def _compile(self):
         if isinstance(self[0], Partial):
@@ -3235,9 +3256,10 @@ class Body(TypedExpr):
 
 
 class Condition(TypedExpr):
-    def __init__(self, body, **kwargs):
-        super().__init__("Condition", body)
-        self.type = types.type_t
+    canonical_name = "Condition"
+    def __init__(self, body, typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        super().__init__("Condition", body, typ=typ)
 
     def _compile(self):
         if isinstance(self[0], Partial):
@@ -3310,38 +3332,48 @@ def partial(body, *conditions, force=False):
 # type is not permitted, but neither are cases where the types overlap (so for
 # example,  where you have an expression of type e, and an expression of type
 # [e|t], because that would lead to a problem if it were adjusted to type e.)
-#
-# In a very roundabout way, this class acts like a dictionary mapping types to
-# expressions.
 class Disjunctive(TypedExpr):
-    def __init__(self, *disjuncts, **kwargs):
-        ts = get_type_system()
-        principal_type = types.DisjunctiveType(*[d.type for d in disjuncts])
-        t_adjust = set()
-        # this is not a great way to do this (n*m) but I couldn't see a
-        # cleverer way to catch stuff like:
-        # > `Disjunctive(te("x_e"), te("y_n"), te("z_[e|t]"))`
-        # It would work to not have this check here, and let the error happen
-        # on type adjustment later (e.g. type adjustment to `e` would fail in
-        # the above example) but I decided that that would be too confusing.
+    canonical_name = "Disjunctive"
+    def __init__(self, *disjuncts, typ=None, **kwargs):
+        if len(disjuncts) == 0:
+            raise parsing.ParseError("Empty Disjunction not allowed")
+        elif len(disjuncts) == 1:
+            principal = disjuncts[0].type
+        else:
+            principal = types.DisjunctiveType(*[d.type for d in disjuncts])
+        typ, _  = self.type_constraint(principal, typ)
+
+        # need to check for duplicates across expressions
+        all_types = set()
+        live = []
         for d in disjuncts:
-            for t in principal_type:
-                r = d.try_adjust_type(t)
-                if r is not None:
-                    if r.type in t_adjust:
-                        raise parsing.ParseError(
-                            "Disjoined expressions must determine unique types"
-                            " (type `%s` appears duplicated in expression `%s` "
-                            "for disjuncts `%s`)"
-                            % (repr(t), repr(d), repr(disjuncts)))
-                    else:
-                        t_adjust |= {r.type}
-        self.type = types.DisjunctiveType(*t_adjust)
-        super().__init__("Disjunctive", *disjuncts)
-        
-    def copy_local(self, *disjuncts, **kwargs):
-        return self.copy_core(Disjunctive(*disjuncts))
+            d, _ = self.type_constraint(d, typ, error=False)
+            if d is None:
+                continue
+            live.append(d)
+            dt = d.type
+            if not isinstance(dt, types.DisjunctiveType):
+                dt = [dt]
+            for t in dt:
+                if t in all_types:
+                    raise parsing.ParseError(
+                        "Disjoined expressions must determine unique types"
+                        f" (type `{t}` appears duplicated in expression `{repr(d)}`")
+                else:
+                    all_types.add(t)
+
+        if len(live) == 0:
+            raise parsing.TypeMismatch(principal, typ,
+                "Type constraints resulted in empty Disjunction")
+
+        super().__init__("Disjunctive", *live, typ=typ)
     
+    def simplify(self, **kwargs):
+        if len(self) == 1:
+            return derived(self[0], self, "Trivial Disjunction")
+        else:
+            return self
+
     def term(self):
         return False
     
@@ -3358,18 +3390,10 @@ class Disjunctive(TypedExpr):
                                                         for a in self.args])))
     
     def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        ts = get_type_system()
-        l = list()
-        for a in self.args:
-            t = ts.unify(unified_type, a.type)
-            if t is None:
-                continue
-            l.append(a.try_adjust_type(t, derivation_reason=derivation_reason))
-        assert len(l) > 0
-        if (len(l) == 1):
-            return l[0]
-        else:
-            return Disjunctive(*l)
+        # class-specific behavior: if type adjustment results in a non-disjunctive
+        # type, return only the disjunct
+        with no_derivations():
+            return self.copy_local(*self, typ=unified_type).simplify()
 
     def apply(self, arg):
         if not self.type.functional():
@@ -3454,13 +3478,11 @@ class SyncatOpExpr(TypedExpr):
     # for some operation.
     left_assoc = True # currently just cosmetic: suppresses parens for left recursion
 
-    # should output type be a class variable?
-
-    def __init__(self, typ, *args, tcheck_args=True):
+    def __init__(self, arg_type, *args, typ=None, tcheck_args=True):
+        if typ is None:
+            typ = arg_type # convenient, but somewhat arbitrary, default
         if tcheck_args:
-            args = [self.ensure_typed_expr(a, typ) for a in args]
-        else:
-            args = [self.ensure_typed_expr(a) for a in args]
+            args = [self.type_constraint(a, arg_type, constant=True) for a in args]
         super().__init__(self.canonical_name, *args)
         self.type = typ
         if self.op_name_uni is None:
@@ -3475,8 +3497,7 @@ class SyncatOpExpr(TypedExpr):
     def copy_local(self, *args, **kwargs):
         """This must be overriden by classes that are not produced by the
         factory."""
-        # TODO: is this necessary?
-        return self.copy_core(op_expr_factory(self.op, *args))
+        return self.copy_core(op_expr_factory(self.op, *args, **kwargs))
 
     def name_of(self, i):
         return f"operand {i}"
@@ -3705,7 +3726,7 @@ def op(op, arg_type, ret_type,
         if not (arity == 1 or arity == 2):
             raise ValueError("@op needs function of arity 1 or 2 (got %d)" % arity)
         class WrappedOp(SyncatOpExpr):
-            def __init__(self, *args, **kwargs):
+            def __init__(self, *args, typ=None, **kwargs):
                 # XX this updates __name__ but not __class__
                 functools.update_wrapper(self, func)
                 if len(args) != arity:
@@ -3713,9 +3734,9 @@ def op(op, arg_type, ret_type,
                     raise parsing.ParseError(
                         "%s (%s) needs %d operands but %d were given"
                         % (op_uni, func.__name__, arity, len(args)))
-                args = [self.ensure_typed_expr(a, arg_type) for a in args]
+                typ = self.type_constraint(ret_type, typ)
                 self.operator_style = True
-                super().__init__(ret_type, *args, tcheck_args=False)
+                super().__init__(arg_type, *args, typ=ret_type)
 
             def _compile(self):
                 # this could be faster if it weren't generic
@@ -3771,15 +3792,11 @@ class BinaryGenericEqExpr(SyncatOpExpr):
 
     """Type-generic equality.  This places no constraints on the type of `arg1`
     and `arg2` save that they be equal."""
-    def __init__(self, arg1, arg2, **kwargs):
-        self.argtype = ts_unify_with(arg1, arg2,
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+        arg1, arg2 = self.type_constraint(arg1, arg2,
                                 error="Equality requires compatible types")
-        arg1 = self.ensure_typed_expr(arg1, self.argtype)
-        # maybe raise the exception directly?
-        arg2 = self.ensure_typed_expr(arg2, self.argtype)
-        # some problems with equality using '==', TODO recheck, but for now
-        # just use "<=>" in the normalized form
-        super().__init__(types.type_t, arg1, arg2, tcheck_args = False)
+        super().__init__(arg1.type, arg1, arg2, typ=typ, tcheck_args = False)
 
     def _compile(self):
         # XX is this safe to implement at every type?
@@ -3994,9 +4011,6 @@ class TupleIndex(SyncatOpExpr):
             typ = self.type
         # XX is passing valid_indices here right
         return self.copy_core(TupleIndex(arg1, arg2, typ=typ, valid_indices=self._valid_indices, **kwargs))
-
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        return self.copy_local(*self, typ=unified_type)
 
     def __repr__(self):
         # XX some of the complex adjustment cases don't fully repr...
@@ -4252,9 +4266,6 @@ class BindingOp(TypedExpr):
         # silently
         assert type(self) != BindingOp
         return self.copy_core(type(self)(*args, **kwargs))
-
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        return self.copy_local(*self, typ=unified_type)
 
     def name_of(self, i):
         if i == len(self) - 1:

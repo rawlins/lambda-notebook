@@ -392,10 +392,6 @@ class ListedSet(TypedExpr):
         else:
             return utils.ensuremath(f"\\{{{inner}\\}}")
 
-    def try_adjust_type_local(self, unified_type, derivation_reason, env):
-        # XX generalize to superclass
-        return self.copy_local(*self, typ=unified_type)
-
     @classmethod
     def random(self, ctrl, max_type_depth=1, max_members=6, typ=None, allow_empty=True):
         if typ is None:
@@ -467,21 +463,19 @@ class SetContains(SyncatOpExpr):
     arity = 2
     canonical_name = "<<"
     op_name_uni = "∈"
-    # ∈ should work but I was having trouble with it (long ago, recheck)
     op_name_latex = "\\in{}"
     commutative = False
 
-    def __init__(self, arg1, arg2, **kwargs):
-        # seems like the best way to do the mutual type checking here?
-        # Something more elegant?
-        arg1 = self.ensure_typed_expr(arg1)
-        try:
-            arg2 = self.ensure_typed_expr(arg2, SetType(arg1.type))
-        except types.TypeMismatch:
-            raise types.TypeMismatch(arg2, SetType(arg1.type),
-                error="Right operand of `<<` must be a set type matching left operand")
-        arg1 = self.ensure_typed_expr(arg1, arg2.type.content_type)
-        super().__init__(type_t, arg1, arg2, tcheck_args=False)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        typ = self.type_constraint(typ, types.type_t, constant=True)
+
+        arg2, settype = self.type_constraint(arg2, SetType(arg1.type),
+            error="Right operand of `<<` must be a set type matching left operand")
+        # now resolve any type inference that may impact back on arg1
+        arg1 = self.type_constraint(arg1, settype[0], constant=True,
+            error="Right operand of `<<` must be a set type matching left operand")
+
+        super().__init__(typ, arg1, arg2, tcheck_args=False)
 
     def _compile(self):
         arg = self[0]._compiled
@@ -607,13 +601,18 @@ def check_set_types(arg1, arg2, op_name=None):
 class BinarySetOp(SyncatOpExpr):
     arity = 2
 
-    def __init__(self, arg1, arg2, op_name, typ=None, **kwargs):
+    def __init__(self, arg1, arg2, op_name, rettype=None, typ=None):
         t = check_set_types(arg1, arg2, op_name=op_name)
-        arg1 = self.ensure_typed_expr(arg1, t)
-        arg2 = self.ensure_typed_expr(arg2, t)
-        if typ is None:
-            typ = t
-        super().__init__(typ, arg1, arg2, tcheck_args=False)
+        if rettype is None:
+            # treat `t` also as the return type
+            t, _ = self.type_constraint(t, typ)
+            rettype = t
+        else:
+            self.type_constraint(typ, rettype, constant=True)
+
+        arg1 = self.type_constraint(arg1, t, constant=True)
+        arg2 = self.type_constraint(arg2, t, constant=True)
+        super().__init__(t, arg1, arg2, typ=rettype, tcheck_args=False)
 
     def _compile(self):
         impl = self._set_impl()
@@ -644,14 +643,6 @@ class BinarySetOp(SyncatOpExpr):
         # s2 = ListedSet.random(ctrl, max_type_depth=max_type_depth, typ=typ)
         return cls(ctrl(typ=typ), ctrl(typ=typ))
 
-    def try_adjust_type_local(self, typ, reason, env):
-        if self.type == type_t:
-            return super().try_adjust_type_local(unified_type,
-                                            derivation_reason, env)
-        return self.copy_local(
-            self.args[0].try_adjust_type(typ, reason),
-            self.args[1].try_adjust_type(typ, reason))
-
 
 class SetUnion(BinarySetOp):
     """Binary operation of set union."""
@@ -666,8 +657,8 @@ class SetUnion(BinarySetOp):
     # recursive steps.
     pre_simplify = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(arg1, arg2, "Set union")
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        super().__init__(arg1, arg2, "Set union", typ=typ)
 
     def _set_impl(self):
         var = safevar(self)
@@ -726,8 +717,8 @@ class SetIntersection(BinarySetOp):
     associative = True
     pre_simplify = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(arg1, arg2, "Set intersection")
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        super().__init__(arg1, arg2, "Set intersection", typ=typ)
 
     def _set_impl(self):
         var = safevar(self)
@@ -828,8 +819,8 @@ class SetDifference(BinarySetOp):
     associative = False
     pre_simplify = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(arg1, arg2, "Set difference")
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        super().__init__(arg1, arg2, "Set difference", typ=typ)
 
     def _set_impl(self):
         var = safevar(self)
@@ -924,8 +915,8 @@ class SetEquivalence(BinarySetOp):
     op_name_latex = "="
     commutative = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(arg1, arg2, "Set equivalence", typ=type_t)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        super().__init__(arg1, arg2, "Set equivalence", rettype=types.type_t, typ=typ)
 
     def _set_impl(self):
         # this is general, but unfortunately kind of bad in a lot of special
@@ -1085,8 +1076,8 @@ class SetSubset(BinarySetOp):
     op_name_latex = "\\subseteq{}"
     commutative = False
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(arg1, arg2, "Subset", typ=type_t)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        super().__init__(arg1, arg2, "Subset", rettype=types.type_t, typ=typ)
 
     def _set_impl(self):
         return self[0].equivalent_to(self[0] & self[1])
@@ -1111,8 +1102,8 @@ class SetProperSubset(BinarySetOp):
     op_name_latex = "\\subset{}"
     commutative = False
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(arg1, arg2, "Proper subset", typ=type_t)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        super().__init__(arg1, arg2, "Proper subset", rettype=types.type_t, typ=typ)
 
     def _set_impl(self):
         return ((self[0] <= self[1]) & (~(self[0].equivalent_to(self[1]))))
@@ -1136,8 +1127,8 @@ class SetSupset(BinarySetOp):
     op_name_latex = "\\supseteq{}"
     commutative = False
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(arg1, arg2, "Superset", typ=type_t)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        super().__init__(arg1, arg2, "Superset", rettype=types.type_t, typ=typ)
 
     def _set_impl(self):
         # normalize to <=
@@ -1156,8 +1147,8 @@ class SetProperSupset(BinarySetOp):
     op_name_latex = "\\supset{}"
     commutative = True
 
-    def __init__(self, arg1, arg2, **kwargs):
-        super().__init__(arg1, arg2, "Proper superset", typ=type_t)
+    def __init__(self, arg1, arg2, typ=None, **kwargs):
+        super().__init__(arg1, arg2, "Proper superset", rettype=types.type_t, typ=typ)
 
     def _set_impl(self):
         # normalize to <
