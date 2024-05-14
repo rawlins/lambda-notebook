@@ -180,6 +180,11 @@ class ConditionSet(BindingOp):
                 return derived(ListedSet(target.copy(), typ=self.type),
                     self,
                     "condition directly characterizes")
+        elif (get_sopt('evaluate', sopts)
+                    and not self.free_terms()
+                    and self.finite_safe()):
+            # XX make come apart from the general `eliminate` option?
+            return self.eliminate(**sopts)
 
         return self
 
