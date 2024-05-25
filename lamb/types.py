@@ -693,6 +693,8 @@ class FunDomainSet(ComplexDomainSet):
             raise ValueError("Can't iterate over non-finite `FunDomainSet`s.")
         # careful with this -- it can definitely blow up!
         dom = list(self.type.left.domain)
+        # note: itertools.product requires a stopping iterator and converts
+        # to a tuple immediately...
         for p in itertools.product(self.type.right.domain, repeat=len(dom)):
             yield utils.frozendict(list(zip(dom, p)))
 
@@ -874,7 +876,17 @@ class SetDomainSet(ComplexDomainSet):
         return f"SetDomainSet({self.type})"
 
     def element_repr(self, x, rich=False, **kwargs):
+        def elem_key(x):
+            if isinstance(x, str):
+                return x
+            else:
+                return x.op
         elements = list(x)
+        try:
+            elements = sorted(elements, key=elem_key)
+        except:
+            # just silently fail if this isn't going to work
+            pass
         return curlybraces(
             f"{','.join(self.type[0].domain.element_repr(elements[i], rich=rich) for i in range(len(elements)))}",
             rich=rich)
@@ -994,6 +1006,8 @@ class TupleDomainSet(ComplexDomainSet):
 
     def __iter__(self):
         domains = (t.domain for t in self.type)
+        # note: itertools.product requires a stopping iterator and converts
+        # to a tuple immediately...
         for p in itertools.product(*domains):
             yield p
 

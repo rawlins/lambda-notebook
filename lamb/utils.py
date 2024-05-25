@@ -329,7 +329,7 @@ def dict_latex_repr(d, linearized=True, **kwargs):
             f"\\left[\\begin{{array}}{{lll}} {'\n'.join(r)} \\end{{array}}\\right]")
 
 
-def set_latex_repr(d, **kwargs):
+def set_latex_repr(d, set_sorted=True, **kwargs):
     """Given some set `d`, render `d` into MathJax-compatible latex code.
     Recurses into the collection using `latex_repr`.
 
@@ -344,8 +344,20 @@ def set_latex_repr(d, **kwargs):
     --------
     `dict_latex_repr`, `latex_repr`
     """
+    def elem_key(x):
+        if isinstance(x, str):
+            return x
+        else:
+            return x.op
     r = list()
-    for k in list(d):
+    if set_sorted:
+        try:
+            d = sorted(d, key=elem_key)
+        except:
+            pass
+    else:
+        d = list(d)
+    for k in d:
         r.append(latex_repr(k, **kwargs))
     return ensuremath(f"\\{{{', '.join(r)}\\}}")
 

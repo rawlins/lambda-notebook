@@ -161,7 +161,8 @@ class ConditionSet(BindingOp):
     def simplify(self, **sopts):
         if self[1] == false_term:
             return derived(emptyset(self.type), self, "trivial set condition")
-        elif isinstance(self[1], SetContains) and self[1][0] == self[0]:
+        elif (isinstance(self[1], SetContains) and self[1][0] == self[0]
+                and self.varname not in self[1][1].free_terms()):
             # XX these two are annoyingly special-case-y, and are primarily
             # here because automatic simplification will generate such
             # expressions.
@@ -176,7 +177,7 @@ class ConditionSet(BindingOp):
                 target = self[1][1]
             elif self[1][1] == self[0]:
                 target = self[1][0]
-            if target is not None:
+            if target is not None and self.varname not in target.free_terms():
                 return derived(ListedSet(target.copy(), typ=self.type),
                     self,
                     "condition directly characterizes")

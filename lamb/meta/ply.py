@@ -182,17 +182,12 @@ def alphanorm_key(e):
     # decorate an expression into a tuple for sort purposes
     from .core import SyncatOpExpr
     from .sets import ListedSet # is there a way of implementing this on the subclass?
+    # order: metaterms, terms, complex terms
+    # ' ' precedes all other alphanumeric ascii symbols
     if e.meta():
-        # order: metaterms, terms, complex terms
-        # ' ' precedes all other alphanumeric ascii symbols
-        if isinstance(e.op, Number):
-            # use the op directly for numeric, not lexicographic sort. To
-            # avoid an exception, we use a different (unique) decoration
-            # for numbers, so that numbers can never be compared with str
-            return (' #', e.op)
-        else:
-            # tbd if this generally results in sane sort orders
-            return (' 0', repr(e))
+        from .meta import mt_key
+        # tbd if this generally results in sane sort orders
+        return (' 0',) + mt_key(e)
     elif e.term():
         return (' 1', repr(e))
     elif isinstance(e, SyncatOpExpr) and e.arity == 1:

@@ -172,7 +172,7 @@ def let_wrapper(s):
     return result
 
 
-def te(s, let=True, assignment=None, _globals=None):
+def te(s, *, let=True, assignment=None, _globals=None):
     """Public interface for constructing `TypedExpr` objects; `s` may be a
     string, in which case it will be parsed."""
 

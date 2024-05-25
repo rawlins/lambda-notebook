@@ -1,6 +1,6 @@
-import random
+import random, numbers
 import collections, collections.abc
-import contextlib
+import contextlib, itertools
 import IPython.lib.pretty as pretty
 
 import lamb
@@ -57,6 +57,35 @@ class MetaIndexError(DomainError):
         if extra:
             extra = f" ({extra})"
         return f"Invalid index `{repr(self.element)}` for indexable expression `{repr(self.domain)}`{extra}"
+
+
+def mt_key(m):
+    # does not support complex ops except tuple very well
+    if isinstance(m, MetaTerm):
+        return mt_key(m.op)
+    elif isinstance(m, bool):
+        # preempt Number
+        return (" b", m)
+    elif isinstance(m, numbers.Number):
+        return (" #", m)
+    elif isinstance(m, str):
+        if m.startswith("_"):
+            m = m[1:]
+        try:
+            return m[0], int(m[1:])
+        except:
+            return m
+    elif isinstance(m, tuple):
+        return (" ()",) + tuple(mt_key(e) for e in m)
+    elif isinstance(m, collections.abc.Set):
+        # XX does this work in the general case??
+        sorted_m = sorted(m, key=mt_key)
+        return (" set", len(m)) + tuple(sorted_m)
+    elif isinstance(m, collections.abc.Mapping):
+        # XX something better, this will give a pretty arbitrary sort
+        return (" dict", len(m), hash(m))
+    else:
+        return m
 
 
 class MetaTerm(core.TypedTerm):
@@ -131,6 +160,23 @@ class MetaTerm(core.TypedTerm):
         if self.op not in self.type.domain:
             raise DomainError(self.op, self.type.domain)
 
+    def find_atoms(self):
+        # xx this is very reliant on type domain implementation details
+        def find_atoms_r(t):
+            if isinstance(t, collections.abc.Set) or isinstance(t, tuple):
+                return set.union(*[find_atoms_r(sub) for sub in t])
+            elif isinstance(t, dict):
+                return set(t.keys()) | set.union(*[find_atoms_r(t[k]) for k in t])
+            elif callable(t):
+                raise ValueError("Can't find atoms for non-decomposable function")
+            else:
+                # hopefully, an atomic domain element
+                return {t}
+
+        # rewrap the results
+        return {MetaTerm(x) for x in find_atoms_r(self.op)}
+
+
     def _compile(self):
         # caveat: functional types return as their underlying python
         # implementation. ApplicationExpr._compile will handle this, but other
@@ -174,6 +220,17 @@ class MetaTerm(core.TypedTerm):
         if not isinstance(self.type, types.TupleType):
             raise TypeError(f"Can't convert MetaTerm of type {repr(self.type)} to a tuple")
         return tuple(MetaTerm(self.op[i], typ=self.type[i]) for i in range(len(self.op)))
+
+    def dict(self, domain=None):
+        if not isinstance(self.type, types.FunType):
+            raise TypeError(f"Can't convert MetaTerm of type {repr(self.type)} to a dict")
+        if isinstance(self.op, collections.abc.Set) and domain is None:
+            raise ValueError("Can't convert set-based function to a dict without a domain")
+
+        if domain is None:
+            domain = self.op.keys() # can't be a set due to above check
+        domain = sorted(domain, key=mt_key)
+        return {k: self.apply(k) for k in domain}
 
     def apply(self, arg):
         if not self.type.functional() or not core.get_type_system().eq_check(self.type.left, arg.type):
@@ -1165,6 +1222,12 @@ class Assignment(utils.Namespace):
         return ensuremath(self.text(rich=True, linearized=linearized, **kwargs))
 
 
+# should possibly be somewhere else
+def is_predicate(f, typ=None):
+    return f.type.functional() and f.type.right == types.type_t and (
+        typ is None or f.type.left == typ)
+
+
 class Model(collections.abc.MutableMapping):
     """A complex mapping object that represents both an assignment and a set of
     domain restrictions for type domains; for the purpose of interpreting
@@ -1323,6 +1386,8 @@ class Model(collections.abc.MutableMapping):
             return
         # use the MetaTerm constructor to ensure a coherent set. This allows
         # typ=None.
+        if typ is not None:
+            typ = SetType(typ)
         mset = MetaTerm(domain, typ=typ)
         if not isinstance(mset.type.content_type, BasicType):
             raise ValueError(f"Model domains can only be set for atomic types (got `{repr(mset.type)}`).")
@@ -1335,6 +1400,110 @@ class Model(collections.abc.MutableMapping):
             return None
         else:
             return self.domains[typ]
+
+    def fill_domains(self):
+        vals = {}
+        for f in self:
+            for a in self[f].find_atoms():
+                if a.type not in vals:
+                    vals[a.type] = set()
+                vals[a.type].add(a)
+        for d in vals:
+            if d == types.type_t:
+                continue
+            if (dom := self.get_domain(d)) is None:
+                dom = set()
+            self.set_domain(d, dom | vals[d])
+
+    def _fresh_elements(self, typ, count, avoid=None):
+        """Find some fresh domain elements for domain `typ` relative to this
+        model."""
+        dom = self.get_domain(typ)
+        if dom is None:
+            dom = set()
+        if avoid:
+            dom |= avoid
+        # batched is py3.12
+        # this will crash if the domain doesn't support iteration
+        return next(itertools.batched((e for e in typ.domain if e not in dom), count))
+
+    def expand(self, *preds):
+        """Expand a model according to some named predicates. This adds all
+        evaluation points needed to get all evaluations of the predicates, and
+        expands existing evaluations treating new points as an equivalence
+        class for existing ones. This is subject to combinatorial explosion, as
+        the set of points added for n predicates is at least 2^n. Returns a
+        copy.
+
+        Currently, `preds` must consist of terms of type <X,t>, where X is
+        atomic."""
+        # currently quite limited:
+        # only works for <X,t> where X is atomic
+        # only works for total functions
+        # results only in expanded functions with a set implementation
+        if not all(is_predicate(pred) for pred in preds):
+            raise ValueError("Only predicates are supported by `Model.expand`")
+        model = self.copy()
+        for pred in preds:
+            typ = pred.type.left
+            dom = model.get_domain(typ)
+            if dom is None:
+                true_points = model._fresh_elements(typ, count=1)
+                model.set_domain(typ, set(true_points))
+            else:
+                # use `sorted` here so that the summary table looks neater
+                true_points = sorted(list(dom), key=mt_key)
+            false_points = model._fresh_elements(typ, count=len(true_points))
+            dom = set(true_points) | set(false_points)
+            model.set_domain(typ, dom)
+            for f in model:
+                # expand other predicates accordingly
+                # XX non-predicate functions...
+                if is_predicate(model[f], typ):
+                    try:
+                        equiv_classes = [i for i in range(len(true_points))
+                                        if model.evaluate(model[f](true_points[i])) == True]
+                    except DomainError:
+                        # XX do something better
+                        continue
+                    f_true_points = ({true_points[i] for i in equiv_classes}
+                                     | {false_points[i] for i in equiv_classes})
+                    model[f] = MetaTerm(f_true_points, typ=model[f].type)
+            model[pred.op] = MetaTerm(set(true_points), typ=pred.type)
+        return model
+
+    def summarize_predicates(self, *preds, dom=None):
+        """Summarize predicate evaluations (where a predicate is type <X,t>) in the model."""
+        if len(preds) == 0:
+            preds = self.keys()
+        preds = [p for p in preds if is_predicate(self[p])]
+        if not preds:
+            return
+        if dom is None:
+            dom = self[preds[0]].type.left # first one, a bit arbitrary
+        preds = [p for p in preds if is_predicate(self[p], dom)]
+        if not preds:
+            return
+
+        with self.under_domains():
+            if not dom.domain.finite or not dom.domain.enumerable():
+                raise ValueError("Can't summarize predicates for non-finite domain")
+            elems = {MetaTerm(elem, typ=dom) for elem in dom.domain}
+            maps = {p: self[p].dict(domain=elems) for p in preds}
+        header = [f"| {ensuremath(dom.latex_str())}"] + [f"| {ensuremath(k)}" for k in maps]
+        sep = ["| :---:" for col in header]
+        rows = []
+
+        elems = sorted((elem for elem in elems), key=mt_key)
+        # elems = sorted(self.get_domain(dom), key=mt_key)
+        for e in elems:
+            row_vals = [maps[p][e] for p in maps]
+            rows.append([f"| {ensuremath(e.latex_str())}"]
+                       + [f"| {truthtable_repr(v)}" for v in row_vals])
+
+        return utils.show(markdown="".join(header) + "|\n"
+                    + "".join(sep) + "|\n"
+                    + "".join(["".join(row) + "|\n" for row in rows]))
 
     @contextlib.contextmanager
     def under_assignments(self):
