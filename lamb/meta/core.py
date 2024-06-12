@@ -4690,11 +4690,14 @@ class BindingOp(TypedExpr):
         Returns a subclass of BindingOp.
         """
 
-        new_struc = parsing.debracket(struc)
-        if (result := BindingOp.try_parse_header(new_struc,
+        struc_arg = struc
+        # TODO: integrate with general bracket handling
+        if (left := parsing.bracketed(struc)):
+            struc = parsing.debracket(struc)
+        if (result := BindingOp.try_parse_header(struc,
                             assignment=assignment, locals=locals)) is None:
             return None
-        header, new_struc = result
+        header, struc = result
 
         assignment = subassignment(assignment)
         for var_tuple in header.var_seq:
@@ -4703,18 +4706,22 @@ class BindingOp(TypedExpr):
         body = None
         with parsing.parse_error_wrap(
                         "Binding expression has unparsable body",
-                        paren_struc=struc):
-            body = TypedExpr.try_parse_paren_struc_r(new_struc,
+                        paren_struc=struc_arg):
+            body = TypedExpr.try_parse_paren_struc_r(struc,
                         assignment=assignment, locals=locals, vprefix=vprefix)
 
         if body is None:
             raise parsing.ParseError(
                 "Can't create body-less binding expression",
-                parsing.flatten_paren_struc(struc), None)
+                parsing.flatten_paren_struc(struc_arg), None)
 
         with parsing.parse_error_wrap("Binding expression parse error",
-                                    paren_struc=struc):
+                                    paren_struc=struc_arg):
             result = header.factory(body, assignment=assignment)
+        # TODO: integrate with general set handling
+        if left == "{":
+            from .sets import ListedSet
+            result = ListedSet(result)
         return result
 
     @classmethod

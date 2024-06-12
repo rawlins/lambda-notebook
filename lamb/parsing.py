@@ -606,7 +606,10 @@ term_symbols_re = r'[a-zA-Z0-9]'
 
 def bracketed(struc):
     # assumes bracket balancing has been checked
-    return len(struc) > 0 and isinstance(struc[0], str) and struc[0] in brackets
+    if len(struc) > 0 and isinstance(struc[0], str) and struc[0] in brackets:
+        return struc[0]
+    else:
+        return None
 
 
 def debracket(struc):
