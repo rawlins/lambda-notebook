@@ -80,7 +80,7 @@ def mt_key(m):
     elif isinstance(m, collections.abc.Set):
         # XX does this work in the general case??
         sorted_m = sorted(m, key=mt_key)
-        return (" set", len(m)) + tuple(sorted_m)
+        return (" set", len(m)) + tuple(mt_key(e) for e in sorted_m)
     elif isinstance(m, collections.abc.Mapping):
         # XX something better, this will give a pretty arbitrary sort
         return (" dict", len(m), hash(m))

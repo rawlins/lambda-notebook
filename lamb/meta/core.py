@@ -2426,7 +2426,6 @@ class TypedExpr(object):
     def __gt__(self, other):
         return self.factory('>',  self, other)
 
-
     def __bool__(self):
         # otherwise, python tries to use the fact that these objects implement a
         # container interface to convert to bool, which can lead to weird

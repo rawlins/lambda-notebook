@@ -63,7 +63,7 @@ class DomainSet(collections.abc.Container):
     def normalize(self, x):
         if self.superdomain is not None:
             return self.superdomain.normalize(x)
-        return x
+        return demeta(x)
 
     def check(self,x):
         if self.finite:
@@ -203,8 +203,9 @@ class SimpleInfiniteSet(DomainSet):
         return isinstance(x, str) and re.match(self.symbol_re, x)
 
     def normalize(self, x):
+        x = demeta(x)
         if isinstance(x, str) and not x.startswith("_"):
-            return "_" + x
+            x = "_" + x
         return x
 
     def __iter__(self):
@@ -673,6 +674,7 @@ class FunDomainSet(ComplexDomainSet):
             return False
 
     def normalize(self, x):
+        x = demeta(x) # MetaTerm is callable, for non-useful reasons
         if callable(x):
             return x
         elif isinstance(x, collections.abc.Set):
