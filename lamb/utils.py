@@ -321,12 +321,12 @@ def dict_latex_repr(d, linearized=True, **kwargs):
         # the array version has ugly whitespace for 1-line dicts
         return ensuremath(f"\\left[{r[0][0]} \\rightarrow {r[0][1]}\\right]")
     else:
-        r = [f"{e[0]} & \\rightarrow & {e[1]} \\\\" for e in r]
+        r = '\n'.join([f"{e[0]} & \\rightarrow & {e[1]} \\\\" for e in r])
         return ensuremath(
             # some formatting tweaks that would improve this, e.g. `@{ }`, are
             # not supported by mathjax
             # XX katex compat?
-            f"\\left[\\begin{{array}}{{lll}} {'\n'.join(r)} \\end{{array}}\\right]")
+            f"\\left[\\begin{{array}}{{lll}} {r} \\end{{array}}\\right]")
 
 
 def set_latex_repr(d, set_sorted=True, **kwargs):
