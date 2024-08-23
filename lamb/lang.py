@@ -179,8 +179,7 @@ class CompositionFailure(Exception):
             return self.reason.description(latex=latex)
         else:
             main_str = self.class_desc(latex=latex)
-            return "%s (%s) on: %s" % (main_str, self.reason,
-                self.items_str(latex=latex))
+            return f"{main_str} on: {self.items_str(latex=latex)}  ({self.reason})"
 
     def latex_str(self, **kwargs):
         return self.description(latex=True)
@@ -2806,7 +2805,7 @@ def tree_binary_vacuous(t, assignment=None, pass_source=True):
     parent content is still None. If exactly one is vacuous, the parent content
     is the other's content. Ignores order."""
     if not binary_trivial(t): # also precondition
-        raise TypeMismatch(t[0], t[1], error="Need at least one fully vacuous element") # abuse of TypeMismatch
+        raise TypeMismatch(t[0], t[1], error="Vacuous composition needs at least one fully vacuous element") # abuse of TypeMismatch
     # hacky, needs to be generalized somehow. The issue is that only tree
     # composition expects to pass a source right now, and it needs to be a real
     # tree object, not a list-like.
@@ -2842,6 +2841,8 @@ def tree_pm_fun(t, assignment=None):
     result = ((pm_op(c1))(c2)).reduce_all()
     return BinaryComposite(t[0], t[1], result, source=t)
 
+_pa_reason = "Predicate Abstraction requires a valid binder"
+
 def tree_pa_metalanguage_fun(t, assignment=None):
     """H&K-style Predicate Abstraction, implemented in the metalanguage.
 
@@ -2850,7 +2851,7 @@ def tree_pa_metalanguage_fun(t, assignment=None):
     the left sister, and will generate a CompositionFailure otherwise."""
 
     if not tree_binder_check(t[0]):
-        raise CompositionFailure(t[0], t[1], reason="PA requires a valid binder")
+        raise CompositionFailure(t[0], t[1], reason=_pa_reason)
     vname = f"var{t[0].get_index()}"
     var = term(t[1].content.find_safe_variable(), types.type_e)
     new_a = Assignment(assignment)
@@ -2865,7 +2866,7 @@ def tree_pa_sbc_fun(t, assignment=None):
     binder to match up traces with the bound variable. It assumes the binder is
     the left sister, and will generate a CompositionFailure otherwise."""
     if not tree_binder_check(t[0]):
-        raise CompositionFailure(t[0], t[1], reason="PA requires a valid binder")
+        raise CompositionFailure(t[0], t[1], reason=_pa_reason)
 
     var = term(f"var{t[0].get_index()}", types.type_e)
     f = meta.LFun(var, t[1].content.under_assignment(assignment))
@@ -2957,7 +2958,7 @@ def pa_fun(binder, content, assignment=None):
     name to abstract over, and replace any traces of the appropriate index with
     that variable.  This assumes a meta-language implementation of traces!"""
     if not tree_binder_check(binder):
-        raise CompositionFailure(binder, content, reason="PA requires a valid binder")
+        raise CompositionFailure(binder, content, reason=_pa_reason)
 
     # there could be more natural ways to do this...should H&K assignment
     # functions be implemented directly?
@@ -2980,7 +2981,7 @@ def fa_fun(fun, arg, assignment=None):
     """Do function application, given some function and argument."""
     ts = meta.get_type_system()
     if not ts.fun_arg_check_bool(fun, arg):
-        raise TypeMismatch(fun, arg, "Function Application")
+        raise TypeMismatch(fun, arg, "Function Application needs a matching function and argument")
     return BinaryComposite(fun, arg, 
                 (fun.content.under_assignment(assignment)(
                         arg.content.under_assignment(assignment))).reduce())
@@ -2994,7 +2995,7 @@ def pm_fun(fun1, fun2, assignment=None):
     if not (ts.eq_check(fun1.type, type_property) and 
             ts.eq_check(fun2.type, type_property)):
         # this isn't strictly necessary, but will make errors look nicer.
-        raise TypeMismatch(fun1, fun2, "Predicate Modification")
+        raise TypeMismatch(fun1, fun2, "Predicate Modification needs property types")
     try:
         varname = fun1.content.varname
     except AttributeError:
@@ -3022,7 +3023,7 @@ def presup_pm(p1, p2):
 
 def presup_pa(binder, content, assignment=None):
     if not tree_binder_check(binder):
-        raise CompositionFailure(binder, content, reason="PA requires a valid binder")
+        raise CompositionFailure(binder, content, reason=_pa_reason)
     new_a = Assignment(assignment)
     bound_var = meta.term(f"var{binder.get_index()}", types.type_e)
     outer_var = term(content.content.find_safe_variable(), types.type_e)
@@ -3035,7 +3036,7 @@ def presup_pa(binder, content, assignment=None):
 # this is a presuppositional PA based on the Coppock and Champollion PA rule
 def sbc_pa(binder, content, assignment=None):
     if not tree_binder_check(binder):
-        raise CompositionFailure(binder, content, reason="PA requires a valid binder")
+        raise CompositionFailure(binder, content, reason=_pa_reason)
     bound_var = meta.term(f"var{binder.get_index()}", types.type_e)
     f = meta.LFun(bound_var, content.content.calculate_partiality({bound_var}))
     return BinaryComposite(binder, content, f)
