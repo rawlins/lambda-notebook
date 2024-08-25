@@ -204,7 +204,8 @@ def install_kernelspec(lib_dir=None, user=False, suffix="", prefix=None):
         return None
 
 def launch_lambda_console(args, lib_dir=None):
-    install_kernelspec(lib_dir)
+    if lib_dir is not None:
+        install_kernelspec(lib_dir)
 
     c = Config()
     # sadly, this app doesn't seem to use a kernel. Perhaps some day...

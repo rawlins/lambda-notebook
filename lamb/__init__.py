@@ -1,5 +1,5 @@
 __all__ = ['utils', 'types', 'meta', 'lang', 'tree_mini', 'parsing', 'magics',
-           'lnsetup', 'display', 'combinators', 'auto']
+           'lnsetup', 'display', 'combinators', 'auto', 'console']
 
 __version_info__ = (0, 7, 1)
 __release__ = False
