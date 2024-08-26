@@ -8,6 +8,9 @@ local_notebooks/
 dist/
 build/
 lambda_notebook.egg-info/
+.quarto/
+_site/
+docs/_site/
 
 data_kernelspec/
 notebooks/local_notebooks/

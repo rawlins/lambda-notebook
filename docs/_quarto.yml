@@ -1,0 +1,44 @@
+project:
+  type: website
+  pre-render: pre-render.py
+
+website:
+  title: "Lambda Notebook"
+  page-navigation: true
+  repo-url: "https://github.com/rawlins/lambda-notebook"
+  repo-actions: [issue]
+  navbar:
+    left:
+      - href: index.ipynb
+        text: Home
+      - href: demo-for-linguists.ipynb
+        text: Demo
+      - file: CHANGELOG.md
+        text: Changelog
+      - file: about.qmd
+        text: About
+
+    right:
+      - href: "https://github.com/rawlins/lambda-notebook"
+        text: Source
+
+format:
+  html:
+    theme: lumen
+    css: styles.css
+    toc: true
+    grid:
+      sidebar-width: 0px
+    # workaround a mismatch in behavior between quarto vs jupyter
+    include-in-header:
+      text: |
+        <script>
+          MathJax = {
+            tex: {
+              inlineMath: [['$', '$'], ['\\(', '\\)']]
+            }
+          };
+        </script>
+
+
+

@@ -1,0 +1,29 @@
+---
+title: "About the Lambda Notebook project"
+toc: false
+---
+
+## About the package
+
+The Jupyter Lambda Notebook is a project that aims to implement compositional semantics and supporting formal theories from linguistics in Python, integrated tightly with [Jupyter](https://jupyter.org/). One main goal is to provide a useful interface for linguists who want to implement their semantic analyses -- allowing the construction of interactive ‘digital fragments’ (following the classic method of fragments from Montague grammar).
+
+* **Author**: Kyle Rawlins, [kgr@jhu.edu](kgr@jhu.edu)
+* **Dependencies**: python 3, [svgling](https://rawlins.github.io/svgling/), (optional) [Jupyter](https://jupyter.org/)
+* **Repository and issue tracker**: [https://github.com/rawlins/lambda-notebook/](https://github.com/rawlins/lambda-notebook/)
+* **Installation**: download from github, or `pip install lambda-notebook` to install the current release version from [PyPI](https://pypi.org/project/lambda-notebook/).
+* **License**: MIT License
+
+## About the author
+
+The lambda notebook package is developed by [Kyle Rawlins](https://rawlins.io/). I'm
+a faculty member in the [Cognitive Science](https://cogsci.jhu.edu/)
+department at JHU; my research areas are in
+theoretical and computational linguistics, focusing on semantics and
+pragmatics. 
+
+## About the website
+
+This website is rendered from runnable Jupyter notebooks using
+[quarto](https://quarto.org/). The source notebooks and page generation code can be
+found at:
+[https://github.com/rawlins/lambda-notebook/tree/master/docs](https://github.com/rawlins/lambda-notebook/tree/master/docs).
