@@ -1,15 +1,18 @@
-.PHONY: clear testnb test unittest release site
+.PHONY: clear testnb test unittest release site cleardocs
 testopts = "--ExecutePreprocessor.timeout=120"
+clearopts = --ClearOutputPreprocessor.enabled=True
 
 FORCE:
 
-clear:
-	for nb in docs/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
-	for nb in notebooks/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
-	for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
-	for nb in notebooks/fragments/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
-	for nb in notebooks/misc/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
-	for nb in notebooks/tutorials/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
+cleardocs:
+	for nb in docs/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
+
+clear: cleardocs
+	for nb in notebooks/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
+	for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
+	for nb in notebooks/fragments/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
+	for nb in notebooks/misc/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
+	for nb in notebooks/tutorials/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
 
 # note: assumes `lamb` in pythonpath! currently satisfied by a symlink...
 site:
