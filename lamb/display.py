@@ -445,8 +445,10 @@ class TDBoxDisplay(HTMLNodeDisplay):
         e = Element("div", style="display: table;")
         join = Element("div",
             style="align: center; vertical-align: middle; display: table-cell;")
+        # the lack of padding here relies on appropriate padding/margin for
+        # joined elements
         join.append(element_with_text("span", text="*",
-                        style=("padding:1em;")))
+                        style=("padding:1px;")))
         elem_join(e, join, part_cells)
         return e
 

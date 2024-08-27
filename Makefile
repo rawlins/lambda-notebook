@@ -1,24 +1,24 @@
-.PHONY: clear demo testnb test unittest release
+.PHONY: clear testnb test unittest release site
 testopts = "--ExecutePreprocessor.timeout=120"
 
 FORCE:
 
 clear:
+	for nb in docs/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
 	for nb in notebooks/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
 	for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
 	for nb in notebooks/fragments/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
 	for nb in notebooks/misc/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
 	for nb in notebooks/tutorials/*.ipynb; do jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace "$$nb" || exit 1; done
 
-notebooks/Lambda\ Notebook\ Demo\ \(executed\).ipynb: notebooks/Lambda\ Notebook\ Demo.ipynb
-	cp notebooks/Lambda\ Notebook\ Demo.ipynb notebooks/Lambda\ Notebook\ Demo\ \(executed\).ipynb
-	jupyter nbconvert --execute --inplace --to notebook notebooks/Lambda\ Notebook\ Demo\ \(executed\).ipynb
-	
-demo: notebooks/Lambda\ Notebook\ Demo\ \(executed\).ipynb
+# note: assumes `lamb` in pythonpath! currently satisfied by a symlink...
+site:
+	quarto render docs/ --execute
 
-release: clear demo
+release: clear
 
 testnb:
+	for nb in docs/*.ipynb; do jupyter nbconvert --execute --to notebook --stdout $(testopts) "$$nb" > /dev/null || exit 1; done
 	for nb in notebooks/*.ipynb; do jupyter nbconvert --execute --to notebook --stdout $(testopts) "$$nb" > /dev/null || exit 1; done
 	for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert --execute --to notebook --stdout $(testopts) "$$nb" > /dev/null || exit 1; done
 	for nb in notebooks/fragments/*.ipynb; do jupyter nbconvert --execute --to notebook --stdout $(testopts) "$$nb" > /dev/null || exit 1; done
