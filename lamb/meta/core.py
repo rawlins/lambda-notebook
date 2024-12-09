@@ -3740,9 +3740,10 @@ def op(op, arg_type, ret_type,
                     # what exception type to use here?
                     raise parsing.ParseError(
                         f"Operator `{self.op_name_uni}` ({func.__name__}) needs {self.arity} operands but {len(args)} were given")
-                typ = self.type_constraint(ret_type, typ)
+                # would order ever matter here?
+                typ, _ = self.type_constraint(ret_type, typ)
                 self.operator_style = True
-                super().__init__(arg_type, *args, typ=ret_type)
+                super().__init__(arg_type, *args, typ=typ)
 
             def _compile(self):
                 # this could be faster if it weren't generic
