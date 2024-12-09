@@ -3719,20 +3719,27 @@ def op(op, arg_type, ret_type,
 
     def op_decorator(func):
         # we will pass `self` to func, so allow an extra param for it
-        arity = len(inspect.signature(func).parameters) - 1
+        op_arity = len(inspect.signature(func).parameters) - 1
 
         # constructs a subclass of either Syncat
-        if not (arity == 1 or arity == 2):
-            raise ValueError("@op needs function of arity 1 or 2 (got %d)" % arity)
+        if not (op_arity == 1 or op_arity == 2):
+            raise ValueError(f"@op needs function of arity 1 or 2 (got {op_arity})")
         class WrappedOp(SyncatOpExpr):
+            arity = op_arity
+            canonical_name = op
+            op_name_uni = op_uni
+            op_name_latex = op_latex
+
             def __init__(self, *args, typ=None, **kwargs):
                 # XX this updates __name__ but not __class__
                 functools.update_wrapper(self, func)
-                if len(args) != arity:
+                if len(args) != self.arity:
+                    # call superclass without type checking so that the op
+                    # name is set correctly
+                    super().__init__(arg_type, *args, typ=ret_type, tcheck_args=False)
                     # what exception type to use here?
                     raise parsing.ParseError(
-                        "%s (%s) needs %d operands but %d were given"
-                        % (op_uni, func.__name__, arity, len(args)))
+                        f"Operator `{self.op_name_uni}` ({func.__name__}) needs {self.arity} operands but {len(args)} were given")
                 typ = self.type_constraint(ret_type, typ)
                 self.operator_style = True
                 super().__init__(arg_type, *args, typ=ret_type)
@@ -3754,13 +3761,8 @@ def op(op, arg_type, ret_type,
 
             @classmethod
             def random(cls, ctrl):
-                args = [ctrl(typ=arg_type) for i in range(arity)]
+                args = [ctrl(typ=arg_type) for i in range(cls.arity)]
                 return cls(*args)
-
-        WrappedOp.arity = arity
-        WrappedOp.canonical_name = op
-        WrappedOp.op_name_uni = op_uni
-        WrappedOp.op_name_latex = op_latex
 
         # some metaprogramming to get nicer reprs for the class object. If we
         # don't overwrite these, the repr will show something like:
