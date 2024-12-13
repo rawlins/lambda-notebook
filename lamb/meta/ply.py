@@ -819,10 +819,14 @@ class Derivation(object):
         self.origin = origin
         if steps is not None:
             self.add_steps(steps)
-            self.result = self[-1] # is this used?
-        else:
-            self.result = None
         self.force_on_recurse = False
+
+    @property
+    def result(self):
+        if not self.steps:
+            return None
+        else:
+            return self[-1]
 
     @property
     def note(self):
@@ -847,6 +851,7 @@ class Derivation(object):
         if not len(self) and self.origin is None and isinstance(steps, Derivation):
             # empty derivation and no origin: copy the origin from `steps`
             self.origin = steps.origin
+            # XX case where both self and steps have an origin set...
         if len(steps):
             end = len(self.steps)
             cur_last = self.last()
@@ -1054,7 +1059,6 @@ def derivation_factory(result, desc=None, latex_desc=None, origin=None,
     """Convenience factory function for `Derivation`s, that populates it with
     an initial step determined by the parameters."""
     drv = Derivation(steps)
-    # note: will make a copy of the derivation if steps is one; may be better to have something more efficient in the long run
     drv.add_step(DerivationStep(result, desc=desc, origin=origin, note=note,
                 latex_desc=latex_desc, subexpression=subexpression, trivial=trivial))
     return drv
@@ -1091,10 +1095,9 @@ def derived(result, origin,
             if result.derivation is None and result is not origin:
                 set_derivation(result, origin.derivation)
             return result
-    if result.derivation is None:
-        d = origin.derivation
-    else:
-        d = result.derivation
+    old_result_steps = result.derivation
+    result.derivation = None
+    d = origin.derivation
     set_derivation(result, derivation_factory(result, desc=desc,
                                                    latex_desc=latex_desc,
                                                    origin=origin,
@@ -1102,6 +1105,11 @@ def derived(result, origin,
                                                    subexpression=subexpression,
                                                    trivial=trivial,
                                                    note=note))
+    # if result already had a derivation, reinsert its steps at the end of the
+    # new derivation. Note that there are some cases where this my not do
+    # origin juggling correctly...
+    if old_result_steps is not None:
+        result.derivation.add_steps(old_result_steps)
     if force_on_recurse and result.derivation is not None:
         result.derivation[-1].force_on_recurse()
     return result
