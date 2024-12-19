@@ -4809,16 +4809,15 @@ class LFun(BindingOp):
             return lambda context: lambda x: self[0]._compiled(context)
         qualname = self._compiled_repr()
         def outer(context):
+            # unfortunate, but something is needed to protect other users of
+            # `context` from side effects, given the way deferred application
+            # is handled
+            context = dict(context)
             def inner(x):
                 # assumption: x is compiled and normalized. In principle this
                 # could normalize; currently wrapper functions handle this
-                old = context.get(self.varname, None)
                 context[self.varname] = x
-                r = body(context)
-                # XX how important are side effects on raise?
-                if old is not None:
-                    context[self.varname] = old
-                return r
+                return body(context)
             inner.__qualname__ = qualname
             return inner
         return outer
