@@ -66,16 +66,8 @@ def random_lfun_force_bound(typ, ctrl):
                                                     termset=random_used_vars))
 
 
-random_types = [type_t]
-random_ops = ["&", "|", ">>", "%"]
-
 def random_tf_op_expr(ctrl_fun):
-    op = random.choice(random_ops)
-    while op not in core.registry.ops:
-        op = random.choice(random_ops)
-    op = random.choice(core.registry.get_descs(op, type_t, type_t)) # probably size 1
-    if op.has_blank_types():
-        raise NotImplementedError
+    op = random.choice(core.registry.get_operators(type_t, type_t, exact=True))
     return op.cls(*[ctrl_fun(typ=t) for t in op.targs])
 
 
@@ -149,6 +141,8 @@ class RType(enum.Enum):
     TERM_PRED_COMBO = 6
     SET_RELATION = 7
     SET_OP = 8
+
+random_types = [type_t]
 
 def random_expr(typ=None, depth=1, max_type_depth=1, options=None, used_vars=None):
     """Generate a random expression of the specified type `typ`, with an AST of
@@ -353,6 +347,24 @@ class MetaTest(unittest.TestCase):
         self.assertNotEqual(self.P, self.Q)
         self.assertNotEqual(self.x, self.y)
 
+    def test_op_resolution(self):
+        # use resolution of <=> as a basic test case for operator resolution
+        # with polymorphism. We have:
+        #     core.BinaryGenericEqExpr for type (X,X)
+        #     sets.SetEquivalence for type ({X},{X})
+        #     boolean.BinaryBiarrowExpr for type (t,t)
+        self.assertTrue(isinstance(te("x_X <=> y_Y"), core.BinaryGenericEqExpr))
+        self.assertTrue(isinstance(te("x_n <=> y_n"), core.BinaryGenericEqExpr))
+        self.assertTrue(isinstance(te("x_X <=> y_n"), core.BinaryGenericEqExpr))
+        self.assertTrue(isinstance(te("x_X <=> y_t"), boolean.BinaryBiarrowExpr))
+        self.assertTrue(isinstance(te("x_t <=> y_Y"), boolean.BinaryBiarrowExpr))
+        self.assertTrue(isinstance(te("x_t <=> y_t"), boolean.BinaryBiarrowExpr))
+        self.assertTrue(isinstance(te("x_{X} <=> y_Y"), sets.SetEquivalence))
+        self.assertTrue(isinstance(te("x_X <=> y_{Y}"), sets.SetEquivalence))
+        self.assertTrue(isinstance(te("x_{X} <=> y_{Y}"), sets.SetEquivalence))
+        self.assertTrue(isinstance(te("x_{e} <=> y_{Y}"), sets.SetEquivalence))
+        self.assertTrue(isinstance(te("x_{X} <=> y_{e}"), sets.SetEquivalence))
+        self.assertTrue(isinstance(te("x_{e} <=> y_{e}"), sets.SetEquivalence))
 
     def test_class_random(self):
         for c in te_classes:
@@ -753,16 +765,18 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(env.term_type('x'), tp("∀<<e,<X,e>>,t>"))
 
         # test the interaction of an inferred type mapping during parsing, and
-        # an externally imposed type assignment.
-        e1 = (te("P_Z(x_<X,Y>) & Q_Z2(x_<X1,Y1>)", let=False)
+        # an externally imposed type assignment. Note that this segment requires
+        # an unambiguous resolution of >> to work, but that is incidental to
+        # what this is testing.
+        e1 = (te("P_Z(x_<X,Y>) >> Q_Z2(x_<X1,Y1>)", let=False)
                 .under_type_assignment({tp('Y1'):tp('Y'), tp('X1'):tp('X')})
                 .regularize_type_env())
-        e2 = (te("P_Z(x_<X,Y>) & Q_Z2(x_<X1,Y1>)", let=False)
+        e2 = (te("P_Z(x_<X,Y>) >> Q_Z2(x_<X1,Y1>)", let=False)
                 .under_type_assignment({tp('Y'):tp('Y1'), tp('X'):tp('X1')})
                 .regularize_type_env())
         self.assertNotEqual(e1, e2)
-        self.assertEqual(e1, te("(P_<<X,Y>,t>(x_<X,Y>) & Q_<<X,Y>,t>(x_<X,Y>))"))
-        self.assertEqual(e2, te("(P_<<X1,Y1>,t>(x_<X1,Y1>) & Q_<<X1,Y1>,t>(x_<X1,Y1>))"))
+        self.assertEqual(e1, te("(P_<<X,Y>,t>(x_<X,Y>) >> Q_<<X,Y>,t>(x_<X,Y>))"))
+        self.assertEqual(e2, te("(P_<<X1,Y1>,t>(x_<X1,Y1>) >> Q_<<X1,Y1>,t>(x_<X1,Y1>))"))
 
     def test_let_polymorphism(self):
         # introduced variable names are implementation dependent

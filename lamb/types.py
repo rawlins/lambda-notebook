@@ -2190,6 +2190,14 @@ class TypeSystem(object):
         result = self.unify(a,b)
         return (result is not None)
 
+    def cmp(self, t1, t2):
+        principal = self.unify(t1, t2)
+        # no types in a basic type system can be compared beyond equality
+        if principal is None:
+            return None
+        else:
+            return 0
+
     def type_allowed(self, a):
          return True
 
@@ -2401,7 +2409,10 @@ def freshen_type_set(types):
 
 
 def freshen_type(t, assignment=None):
-    f = freshen_type_set(t.bound_type_vars())
+    v = t.bound_type_vars()
+    if not v:
+        return t
+    f = freshen_type_set(v)
     if assignment is None:
         assignment = f
     else:
@@ -2525,8 +2536,9 @@ class UnificationResult(object):
         self.t1 = t1
         self.t2 = t2
         self.mapping = mapping
-        # currently unused, but this would allows for checking of alpha
-        # equivalence during unification
+        # if set to True (and unification succeeds), then t1 and t2 are alpha
+        # equivalents. However, note that Forall types lead to an empty mapping
+        # as well.
         self.trivial = injective(mapping) and not strengthens(mapping)
 
         # XX possibly not  worth caching when any of the ingredients have
@@ -2864,6 +2876,34 @@ class PolyTypeSystem(TypeSystem):
             return r1 # return r1 as a principal type for this case
         return result
 
+    def cmp(self, t1, t2):
+        """Compare types by abstractness, where > is treated as more abstract.
+        So if t1 is more abstract, return 1, if t2 is more abstract, return -1.
+        A 0 return means either the types are equal, they are alpha equivalents,
+        or they are unifiable but can't be compared. A `None` return means
+        unification fails."""
+        try:
+            result = self.unify_details(t1, t2)
+        except OccursCheckFailure:
+            return None
+
+        if result is None:
+            return None
+        # XX the need to call alpha_equiv here is unfortunate, but result.trivial
+        # on its own does not handle Forall types
+        if result.trivial and (not result.is_polymorphic() or self.alpha_equiv(t1, t2)):
+            # either t1 and t2 compare equal concretely, or they are
+            # alpha equivalents
+            return 0
+        elif result.principal == t1:
+            return -1
+        elif result.principal == t2:
+            return 1
+        else:
+            # this can arise in cases where t1 and t2 unify, but aren't
+            # comparable, e.g. t1=(X,e) and t2=(e,Y). Treat as equal ranking.
+            return 0
+
     def random_from_class(self, cls, max_depth=2, p_terminate_early=0.2,
                                                     allow_variables=False):
         return cls.random(self.random_ctrl(max_depth=max_depth,
@@ -2961,6 +3001,7 @@ class TypeMismatch(Exception):
         # we want the repr for markdown backticks, but for composition results
         # we want the latex code
         # XX this isn't working right in the continuations notebook...
+        # XX this also crashes if it happens during startup
         if isinstance(i, TypedExpr):
             latex = False
         if i is None:

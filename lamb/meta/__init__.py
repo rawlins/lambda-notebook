@@ -30,10 +30,14 @@ from lamb.meta.meta import compiled, exec
 
 def default_metalanguage():
     registry.clear()
+    # generic equivalence needs to be first, as it has an extremely general
+    # viability check that several specialized equivalence operators will
+    # override. The class appears early enough that the type signature needs
+    # to be specified here.
+    registry.add_operator(core.BinaryGenericEqExpr, tp("X"), tp("X"))
     registry.add_binding_op(LFun)
     for m in [boolean, number, sets, quantifiers]:
         m.setup_operators()
-    registry.add_operator(core.BinaryGenericEqExpr, None, None)
 
 
 def reset():

@@ -11,7 +11,8 @@ global true_term, false_term
 
 def setup_operators():
     def add_t_op(c):
-        registry.add_operator(c, *[type_t for x in range(c.arity)])
+        registry.add_operator(c, *[type_t for x in range(c.arity)],
+                                                    shadow_warning=False)
 
     add_t_op(UnaryNegExpr)
     add_t_op(BinaryAndExpr)
@@ -181,7 +182,7 @@ class BinaryArrowExpr(SyncatOpExpr):
 
 class BinaryBiarrowExpr(SyncatOpExpr):
     canonical_name = "<=>"
-    secondary_names = {"=="}
+    secondary_names = {"==", "%"}
     op_name_uni = "↔"
     op_name_latex = "\\leftrightarrow{}"
     commutative = True

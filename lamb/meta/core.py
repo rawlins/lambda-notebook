@@ -7,7 +7,7 @@ import lamb
 from lamb import types, parsing, utils
 from lamb.utils import ensuremath, dbg_print, Namespace
 
-from lamb.types import TypeMismatch, BasicType, FunType
+from lamb.types import TypeMismatch, BasicType, FunType, TupleType, is_type_var
 # meta.ply is the only meta module imported by core
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
 from .ply import simplify_all, symbol_is_var_symbol
@@ -369,71 +369,109 @@ class MiniOp(object):
         return MiniOp(op.op_name, op.op_name_latex)
 
 
+builtin_arities = {
+    '~': {1},
+    '-': {1, 2},
+    '+': {1, 2},
+    '/': {2},
+    '//': {2},
+    '*': {2},
+    '**': {2},
+    '%': {2},
+    '@': {2},
+    '==': {2},
+    '<': {2},
+    '>': {2},
+    '<=': {2},
+    '>=': {2},
+    '&': {2},
+    '|': {2},
+    '^': {2},
+    '>>': {2},
+    '<<': {2}}
+
+# hacky operator aliases. These paper over some inadequacies of pure python
+# operators, but are far from a desireable / general solution...
+# it is not recommended for end users to mess with this at all
+# XX add unicode aliases?
+builtin_op_aliases = {
+    # do not reorder
+    '<=>': '%',
+    '==>': '>>', # remove?
+    '=>':  '>>', # note: cannot add '<=': '<<' for obvious reasons...
+    '<==': '<<', # remove?
+    '=/=': '^',
+    # note: these intentionally shadow standard python operators! It's not
+    # possible to use the standard data model overrides here, because
+    # TypedExpr objects must support python equality, and the metalanguage
+    # requires that these operators mean equivalence.
+    '!=':  '^',
+    '==':  '%'
+}
+
+def apply_op_aliases(to_eval):
+    for k in builtin_op_aliases:
+        to_eval = to_eval.replace(k, builtin_op_aliases[k])
+    return to_eval
+
+def _sig_to_tuple(typs):
+    # replace None with ∀X
+    generic = types.VariableType.any()
+    return types.TupleType(*[generic if t is None else t for t in typs])
 
 class OperatorRegistry(object):
-    class OpDesc(object):
+    class Operator(object):
         def __init__(self, _cls, *targs):
-            self.name = _cls.canonical_name
             self.cls = _cls
+            self.name = _cls.canonical_name
             self.arity = len(targs)
-            # XX this should eventually just use the full type system
+            # XX can we just use functional types and be done with it? Or at
+            # least the tuple only?
             self.targs = targs
+            self.arg_signature = types.TupleType(*self.targs)
 
         def __hash__(self):
-            # will prevent multiple overloads at the same arity using the
-            # same class...
-            return hash(self.name) ^ hash(self.cls.__name__) ^ hash(self.arity)
+            # these checks use only syntactic identity for types; add_operator
+            # uses a more general check
+            return hash(self.name) ^ hash(self.arity) ^ hash(self.targs)
 
         def __eq__(self, other):
             return (self.name == other.name
-                and self.cls.__name__ == other.cls.__name__
                 and self.arity == other.arity
                 and self.targs == other.targs)
 
+        def signature_str(self):
+            return repr(self.arg_signature)
+
         def __str__(self):
-            return f"OpDesc({self.name}, {self.cls.__name__}, {self.arity})"
+            return repr(self)
 
         def __repr__(self):
             # n.b. not a true repr
-            return str(self)
+            return f"Operator({self.name}, {self.cls.__name__}, arity: {self.arity}, signature: {self.signature_str()})"
 
         def get_names(self):
             # maybe include unicode?
             return [self.name] + list(self.cls.secondary_names)
 
-        def has_blank_types(self):
-            for t in self.targs:
-                if t is None:
-                    return True
-            return False
-
-        def check_types_viable(self, *types, strict_none=False):
-            # None generally means don't check this arg place; a custom
-            # check_viable function for the class usually does the work.
-            # If the relevant types are not in the current type system, this
-            # will fail.
-            if self.arity != len(types):
-                return False
-
-            for i in range(len(types)):
-                # in `strict_none` mode, supply None for an argument slot to
-                # match None, otherwise, mismatch
-                if (strict_none and self.targs[i] is None or types[i] is None
-                            and self.targs[i] != types[i]):
-                    return False
-
-                # otherwise, None in either the op or input slot skips
-                if types[i] is None or self.targs[i] is None:
-                    continue
-
-                if not ts_compatible(self.targs[i], types[i]):
-                    return False
-            return True
+        def check_types_viable(self, *typs):
+            """Return a comparison value with the type of this operator. This
+            is not safely convertable to bool! I.e. None is failure, 0 is
+            exact match."""
+            if self.arity != len(typs):
+                return None
+            return get_type_system().cmp(
+                        types.freshen_type(self.arg_signature),
+                        _sig_to_tuple(typs))
 
         def check_viable(self, *args):
             # if the class has a custom check_viable, defer entirely to that
+            # XX currently unused, maybe remove?
             if callable(getattr(self.cls, "check_viable", None)):
-                return self.cls.check_viable(*args)
+                if self.cls.check_viable(*args):
+                    return 0
+                else:
+                    return None
 
             return self.check_types_viable(*[a.type for a in args])
 
@@ -447,22 +485,87 @@ class OperatorRegistry(object):
         self.canonicalize_binding_ops = {}
         self.unparsed_binding_ops = set()
         self.custom_transforms = {}
+        self.ordering = {}
 
-    def add_operator(self, _cls, *targs):
-        desc = self.OpDesc(_cls, *targs)
-        for name in desc.get_names():
-            # use dicts and not sets for the ordering
-            if not name in self.ops:
-                self.ops[name] = dict()
-            self.ops[name][desc] = True
+    def add_operator(self, _cls, *targs, shadow_warning=True):
+        if not targs and (sig := getattr(_cls, 'arg_signature', None)) is not None:
+            targs = sig.signature
+
+        desc = self.Operator(_cls, *targs)
+        for symbol in desc.get_names():
+            if symbol in builtin_arities and desc.arity not in builtin_arities[symbol]:
+                # non-builtins have no validation!
+                raise parsing.ParseError(f"Invalid arity ({desc.arity}) for operator `{symbol}`")
+            # use dicts and not sets for the sake of ordering
+            if not symbol in self.ops:
+                self.ops[symbol] = dict()
+            warned = None
+            if desc in self.ops[symbol]:
+                # exact type match, issue a log message
+                logger.warning(
+                    f"New operator `{desc.name}/{desc.arg_signature}` replaces existing exact matching operator for `{symbol}`: {self.ops[symbol][desc]}")
+                self.remove_operator(symbol, self.ops[symbol][desc])
+            # check for inexact type matches
+            for op in list(self.ops[symbol]):
+                if op.check_types_viable(*desc.targs) == 0:
+                    # this case is typically guaranteed to be unmatchable, so
+                    # remove the existing operator.
+                    # XX cases like (e,X) and (Y,e)? Maybe only remove on alpha
+                    # equivalents?
+                    logger.warning(
+                        f"New operator `{desc.name}/{desc.arg_signature}` replaces existing inexact matching operator for `{symbol}`: {op}")
+                    self.remove_operator(symbol, op)
+
+            self.ops[symbol][desc] = desc
+            if symbol not in self.ordering:
+                self.ordering[symbol] = {}
+            # brute force calculate all orderings with the new operator, this
+            # could be more efficient by explicitly implementing a graph
+            self.ordering[symbol][desc] = {}
+            for o2 in self.ops[symbol]:
+                self.ordering[symbol][desc][o2] = get_type_system().cmp(
+                                    desc.arg_signature,
+                                    types.freshen_type(o2.arg_signature))
+
+                if self.ordering[symbol][desc][o2] is None:
+                    self.ordering[symbol][o2][desc] = None
+                else:
+                    self.ordering[symbol][o2][desc] = -self.ordering[symbol][desc][o2]
+
         if not desc.arity in self.arities:
             self.arities[desc.arity] = dict()
-        self.arities[desc.arity][desc] = True
+        self.arities[desc.arity][desc] = desc
 
-    def get_descs(self, op, *types):
-        all_matches = list(self.ops[op].keys())
-        if len(types): # can't handle 0-ary operators if such a thing ever exists
-            return [o for o in all_matches if o.check_types_viable(*types, strict_none=True)]
+    def remove_operator(self, symbol, op):
+        del self.ops[symbol][op]
+        del self.arities[op.arity][op]
+        for o2 in self.ordering[symbol]:
+            del self.ordering[symbol][o2][op]
+        del self.ordering[symbol][op]
+
+    def get_operators(self, *types, symbol=None, arity=None, exact=False):
+        # this is currently basically a search function.
+        # could add: filter on return type, way of doing the exact matching
+        # algorithm in expr_factory, more general search on symbol names, ...
+        if symbol is None:
+            symbol = list(self.ops.keys())
+        if not isinstance(symbol, collections.abc.Sequence) or isinstance(symbol, str):
+            symbol = [symbol]
+        # we use a dict for the initial pass to both preserve order, and avoid
+        # duplicates for cases where an operator matches multiple symbols
+        all_matches = {}
+        for s in symbol:
+            all_matches.update(self.ops[s])
+        all_matches = list(all_matches.keys())
+
+        if arity is not None:
+            all_matches = [o for o in all_matches if o.arity == arity]
+
+        if len(types): # get all; can't handle 0-ary operators if such a thing ever exists
+            if exact:
+                return [op for op in all_matches if op.check_types_viable(*types) == 0]
+            else:
+                return [op for op in all_matches if op.check_types_viable(*types) is not None]
         else:
             return all_matches
 
@@ -479,38 +582,72 @@ class OperatorRegistry(object):
         else:
             return e
 
-    def expr_factory(self, op, *args, **kwargs):
+    def _find_closest(self, symbol, ops, min=True):
+        # finds the least or greatest elements in `ops` in a topological sort.
+        # the ordering could be memoized as well, since doing this each time
+        # would cale badly with a lot of operators.
+        # (n.b. I half-wrote and deleted a lot of graph code that is way, way
+        # overengineered for the current state of things. But it may be worth
+        # revisiting, since this should be doable in linear time by using
+        # standard topological sorting algorithms.)
+        if len(ops) <= 1:
+            return ops
+        result = []
+        for o in ops:
+            if min:
+                antitarget = 1
+            else:
+                antitarget = -1
+            # intentionally allows for None (e.g. using >= etc wouldn't work)
+            if all([self.ordering[symbol][o][o2] != antitarget for o2 in ops]):
+                result.append(o)
+        return result
+
+    def expr_factory(self, symbol, *args, **kwargs):
         """Given some operator/relation symbol with arguments, construct an
         appropriate TypedExpr subclass for that operator."""
 
-        if not op in self.ops:
-            raise parsing.ParseError("Unknown operator symbol `%s`" % op)
+        if not symbol in self.ops:
+            raise parsing.ParseError(f"Unknown operator symbol `{symbol}`")
 
-        matches = [o for o in self.ops[op].keys() if o.arity == len(args)]
+        matches = [o for o in self.ops[symbol].keys() if o.arity == len(args)]
         if not len(matches):
-            raise parsing.ParseError("No %d-ary operator symbol `%s`" % (len(args), op))
+            raise parsing.ParseError(f"No {len(args)}-ary operator for `{symbol}`")
 
-        matches = [o for o in matches if o.check_viable(*args)]
+        matches = {o: o.check_viable(*args) for o in matches}
 
-        # Prioritize generic operators over specific operators. Generic
-        # operators should explicitly make exceptions for specific operators
-        # as needed. TODO: this is extremely ad hoc
-        if len(matches) > 1:
-            matches = [o for o in matches if o.has_blank_types()]
+        # this code is very brute force, could be cleaner. The exact algorithm
+        # here is subject to revision...
 
-        if not len(matches):
+        # if there's an exact match, use the closest among those matches. The
+        # reason for the sorting is cases like ({e},{X}) being ranked equal to
+        # ({X},{X}) and (X,X), because it doesn't encode identity between the
+        # coordinates; in a case like this we want to use ({X},{X}).
+        result = self._find_closest(symbol, [o for o in matches if matches[o] == 0])
+        if not result:
+            # prefer specialized matches over generic matches, prioritizing the
+            # one closest to the requested type.
+            # * if there is an ambiguity in the specialized matches, look for
+            #   an unambiguous generic match as a fallback. This is a bit ad
+            #   hoc, since we don't do it for exact matches. (TODO: revisit)
+            result = self._find_closest(symbol, [o for o in matches if matches[o] == -1], min=False)
+            if len(result) != 1:
+                # finally, try generic matches. If there are multiple generic
+                # matches, prioritize the most specific one. E.g. ({e},{e})
+                # given operators `(X,X)` and `({X},{X})` should match the
+                # latter, because the former is even more generic.
+                result = self._find_closest(symbol, [o for o in matches if matches[o] == 1])
+
+        if not result:
             raise parsing.ParseError(
-                "No viable %d-ary operator symbol `%s` for args `%s`"
-                    % (len(args), op, repr(args)))
-
-        # this shouldn't come up for the built-in libraries, but should this
-        # be made more informative for user cases?
-        if len(matches) > 1:
+                f"No viable {len(args)}-ary operator for symbol {symbol}` and arguments `{repr(args)}`")
+        elif len(result) > 1:
+            # this could be a lot more user-friendly, probably
+            match_str = ", ".join(f"`{r.signature_str()}`" for r in result)
             raise parsing.ParseError(
-                "Ambiguous %d-ary operator symbol `%s` for args `%s`"
-                    % (len(args), op, repr(args)))
+                f"Ambiguous {len(args)}-ary operator symbol `{symbol}` for arguments `{repr(args)}`; compatible types: {match_str}")
 
-        return self.apply_custom_transforms(matches[0].cls, matches[0].cls(*args, **kwargs))
+        return self.apply_custom_transforms(result[0].cls, result[0].cls(*args, **kwargs))
 
     def add_binding_op(self, op):
         """Register an operator to be parsed."""
@@ -538,6 +675,13 @@ class OperatorRegistry(object):
             del self.binding_ops[op.canonical_name]
         BindingOp.compile_ops_re()
 
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            return "<Recursion in OperatorRegistry>"
+        struc = self.ops.copy()
+        for k in struc:
+            struc[k] = list(self.ops[k].keys())
+        p.pretty(struc)
 
 def is_op_symbol(op):
     global registry
@@ -1097,7 +1241,7 @@ class TypedExpr(object):
         if constant and b != principal:
             # is this unnecessarily strict?
             return failed_constraint(a, b,
-                f"Type constraint for `{name}` ({{a_repr}} == constant {{b_repr}}) would require adjusting constant to {principal}")
+                error=f"Type constraint for `{name}` ({a_repr} == constant {b_repr}) would require adjusting constant to {principal}")
         if principal is not None and a_te is not None:
             # XX maybe let caller set name for more information?
             a = a_te.try_adjust_type(principal,
@@ -1323,9 +1467,7 @@ class TypedExpr(object):
 
         # Replace the alternative spellings of operators with canonical
         # spellings
-        # TODO: derive from operator registry
-        to_eval = s.replace('==>', '>>').replace('<==', '<<').replace('<=>', '%')
-        to_eval = to_eval.replace('=/=', '^').replace('==', '%').replace('=>', '>>')
+        to_eval = apply_op_aliases(s)
         lcopy = locals.copy()
         lcopy.update(cls._parsing_locals)
         pre_expansion = to_eval
@@ -2139,7 +2281,8 @@ class TypedExpr(object):
                 result = self.copy_local(*args)
                 if reason:
                     if force_full:
-                        reason = f"reduction of path {repr(path)}"
+                        if reason and reason is True:
+                            reason = f"reduction of path {repr(path)}"
                         # bookkeeping is a bit annoying for this case
                         # (because of sequences like (0,0,0) and then (0,0)),
                         # so don't track the recursive detail at all. If this
@@ -2152,6 +2295,10 @@ class TypedExpr(object):
                     result = derived(result, self,
                             desc=reason,
                             subexpression=subexpression)
+                else:
+                    # prevent reason=False from wiping out an existing
+                    # derivation. (XX does this have any weird effects?)
+                    set_derivation(result, self.derivation)
                 result._reduced_cache = self._reduced_cache.copy()
                 # sync any changes to i's _reduced_cache:
                 result._reduced_cache[i] = result[i]._is_reduced_caching()
@@ -2332,9 +2479,8 @@ class TypedExpr(object):
         """Return the number of parts of `self`, including the operator."""
         return len(self.args)
 
-    # See http://www.python.org/doc/current/lib/module-operator.html
+    # See https://docs.python.org/3/reference/datamodel.html
     # Not implemented: not, abs, pos, concat, contains, *item, *slice,
-    # floordiv, matmul
     def __and__(self, other):    return self.factory('&',  self, other)
     def __invert__(self):        return self.factory('~',  self)
     def __lshift__(self, other): return self.factory('<<', self, other)
@@ -2342,7 +2488,7 @@ class TypedExpr(object):
     def __or__(self, other):     return self.factory('|',  self, other)
     def __xor__(self, other):    return self.factory('^',  self, other)
     def equivalent_to(self, other): return self.factory('<=>',  self, other)
-    def __mod__(self, other):    return self.equivalent_to(other)
+    def __mod__(self, other):    return self.factory('%',  self, other)
 
     def __lt__(self, other):     return self.factory('<',  self, other)
     def __le__(self, other):     return self.factory('<=', self, other)
@@ -2350,10 +2496,12 @@ class TypedExpr(object):
     def __sub__(self, other):    return self.factory('-',  self, other)
     def __div__(self, other):    return self.factory('/',  self, other)
     def __truediv__(self, other):return self.factory('/',  self, other)
+    def __floordiv__(self, other):return self.factory('//',  self, other)
     def __mul__(self, other):    return self.factory('*',  self, other)
     def __neg__(self):           return self.factory('-',  self)
     def __pos__(self):           return self.factory('+',  self)
     def __pow__(self, other):    return self.factory('**', self, other)
+    def __matmul__(self, other): return self.factory('@', self, other)
 
     # add reverse versions of several of the above so that things like
     # `2 + te("2")` work. Python has a weird special case where if you do
@@ -2376,6 +2524,11 @@ class TypedExpr(object):
             return NotImplemented
         return self.factory('/', other, self)
 
+    def __rfloordiv__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('//', other, self)
+
     def __rmul__(self, other):
         if is_te(other):
             return NotImplemented
@@ -2385,6 +2538,11 @@ class TypedExpr(object):
         if is_te(other):
             return NotImplemented
         return self.factory('**', other, self)
+
+    def __rmatmul__(self, other):
+        if is_te(other):
+            return NotImplemented
+        return self.factory('@', other, self)
 
     def __rmod__(self, other):
         if is_te(other):
@@ -3467,6 +3625,10 @@ class SyncatOpExpr(TypedExpr):
     commutative = False # default - override if needed
     associative = False # default - override if needed. Mostly only relevant if
                         # the arguments have the same type as `typ`.
+    operator_style = True # if unary, do we omit parens?
+    infix_style = True # if 2-ary, is it infix or prefix?
+    # `latex_operator_style` and `latex_infix_style` can be set independently
+    # of the above two, but otherwise, will inherit their values
 
     # is the operation left associative without parens, i.e. for arbitrary `@`
     # does `p @ q @ r` mean `((p @ q) @ r)`?
@@ -3512,23 +3674,36 @@ class SyncatOpExpr(TypedExpr):
             if not self.operator_style:
                 p.text(")")
         else:
-            # XX left assoc parens?
-            p.text("(")
-            for a in self.args[0:-1]:
-                p.pretty(self.args[0])
-                p.text(" %s " % self.op_name_uni)
-            p.pretty(self.args[-1])
-            p.text(")")
+            if self.infix_style:
+                # XX left assoc parens?
+                p.text("(")
+                for a in self.args[0:-1]:
+                    p.pretty(self.args[0])
+                    p.text(" %s " % self.op_name_uni)
+                p.pretty(self.args[-1])
+                p.text(")")
+            else:
+                p.text("%s" % self.op_name_uni)
+                p.text("(")
+                for a in self.args[0:-1]:
+                    p.pretty(self.args[0])
+                    p.text(", ")
+                p.pretty(self.args[-1])
+                p.text(")")
 
     def __repr__(self):
+        # XX probably overdoes parens in some cases
         if self.arity == 1:
             if (self.operator_style):
                 return "%s%s" % (self.op, repr(self.args[0]))
             else:
                 return "%s(%s)" % (self.op, repr(self.args[0]))
         else:
-            op_text = " %s " % self.op
-            return "(%s)" % (op_text.join([repr(a) for a in self.args]))
+            if self.infix_style:
+                op_text = " %s " % self.op
+                return "(%s)" % utils.parens((op_text.join([repr(a) for a in self.args])))
+            else:
+                return f"{self.op}({", ".join([repr(a) for a in self.args])})"
 
     def _sub_latex_str(self, i, suppress_parens = False, **kwargs):
         from .sets import SetEquivalence
@@ -3548,19 +3723,27 @@ class SyncatOpExpr(TypedExpr):
 
     def latex_str(self, suppress_parens=False, **kwargs):
         if self.arity == 1:
-            if (self.operator_style):
+            latex_operator_style = getattr(self, 'latex_operator_style', self.operator_style)
+            # XX allow for latex postfix rendering? (Possibly a bad idea given
+            # that this syntax doesn't exist at all in the metalanguage...)
+            if (latex_operator_style):
                 return ensuremath("%s %s" % (self.op_name_latex,
                     self._sub_latex_str(0, **kwargs)))
             else:
                 return ensuremath("%s(%s)" % (self.op_name_latex,
                     self._sub_latex_str(0, suppress_parens=True, **kwargs)))
         else:
-            sub_parens = True
-            inner = f" {self.op_name_latex} ".join(
-                [self._sub_latex_str(i, **kwargs) for i in range(len(self.args))])
-            if not suppress_parens:
-                inner = f"({inner})"
-            return ensuremath(inner)
+            latex_infix_style = getattr(self, 'latex_infix_style', self.infix_style)
+            if latex_infix_style:
+                sub_parens = True
+                inner = f" {self.op_name_latex} ".join(
+                    [self._sub_latex_str(i, **kwargs) for i in range(len(self.args))])
+                if not suppress_parens:
+                    inner = f"({inner})"
+                return ensuremath(inner)
+            else:
+                arg_str = ", ".join(a.latex_str(suppress_parens=True, **kwargs) for a in self.args)
+                return ensuremath(f"{self.op_name_latex} ({arg_str})")
 
     @classmethod
     def join(cls, l, empty=None, assoc_right=False):
@@ -3785,6 +3968,7 @@ def op(op, arg_type, ret_type,
 # probably belongs elsewhere
 class BinaryGenericEqExpr(SyncatOpExpr):
     canonical_name = "<=>"
+    secondary_names = {"==", "%"}
     op_name_latex = "="
     commutative = True
     # note: this associativity here is fairly in principle, since it only
@@ -3792,10 +3976,15 @@ class BinaryGenericEqExpr(SyncatOpExpr):
     # different class...
     associative = True
 
+    # because of load sequencing issues, arg_signature is initialized in __init__.py
+    # arg_signature = tp("(X,X)")
+
     """Type-generic equality.  This places no constraints on the type of `arg1`
     and `arg2` save that they be equal."""
     def __init__(self, arg1, arg2, typ=None, **kwargs):
         typ = self.type_constraint(typ, types.type_t, constant=True)
+        # Could even generalize this to handle args of completely arbitrary
+        # types
         arg1, arg2 = self.type_constraint(arg1, arg2,
                                 error="Equality requires compatible types")
         super().__init__(arg1.type, arg1, arg2, typ=typ, tcheck_args = False)
@@ -3820,6 +4009,9 @@ class BinaryGenericEqExpr(SyncatOpExpr):
         return c
 
     def simplify(self, **sopts):
+        # TODO: if simplification results in this having a boolean or set type
+        # fall back on specializations. (How to do this in a sufficiently
+        # generalized way?)
         if (is_concrete(self[0]) and is_concrete(self[1])):
             # for any fully concrete sets/tuples, we should use the compiled
             # implementation
@@ -3837,17 +4029,6 @@ class BinaryGenericEqExpr(SyncatOpExpr):
     def random(cls, ctrl, max_type_depth=1):
         body_type = get_type_system().random_type(max_type_depth, 0.5)
         return cls(ctrl(typ=body_type), ctrl(typ=body_type))
-
-    @classmethod
-    def check_viable(cls, *args):
-        if len(args) != 2:
-            return False
-        principal_type = ts_unify(args[0].type, args[1].type)
-        # leave type t to the simply-typed biconditional operator
-        # TODO: it should be possible to handle this in a more generalized way
-        return (principal_type is not None
-            and principal_type != types.type_t
-            and not isinstance(principal_type, types.SetType))
 
 
 class TupleIndex(SyncatOpExpr):

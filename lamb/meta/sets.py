@@ -4,7 +4,7 @@ import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
-from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality
+from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality, tp
 from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key, set_derivation
@@ -15,16 +15,16 @@ from lamb.types import type_t, SetType
 
 
 def setup_operators():
-    # type {X}
-    registry.add_operator(SetContains, None, None)
-    registry.add_operator(SetUnion, None, None)
-    registry.add_operator(SetIntersection, None, None)
-    registry.add_operator(SetDifference, None, None)
-    registry.add_operator(SetEquivalence, None, None)
-    registry.add_operator(SetSubset, None, None)
-    registry.add_operator(SetProperSubset, None, None)
-    registry.add_operator(SetSupset, None, None)
-    registry.add_operator(SetProperSupset, None, None)
+    registry.add_operator(SetContains)
+    registry.add_operator(SetUnion)
+    registry.add_operator(SetIntersection)
+    registry.add_operator(SetDifference)
+    registry.add_operator(SetEquivalence,
+        shadow_warning=False)
+    registry.add_operator(SetSubset)
+    registry.add_operator(SetProperSubset)
+    registry.add_operator(SetSupset)
+    registry.add_operator(SetProperSupset)
     registry.add_binding_op(ConditionSet)
 
 
@@ -466,6 +466,8 @@ class SetContains(SyncatOpExpr):
     op_name_latex = "\\in{}"
     commutative = False
 
+    arg_signature = tp("(X,{X})")
+
     def __init__(self, arg1, arg2, typ=None, **kwargs):
         typ = self.type_constraint(typ, types.type_t, constant=True)
 
@@ -572,10 +574,15 @@ def check_set_types(arg1, arg2, op_name=None):
     elif isinstance(arg2.type, SetType):
         primary = arg2
         other = arg1
+    # XX missing case: both types are type variables
+    # this is mostly shadowed by other operators, but perhaps in a buggy way.
+    # E.g. `%te p_Y <= q_X` resolves to type n, but should arguably give an
+    # ambiguous operator parse error. <=> is more intentionally shadowed by
+    # BinaryGenericEqExpr...
     else:
         if op_name:
             # XX these errors are a bit odd
-            raise types.TypeMismatch(arg1, arg2, f"{op_name} requires set types")
+            raise types.TypeMismatch(arg1, arg2, error=f"{op_name} requires set types")
         else:
             return None
 
@@ -584,14 +591,14 @@ def check_set_types(arg1, arg2, op_name=None):
     elif not isinstance(other.type, SetType):
         if op_name:
             # XX these errors are a bit odd
-            raise types.TypeMismatch(arg1, arg2, f"{op_name} requires set-compatible types")
+            raise types.TypeMismatch(arg1, arg2, error=f"{op_name} requires set-compatible types")
         else:
             return None
     # at this point, both are SetType instances
     ctype = get_type_system().unify(arg1.type.content_type, arg2.type.content_type)
     if ctype is None:
         if op_name:
-            raise types.TypeMismatch(arg1, arg2, f"{op_name} requires equivalent set types")
+            raise types.TypeMismatch(arg1, arg2, error=f"{op_name} requires equivalent set types")
         else:
             return None
 
@@ -600,6 +607,7 @@ def check_set_types(arg1, arg2, op_name=None):
 
 class BinarySetOp(SyncatOpExpr):
     arity = 2
+    arg_signature = tp("({X},{X})")
 
     def __init__(self, arg1, arg2, op_name, rettype=None, typ=None):
         t = check_set_types(arg1, arg2, op_name=op_name)
@@ -625,12 +633,6 @@ class BinarySetOp(SyncatOpExpr):
         # set operations and relations typically have an implementation in terms
         # of simpler operations/relations; subclasses can fill this in here.
         return None
-
-    @classmethod
-    def check_viable(cls, *args):
-        if len(args) != 2:
-            return False
-        return check_set_types(args[0], args[1]) is not None
 
     @classmethod
     def random(cls, ctrl, max_type_depth=1, typ=None):
@@ -910,8 +912,11 @@ class SetEquivalence(BinarySetOp):
     """Binary relation of set equivalence."""
 
     canonical_name = "<=>"
+    secondary_names = {"==", "%"}
     op_name_latex = "="
     commutative = True
+
+    arg_signature = tp("({X},{X})")
 
     def __init__(self, arg1, arg2, typ=None, **kwargs):
         super().__init__(arg1, arg2, "Set equivalence", rettype=types.type_t, typ=typ)
