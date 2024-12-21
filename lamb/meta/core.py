@@ -683,6 +683,186 @@ class OperatorRegistry(object):
             struc[k] = list(self.ops[k].keys())
         p.pretty(struc)
 
+
+def op_from_te(op_name, e, superclass=None, **kwargs):
+    """Given some TypedExpr operator, produce a derived `SyncatOpExpr` subclass
+    that uses that expression as its implementation."""
+    if 'canonical_name' not in kwargs:
+        kwargs['canonical_name'] = op_name
+
+    op_arity = kwargs.get('arity', None)
+
+    # a superclass will need to mimic SyncatOpExpr pretty closely to be usable
+    # here...
+    if superclass is None:
+        superclass = SyncatOpExpr
+
+    if not issubclass(superclass, SyncatOpExpr):
+        raise ValueError(f"Operator wrapping requires a subclass of SyncatOpExpr (got: {repr(superclass)})")
+
+    if not isinstance(e.type, types.FunType): # XX polymorphic e.type
+        raise TypeError(
+                f"Operator wrapping does not support 0-ary operators (called on `{op_name} = {repr(e)}`)")
+
+    if op_arity is None:
+        if isinstance(e.type.left, types.TupleType):
+            # XX this allows for a 1-ary tuple
+            op_arity = len(e.type.left)
+        else: # FunType checked above
+            if isinstance(e.type.right, types.FunType):
+                op_arity = 2
+            else:
+                op_arity = 1
+
+    # ternary operator support?
+    if op_arity == 0 or op_arity > 2:
+        raise TypeError(
+                f"Operator wrapping does not support {arity}-ary operators (called on `{op_name} = {repr(e)}`)")
+
+    # store `e` with fresh type vars. XX it would be better if this were
+    # handled by application, but it currently isn't (at least, not very well)
+    e = e.copy().freshen_type_vars()
+
+    if isinstance(e.type.left, types.TupleType):
+        # XX this allows for a 1-ary tuple
+        signature = e.type.left.signature
+        rettype = e.type.right
+    elif op_arity == 1:
+        signature = (e.type.left,)
+        rettype = e.type.right
+    else:
+        # assumption: 2 place curried function
+        signature = (e.type.left, e.type.right.left)
+        rettype = e.type.right.right
+
+    signature = types.TupleType(*signature)
+
+    _secondary_names = kwargs.get('secondary_names', None)
+    if _secondary_names is None:
+        _secondary_names = set()
+
+    class WrappedOp(superclass):
+        arity = op_arity
+        # allow setting various class parameters via kwargs
+        canonical_name = kwargs['canonical_name']
+        secondary_names = _secondary_names
+        op_name_uni = kwargs.get('op_name_uni', None)
+        op_name_latex = kwargs.get('op_name_latex', None)
+        operator_style = kwargs.get('operator_style', True)
+        infix_style = kwargs.get('infix_style', True)
+        commutative = kwargs.get('commutative', superclass.commutative)
+        associative = kwargs.get('associative', superclass.associative)
+        left_assoc = kwargs.get('left_assoc', superclass.left_assoc)
+        pre_simplify = True # needs to be true for evaluation to work
+
+        arg_signature = signature
+        base_impl = e
+
+        def __init__(self, *args, typ=None, **kwargs):
+            if len(args) != self.arity:
+                # call superclass without type checking so that the op
+                # name is set correctly
+                super().__init__(None, *args, typ=rettype, tcheck_args=False)
+                # what exception type to use here?
+                raise parsing.ParseError(
+                    f"Operator `{self.op_name_uni}` needs {self.arity} operands but {len(args)} were given")
+
+            # some fairly ugly type munging is currently needed here, because
+            # just leaving it up to application can result in non-ideal inferred
+            # types if both the operator and the arguments involve type
+            # variables. (TODO)
+            ttype = types.TupleType(*[a.type for a in args])
+            ttype, _ = self.type_constraint(self.arg_signature, ttype)
+            args = [self.type_constraint(args[i], ttype[i], constant=True) for i in range(len(signature))]
+            if isinstance(self.base_impl[0].type, types.TupleType):
+                impl_type = types.FunType(types.TupleType(args[0].type, args[1].type), self.base_impl[1].type)
+            elif self.arity == 1:
+                impl_type = types.FunType(args[0].type, self.base_impl.type[1])
+            else:
+                # assumption: 2-place curried function
+                impl_type = types.FunType(args[0].type, types.FunType(args[1].type, self.base_impl[1][1].type))
+
+            impl, _ = self.type_constraint(self.base_impl, impl_type)
+
+            if isinstance(self.base_impl[0].type, types.TupleType):
+                self._impl_composite = impl(Tuple(*args))
+            elif self.arity == 1:
+                self._impl_composite = impl(args[0])
+            else:
+                # assumption: 2-place curried function
+                self._impl_composite = impl(args[0])(args[1])
+
+            # Type inference should be done, validate the final output type
+            self._impl_composite, typ = self.type_constraint(self._impl_composite, typ)
+            super().__init__(None, *self._args_from_impl(), typ=typ, tcheck_args=False)
+
+        def _args_from_impl(self):
+            # pull arguments back out from a constructed self._impl_composite
+            if isinstance(self._impl_composite[0].type, types.TupleType):
+                return self._impl_composite[1].args
+            elif self.arity == 1:
+                return [self._impl_composite[1]]
+            else:
+                # assumption: 2-place curried function
+                return [self._impl_composite[0][1], self._impl_composite[1]]
+
+        def _compile(self):
+            return self._impl_composite._compiled
+
+        def simplify(self, **sopts):
+            # derived will make a copy for most cases, but ensure that it
+            # always does
+            result = derived(self._impl_composite.copy(),
+                self, desc=f"Evaluation of operator `{self.op_name_uni}`")
+
+            if get_sopt('evaluate', sopts):
+                # this is overly aggressive, but currently there's no better
+                # way to sequence this, because the normal reduction path happens
+                # very early in simplification
+                # XX could wrap the guaranteed reduction steps with a better
+                # derivation explanation?
+                result = result.reduce_all() # may have side effects!
+
+            return result
+
+        @classmethod
+        def random(cls, ctrl, typ=None, **kwargs):
+            # XX input typ is discarded here
+            args = [ctrl(typ=signature[i]) for i in range(cls.arity)]
+            return cls(*args)
+
+    # some metaprogramming to get better reprs for the class object.
+    # These probably need some further tweaking....
+    WrappedOp.__name__ = op_name
+    WrappedOp.__qualname__ = op_name
+    return WrappedOp
+
+
+def op_class(*args, **kwargs):
+    """Class decorator that can be used to generate a `SyncatOpExpr` from a
+    TypedExpr providing an implementation, allowing for further programmatic
+    overrides of the operator. Note that this uses multiple inheritence and
+    that the decorated class *cannot* be an subclass of TypedExpr.
+
+    The argument options are identical to those of `op_from_te`."""
+    WrappedOpSuper = op_from_te(*args, **kwargs)
+
+    def wrapper(cls):
+        if issubclass(cls, TypedExpr):
+            raise ValueError(f"@op_class cannot decorate a TypedExpr subclass (used on: `{repr(cls)}`)")
+        # we can't set the superclass directly, so use multiple inheritence.
+        # this leads to cute decorator code but it is reliant on the
+        # superclasses not using multiple inheritence.
+        # It is entirely possible this will be a bad idea in the long run...
+        class WrappedOp(cls, WrappedOpSuper):
+            pass
+        WrappedOp.__name__ = cls.__name__
+        WrappedOp.__qualname__ = cls.__qualname__
+        WrappedOp.__module__ = cls.__module__
+        return WrappedOp
+    return wrapper
+
+
 def is_op_symbol(op):
     global registry
     return op in registry.ops
@@ -1088,6 +1268,9 @@ class TypedExpr(object):
 
     originally based on logic.Expr (from aima python), now long diverged.
     """
+
+    canonical_name = None
+
     def __init__(self, op, *args, defer=False, typ=None):
         """
         Constructor for TypedExpr class. This class is an abstract class and
@@ -4578,7 +4761,7 @@ class BindingOp(TypedExpr):
 
     @classmethod
     def init_op_match(cls, s):
-        if BindingOp.init_op_match:
+        if BindingOp.init_op_match and BindingOp.init_op_regex is not None:
             # TODO: is there a clever way to do this with a single match group
             match = re.match(BindingOp.init_op_regex, s)
             if match:

@@ -10,6 +10,53 @@ from .meta import MetaTerm
 from .ply import alphanorm
 
 
+
+def global_init():
+    global random_set_ops, random_set_rels, random_types, random_used_vars
+    global te_classes
+    random_set_ops = [sets.SetUnion, sets.SetIntersection, sets.SetDifference]
+    random_set_rels = [sets.SetEquivalence, sets.SetSubset, sets.SetProperSubset,
+                       sets.SetSupset, sets.SetProperSupset, sets.SetContains]
+    random_types = [type_t]
+    # XX convert this to something other than a global
+    random_used_vars = set()
+
+    te_classes = [core.ApplicationExpr,
+                  core.LFun,
+                  core.Tuple,
+                  core.TupleIndex,
+                  core.TypedTerm,
+                  core.Partial,
+                  core.Disjunctive,
+                  meta.MetaTerm,
+                  boolean.UnaryNegExpr,
+                  boolean.BinaryAndExpr,
+                  boolean.BinaryOrExpr,
+                  boolean.BinaryArrowExpr,
+                  boolean.BinaryBiarrowExpr,
+                  boolean.BinaryNeqExpr,
+                  quantifiers.Forall,
+                  quantifiers.Exists,
+                  quantifiers.ExistsExact,
+                  quantifiers.Iota,
+                  quantifiers.IotaPartial,
+                  number.UnaryNegativeExpr,
+                  number.UnaryPositiveExpr,
+                  number.BinaryLExpr,
+                  number.BinaryLeqExpr,
+                  number.BinaryGExpr,
+                  number.BinaryGeqExpr,
+                  number.BinaryPlusExpr,
+                  number.BinaryMinusExpr,
+                  number.BinaryDivExpr,
+                  number.BinaryExpExpr,
+                  sets.SetContains,
+                  sets.ConditionSet,
+                  sets.ListedSet]
+
+global_init()
+
+
 def repr_parse(e):
     result = te(repr(e), let=False)
     return result == e
@@ -111,11 +158,6 @@ def random_from_class(cls, max_depth=1, used_vars=None, ctrl=None):
     return cls.random(ctrl)
 
 
-random_set_ops = [sets.SetUnion, sets.SetIntersection, sets.SetDifference]
-random_set_rels = [sets.SetEquivalence, sets.SetSubset, sets.SetProperSubset,
-                   sets.SetSupset, sets.SetProperSupset, sets.SetContains]
-
-
 def random_set_expr(ctrl, typ=None):
     if typ is not None and not isinstance(typ, types.SetType):
         raise ValueError(f"Generating a random set operator expression requires a set type, got {typ}")
@@ -128,10 +170,6 @@ def random_set_rel(ctrl, typ=None):
     return random.choice(random_set_rels).random(ctrl, typ=typ)
 
 
-# ugh, need to find a way to do this not by side effect
-global random_used_vars
-random_used_vars = set()
-
 class RType(enum.Enum):
     FA_COMBO = 1
     BOOLEAN_OP_EXPR = 2
@@ -142,7 +180,6 @@ class RType(enum.Enum):
     SET_RELATION = 7
     SET_OP = 8
 
-random_types = [type_t]
 
 def random_expr(typ=None, depth=1, max_type_depth=1, options=None, used_vars=None):
     """Generate a random expression of the specified type `typ`, with an AST of
@@ -258,6 +295,7 @@ def random_pure_boolean(depth=1, used_vars=None, **args):
                                                                         **args)
         return random_tf_op_expr(ctrl)
 
+
 def test_repr_parse_abstract(self, depth):
     for i in range(1000):
         x = random_expr(depth=depth)
@@ -267,6 +305,7 @@ def test_repr_parse_abstract(self, depth):
         if not result:
             print("Failure on depth %i expression '%s'" % (depth, repr(x)))
         self.assertTrue(result)
+
 
 def testsimp(self, a, b, all=False, exec=False, **kwargs):
     if exec:
@@ -285,39 +324,6 @@ def testsimp(self, a, b, all=False, exec=False, **kwargs):
                 f"Failed exec test: '{repr(a)} == {repr(b)}' (got `{repr(execed_a)}` == `{repr(execed_b)}`)")
     return intermediate
 
-
-te_classes = [core.ApplicationExpr,
-              core.LFun,
-              core.Tuple,
-              core.TupleIndex,
-              core.TypedTerm,
-              core.Partial,
-              core.Disjunctive,
-              meta.MetaTerm,
-              boolean.UnaryNegExpr,
-              boolean.BinaryAndExpr,
-              boolean.BinaryOrExpr,
-              boolean.BinaryArrowExpr,
-              boolean.BinaryBiarrowExpr,
-              boolean.BinaryNeqExpr,
-              quantifiers.Forall,
-              quantifiers.Exists,
-              quantifiers.ExistsExact,
-              quantifiers.Iota,
-              quantifiers.IotaPartial,
-              number.UnaryNegativeExpr,
-              number.UnaryPositiveExpr,
-              number.BinaryLExpr,
-              number.BinaryLeqExpr,
-              number.BinaryGExpr,
-              number.BinaryGeqExpr,
-              number.BinaryPlusExpr,
-              number.BinaryMinusExpr,
-              number.BinaryDivExpr,
-              number.BinaryExpExpr,
-              sets.SetContains,
-              sets.ConditionSet,
-              sets.ListedSet]
 
 class MetaTest(unittest.TestCase):
     def setUp(self):
@@ -1123,6 +1129,7 @@ class MetaTest(unittest.TestCase):
             self.assertTrue(meta.exec((s2 & s4).equivalent_to(s4)))
             self.assertTrue(meta.exec((s2 & s3).equivalent_to(s5)))
             self.assertTrue(meta.exec((s2 & s3) <= s5))
+            self.assertTrue(meta.exec(s5 <= (s2 & s3)))
             self.assertTrue(meta.exec((s2 & s3) >= s5))
             self.assertFalse(meta.exec((s2 & s3) < s5))
             self.assertFalse(meta.exec((s2 & s3) > s5))

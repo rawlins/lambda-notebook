@@ -6,7 +6,7 @@ from lamb import types, utils, parsing, display
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from lamb.types import type_property, type_transitive, BasicType, FunType
 
-from lamb.meta import core, boolean, meta, number, ply, quantifiers, sets, test
+from lamb.meta import core, boolean, meta, number, ply, quantifiers, sets
 from lamb.meta.core import TypedExpr, TypedTerm, CustomTerm, ApplicationExpr
 from lamb.meta.core import LFun, BindingOp
 from lamb.meta.core import Tuple, TupleIndex, Partial, Disjunctive, BinaryGenericEqExpr
@@ -21,6 +21,7 @@ from lamb.meta.boolean import true_term, false_term
 
 from lamb.meta.meta import truthtable, truthtable_equiv, MetaTerm, Assignment, Model
 from lamb.meta.meta import compiled, exec
+
 
 ###############
 #
@@ -46,6 +47,10 @@ def reset():
 
 
 default_metalanguage()
+
+# this needs to happen after the metalanguage is set up
+from lamb.meta import test
+
 
 # TODO, remove these tests? Right now they are a reload sanity check...
 # everything here has an approximate analog in meta/test.py

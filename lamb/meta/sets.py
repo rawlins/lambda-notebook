@@ -4,7 +4,8 @@ import lamb
 from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
-from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality, tp
+from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality, tp, te
+from .core import op_class
 from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key, set_derivation
@@ -12,6 +13,28 @@ from .boolean import BinaryOrExpr, BinaryAndExpr, false_term, true_term
 from .quantifiers import Forall, Exists
 from lamb.utils import dbg_print
 from lamb.types import type_t, SetType
+
+
+def derived_classes():
+    # because this is happening in a lamb.meta module, load order for these
+    # is tricky; it requires a fully working parser with the precondition
+    # classes for <= and <. Therefore, generate them in a call from the
+    # operator setup function.
+    global SetSupset, SetProperSupset
+
+    @op_class('>=', te('L x_{X} : L y_{X} : y <= x'),
+                op_name_uni='⊇',
+                op_name_latex='\\supseteq{}')
+    class SetSupset:
+        """Binary relation of (non-proper) supersethood."""
+        pass
+
+    @op_class('>', te('L x_{X} : L y_{X} : y < x'),
+                op_name_uni='⊃',
+                op_name_latex='\\supset{}')
+    class SetProperSupset:
+        """Binary relation of proper supersethood."""
+        pass
 
 
 def setup_operators():
@@ -23,9 +46,11 @@ def setup_operators():
         shadow_warning=False)
     registry.add_operator(SetSubset)
     registry.add_operator(SetProperSubset)
+    registry.add_binding_op(ConditionSet)
+
+    derived_classes()
     registry.add_operator(SetSupset)
     registry.add_operator(SetProperSupset)
-    registry.add_binding_op(ConditionSet)
 
 
 def safevar(e, typ=None):
@@ -34,7 +59,7 @@ def safevar(e, typ=None):
     if isinstance(e, ConditionSet):
         varname = e[0].op
         typ = e.type.content_type
-    elif isinstance(e, BinarySetOp):
+    elif isinstance(e, BinarySetOp) or isinstance(e, SetSupset) or isinstance(e, SetProperSupset):
         # e's type isn't guaranteed to give the set type, but we can get it
         # from the operands for all subclasses
         typ = e[0].type.content_type
@@ -131,7 +156,7 @@ class ConditionSet(BindingOp):
 
         if domain is None:
             if not self.finite_safe():
-                raise NotImplementedError("Compiled ConditionSet requires a guaranteed-finite domain")
+                raise NotImplementedError(f"Compiled ConditionSet (`{repr(self)}`)requires a guaranteed-finite domain")
             # without the demeta step, we get potentially bad comparisons
             # XX consider adjusting the domain_iter api so that it can do this
             # directly?
@@ -605,6 +630,8 @@ def check_set_types(arg1, arg2, op_name=None):
     return SetType(ctype)
 
 
+# note: classes in derived_classes() do not subclass, so an isinstance check
+# on this is not guaranteed to get every operator!
 class BinarySetOp(SyncatOpExpr):
     arity = 2
     arg_signature = tp("({X},{X})")
@@ -1097,6 +1124,7 @@ class SetSubset(BinarySetOp):
         else:
             return simplified
 
+
 class SetProperSubset(BinarySetOp):
     """Binary relation of proper subsethood."""
 
@@ -1120,43 +1148,3 @@ class SetProperSubset(BinarySetOp):
             return self
         else:
             return simplified
-
-
-class SetSupset(BinarySetOp):
-    """Binary relation of (non-proper) supersethood."""
-
-    canonical_name = ">="
-    op_name_uni = "⊇"
-    op_name_latex = "\\supseteq{}"
-    commutative = False
-
-    def __init__(self, arg1, arg2, typ=None, **kwargs):
-        super().__init__(arg1, arg2, "Superset", rettype=types.type_t, typ=typ)
-
-    def _set_impl(self):
-        # normalize to <=
-        return SetSubset(self[1], self[0])
-
-    def simplify(self, **sopts):
-        # unconditionally normalize
-        return derived(self._set_impl(), self, "superset => subset").simplify(**sopts)
-
-
-class SetProperSupset(BinarySetOp):
-    """Binary relation of proper supersethood."""
-
-    canonical_name = ">"
-    op_name_uni = "⊃"
-    op_name_latex = "\\supset{}"
-    commutative = True
-
-    def __init__(self, arg1, arg2, typ=None, **kwargs):
-        super().__init__(arg1, arg2, "Proper superset", rettype=types.type_t, typ=typ)
-
-    def _set_impl(self):
-        # normalize to <
-        return SetProperSubset(self[1], self[0])
-
-    def simplify(self, **sopts):
-        # unconditionally normalize
-        return derived(self._set_impl(), self, "superset => subset").simplify(**sopts)
