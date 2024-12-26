@@ -832,9 +832,11 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
             return cls(*args)
 
     # some metaprogramming to get better reprs for the class object.
-    # These probably need some further tweaking....
+    # These are not ideal, more-or-less the least worst options I have come
+    # up with. The decorator below does better.
     WrappedOp.__name__ = op_name
-    WrappedOp.__qualname__ = op_name
+    WrappedOp.__qualname__ = WrappedOp.__qualname__ + f".{op_name}"
+    # leave __module__ as-is
     return WrappedOp
 
 
