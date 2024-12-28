@@ -1,4 +1,4 @@
-import sys, re, traceback, collections
+import sys, re, traceback, collections, enum
 from contextlib import contextmanager
 
 # imported by meta
@@ -136,6 +136,17 @@ class ParseError(Exception):
         return p.text(self.tostring())
 
 
+@contextmanager
+def try_parse():
+    try:
+        yield
+    except ParseError as e:
+        if not e.met_preconditions:
+            return None
+        else:
+            raise e
+
+
 def consume_char(s, i, match, error=None):
     if i >= len(s):
         if error is not None:
@@ -150,10 +161,10 @@ def consume_char(s, i, match, error=None):
         else:
             raise ParseError(error, s, i)
 
-def consume_pattern(s, i, regex, error=None, return_match=False):
+def consume_pattern(s, i, regex, error=None, return_match=False, **kwargs):
     if i > len(s):
         if error is not None:
-            raise ParseError(error, s, i)
+            raise ParseError(error, s=s, i=i, **kwargs)
         else:
             return (None, None)
     m = re.match(regex, s[i:])
@@ -166,7 +177,7 @@ def consume_pattern(s, i, regex, error=None, return_match=False):
         if error is None:
             return (None, None)
         else:
-            raise ParseError(error, s, i)
+            raise ParseError(error, s=s, i=i, **kwargs)
 
 
 # non-negative integers only
@@ -271,6 +282,7 @@ def magic_opt(optname, line):
     else:
         return (False, line)
 
+
 def parse_te(line, env=None, use_env=False):
     # implementation of the %te magic
     from lamb.meta import te
@@ -311,11 +323,13 @@ def parse_te(line, env=None, use_env=False):
         accum["_llast"] = final_r
     return (final_r, accum)
 
+
 def try_parse_item_name(s, env=None, ambiguity=False):
-    match = re.match(
-                r'^\|\|([a-zA-Z _]+[a-zA-Z0-9 _]*)(\[-?([0-9]+|\*)\])?\|\|$', s)
+    match, i = consume_pattern(s, 0,
+                r'^\s*\|\|([a-zA-Z _]+[a-zA-Z0-9 _]*)(\[-?([0-9]+|\*)\])?\|\|',
+                return_match=True)
     if not match:
-        return (None, None)
+        return (None, None, None)
     lex_name = match.group(1).replace(" ", "_")
     if lex_name != match.group(1):
         logger().info("Exporting item ||%s|| to python variable `%s`."
@@ -329,7 +343,8 @@ def try_parse_item_name(s, env=None, ambiguity=False):
             index = None # override existing item or add a new one
     else:
         index = int(index_str[1:-1])
-    return (lex_name, index)
+    return (lex_name, index, i)
+
 
 # used both in %(%)lamb and in %te
 def under_assignment(right_side, env):
@@ -343,132 +358,193 @@ def under_assignment(right_side, env):
         assigned = derived(assigned, right_side, "Variable substitution from context")
     return assigned
 
+
 def parse_right(left_s, right_s, env, constants=False):
     from lamb.meta import te
     right_side = None
     with error_manager():
         with parse_error_wrap(f"Parsing of assignment to `{left_s}` failed"):
             right_side = te(right_s.strip(), assignment=env, let=True)
+            if right_side is None:
+                raise ParseError(f"Typed expression failed to parse in assignment to `{left_s}`", right_s.strip())
             right_side = right_side.regularize_type_env(env, constants=constants)
             right_side = under_assignment(right_side, env)
             right_side = right_side.simplify_all(reduce=True)
             return right_side
     return None
 
-def parse_equality_line(s, env=None, transforms=None, ambiguity=False):
-    from lamb.lang import get_system, Item, Items
-    # TODO should this go by lines....
-    if env is None:
-        env = dict()
+
+def apply_rs_transform(right_side, transform, transforms=None):
     if transforms is None:
-        transforms = dict()
-    var_env = vars_only(env)
-    system = get_system()
-    a_ctl = system.assign_controller
-    l = s.split("=", 1)
-    if len(l) != 2:
-        raise ParseError("Missing `=`") # TODO expand
-    transform = None
-    right_str = l[1]
-    if right_str[0] == "<":
-        trans_match = re.match(r'^\<([a-zA-Z0-9_]*)\>', right_str)
-        if trans_match:
-            trans_name = trans_match.group(1)
-            if transforms and trans_name in transforms:
-                transform = transforms[trans_name]
-                right_str = right_str[trans_match.end(0):]
-            else:
-                raise ParseError("Unknown transform `<%s>`" % (trans_name))
-    if transform is None and "default" in transforms:
+        transforms = {}
+    if transform and transform in transforms:
+        transform = transforms[transform]
+    elif transform is None and "default" in transforms:
         transform = transforms["default"]
+    # intentional: `<>` leads to `transform=""` and prevents a transform
+    if transform:
+        right_side = transform(right_side).simplify_all(reduce=True)
+    return right_side
 
 
-    # right side should be typed expr no matter what
-    left_s = l[0].strip()
-    lex_name, item_index = try_parse_item_name(left_s, env=env,
+def parse_assign_op(s, i, met_preconditions=False):
+    # parse the `=` in the middle of an assignment line
+    m, i = consume_pattern(s, i, r'^\s*=(?:<([a-zA-Z0-9_]*)>)?\s*',
+                    return_match=True,
+                    met_preconditions=met_preconditions,
+                    error="Missing `=` in assignment")
+    if m.group(1):
+        # transform name
+        return m.group(1), i
+    else:
+        return None, i
+
+
+def parse_op_assign(s, env, var_env, transforms=None):
+    from lamb.meta.core import op_from_te, registry, is_op_symbol
+    _, i = consume_pattern(s, 0, 'operator ',
+                    error="Missing `operator`", met_preconditions=False)
+    # this massively over-accepts compared to what is supported, but it makes
+    # error messaging easier later. Similarly for arity.
+    op_i = i
+    m, i = consume_pattern(s, i, r'^([a-zA-Z0-9_!@%^&*~<>:|\\/?\-=+]+)(?:\((\d+)\))?',
+                    return_match=True,
+                    error=f"Invalid operator name in `{s}`",
+                    met_preconditions=False)
+    op_symbol = m.group(1)
+    # note: the above pattern will greedily match =, so a space is needed for
+    # some operator symbols
+    transform, i = parse_assign_op(s, i)
+
+    if not is_op_symbol(op_symbol):
+        raise ParseError(f"Unknown operator symbol `{op_symbol}`", s=s, i=op_i)
+
+    var_env = vars_only(env)
+    right_side = parse_right(op_symbol, s[i:], var_env, constants=True)
+    if right_side is None:
+        return ({}, env)
+    right_side = apply_rs_transform(right_side, transform, transforms=transforms)
+    if m.group(2):
+        op_arity = int(m.group(2)) # should be safe given a succesful match
+    else:
+        op_arity = None # autodetect
+    op_cls = op_from_te(op_symbol, right_side, arity=op_arity)
+    registry.add_operator(op_cls)
+    op = registry.get_operators(cls=op_cls)[0]
+    try:
+        # operators aren't stored in the env, so attempt to display them
+        # now (TODO: sequencing will be wrong)
+        from IPython.display import display
+        display(op)
+    except ImportError:
+        pass
+
+    # XX maybe store new operators as global state somehow, for easier access?
+    return ({}, env)
+
+
+def parse_var_assign(s, env, var_env, transforms=None):
+    # this overaccepts here
+    left_s, i = consume_pattern(s, 0, r'^\s*([a-zA-Z0-9_]+)',
+        error="Invalid variable name in assignment",
+        met_preconditions=False)
+    transform, i = parse_assign_op(s, i)
+    right_side = parse_right(left_s, s[i:], var_env, constants=True)
+    if right_side is None:
+        return ({}, env)
+
+    from lamb.meta import TypedExpr
+    with error_manager():
+        with parse_error_wrap(f"Assignment to `{left_s}` failed"):
+            # don't pass assignment here, to allow for redefinition.  TODO: revisit
+            term = TypedExpr.term_factory(left_s, typ=right_side.type)
+            if term.type != right_side.type:
+                # the left-side term parsing resulted in a stronger principal
+                # type
+                right_side = TypedExpr.ensure_typed_expr(right_side, typ=term.type)
+
+            right_side = apply_rs_transform(right_side, transform, transforms=transforms)
+
+            # NOTE side-effect here
+            env[term.op] = right_side
+            return ({term.op : right_side}, env)
+
+    # shouldn't be reachable
+    return ({}, env)
+
+
+def parse_lex_assign(s, env, var_env, ambiguity=False, transforms=None):
+    from lamb.lang import get_system, Item, Items
+    lex_name, item_index, i = try_parse_item_name(s, env=env,
                                                         ambiguity=ambiguity)
-    if lex_name:
-        default = a_ctl.default()
-        db_env = default.new_child(var_env)
-        right_side = parse_right(left_s, right_str, db_env)
-        if right_side is None:
-            return (dict(), env)
+    if lex_name is None:
+        # XX convert the item name parser to raise directly
+        raise ParseError(f"Invalid lexical entry name in `{s}`", met_preconditions=False)
 
-        # lexical assignment
-        if transform:
-            right_side = transform(right_side).simplify_all(reduce=True)
+    transform, i = parse_assign_op(s, i)
 
-        item = Item(lex_name, right_side)
-        # TODO: add to composition system's lexicon?  Different way of tracking
-        # lexicons?
-        if item_index is None:
+    a_ctl = get_system().assign_controller
+    default = a_ctl.default()
+    db_env = default.new_child(var_env)
+    right_side = parse_right(lex_name, s[i:], db_env)
+    if right_side is None:
+        return ({}, env)
+    right_side = apply_rs_transform(right_side, transform, transforms=transforms)
+
+    item = Item(lex_name, right_side)
+    if item_index is None:
+        env[lex_name] = item
+    else:
+        # item_index is only set to a value if the item already exists in
+        # env.
+        if isinstance(env[lex_name], Item):
+            tmp_list = list([env[lex_name]])
+            if item_index is True:
+                tmp_list.append(item)
+            else:
+                tmp_list[item_index] = item # may throw an exception
+            item = Items(tmp_list)
             env[lex_name] = item
         else:
-            # item_index is only set to a value if the item already exists in
-            # env.
-            if isinstance(env[lex_name], Item):
-                tmp_list = list([env[lex_name]])
-                if item_index is True:
-                    tmp_list.append(item)
-                else:
-                    tmp_list[item_index] = item # may throw an exception
-                item = Items(tmp_list)
-                env[lex_name] = item
+            if item_index is True:
+                env[lex_name].add_result(item)
             else:
-                if item_index is True:
-                    env[lex_name].add_result(item)
-                else:
-                    env[lex_name][item_index] = item
-                item = env[lex_name]
-        return ({lex_name: item}, env)
-    else: # assignment to variable
-        right_side = parse_right(left_s, right_str, var_env, constants=True)
-        if right_side is None:
-            return (dict(), env)
+                env[lex_name][item_index] = item
+            item = env[lex_name]
+    return ({lex_name: item}, env)
 
-        # variable assignment case
-        from lamb.meta import TypedExpr
-        with error_manager():
-            with parse_error_wrap(f"Assignment to `{left_s}` failed"):
-                # don't pass assignment here, to allow for redefinition.  TODO: revisit
-                term = TypedExpr.term_factory(left_s, typ=right_side.type)
-                if term.type != right_side.type:
-                    # the left-side term parsing resulted in a stronger principal
-                    # type
-                    right_side = TypedExpr.ensure_typed_expr(right_side, typ=term.type)
 
-                if transform:
-                    right_side = transform(right_side).simplify_all(reduce=True)
-                # NOTE side-effect here
-                env[term.op] = right_side
-                return ({term.op : right_side}, env)
-        return (dict(), env)
+def parse_assignment(s, env=None, transforms=None, ambiguity=False):
+    # XX this is a standard parsing combinator approach that could be
+    # generalized
+    var_env = vars_only(env)
+    with try_parse():
+        return parse_op_assign(s, env, var_env, transforms=transforms)
+    with try_parse():
+        return parse_var_assign(s, env, var_env, transforms=transforms)
+    with try_parse():
+        return parse_lex_assign(s, env, var_env, transforms=transforms, ambiguity=ambiguity)
+
+    raise ParseError("Parsing of assignment failed", s)
+
 
 def remove_comments(s):
     """remove comments (prefaced by #) from a single line"""
     r = s.split("#")
     return r[0].rstrip()
 
+
 def parse_line(s, env=None, transforms=None, ambiguity=False):
     if env is None:
         env = dict()
-    try:
+    with error_manager(summary="Metalanguage parsing failed with exception:"):
         s = remove_comments(s)
         if len(s.strip()) > 0:
-            (accum, env) = parse_equality_line(s, transforms=transforms,
+            return parse_assignment(s, transforms=transforms,
                                                 env=env, ambiguity=ambiguity)
-            return (accum, env)
-        else:
-            return (dict(), env)
-    except Exception as e:
-        global errors_raise
-
-        logger().error("Parsing failed with exception:")
-        logger().error(e)
-        if errors_raise:
-            raise e
+        # otherwise, only a comment on this line, fall through to a noop
         
-        return (dict(), env)
+    return ({}, env)
 
 
 def parse_lines(s, env=None, transforms=None, ambiguity=False):
@@ -485,11 +561,13 @@ def parse_lines(s, env=None, transforms=None, ambiguity=False):
         accum.update(a)
     return (accum, env)
 
+
 def parse(s, state=None, transforms=None, ambiguity=False):
     global eq_transforms
     if transforms is None:
         transforms = eq_transforms
     return parse_lines(s, transforms=transforms, env=state, ambiguity=ambiguity)
+
 
 def fullvar(d, s):
     from lamb.meta import TypedTerm

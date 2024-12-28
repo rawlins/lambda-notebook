@@ -444,11 +444,23 @@ class OperatorRegistry(object):
             return repr(self.arg_signature)
 
         def __str__(self):
-            return repr(self)
+            return f"Operator({self.name}, {self.cls.__name__}, arity: {self.arity}, signature: {self.signature_str()})"
 
         def __repr__(self):
-            # n.b. not a true repr
-            return f"Operator({self.name}, {self.cls.__name__}, arity: {self.arity}, signature: {self.signature_str()})"
+            if (e := getattr(self.cls, 'base_impl', None)) is not None:
+                # use a metalanguage implementation if present
+                return f"operator {self.name}({self.arity}) = {repr(e)}"
+            else:
+                # not a true repr
+                return str(self)
+
+        def _repr_latex_(self):
+            if (e := getattr(self.cls, 'base_impl', None)) is not None:
+                # XX texttt here may not be stable across mathjax/katex versions
+                return ensuremath(f'\\texttt{{operator {self.name}({self.arity})}} = {e.latex_str(suppress_parens=True)}')
+            else:
+                # fall back to plain repr
+                return None
 
         def get_names(self):
             # maybe include unicode?
@@ -543,7 +555,7 @@ class OperatorRegistry(object):
             del self.ordering[symbol][o2][op]
         del self.ordering[symbol][op]
 
-    def get_operators(self, *types, symbol=None, arity=None, exact=False):
+    def get_operators(self, *types, symbol=None, arity=None, cls=None, exact=False):
         # this is currently basically a search function.
         # could add: filter on return type, way of doing the exact matching
         # algorithm in expr_factory, more general search on symbol names, ...
@@ -557,6 +569,11 @@ class OperatorRegistry(object):
         for s in symbol:
             all_matches.update(self.ops[s])
         all_matches = list(all_matches.keys())
+
+        if cls is not None:
+            # almost certainly reduces to size 1 unless selecting multiple
+            # symbols
+            all_matches = [o for o in all_matches if o.cls == cls]
 
         if arity is not None:
             all_matches = [o for o in all_matches if o.arity == arity]
@@ -640,7 +657,7 @@ class OperatorRegistry(object):
 
         if not result:
             raise parsing.ParseError(
-                f"No viable {len(args)}-ary operator for symbol {symbol}` and arguments `{repr(args)}`")
+                f"No viable {len(args)}-ary operator for symbol `{symbol}` and arguments `{repr(args)}`")
         elif len(result) > 1:
             # this could be a lot more user-friendly, probably
             match_str = ", ".join(f"`{r.signature_str()}`" for r in result)
@@ -706,10 +723,14 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
 
     if op_arity is None:
         if isinstance(e.type.left, types.TupleType):
+            # pull the arity directly from a tuple type's arity
             # XX this allows for a 1-ary tuple
             op_arity = len(e.type.left)
         else: # FunType checked above
-            if isinstance(e.type.right, types.FunType):
+            # if the type and operator symbol support it, default to arity 2
+            # when left unspecified
+            if (isinstance(e.type.right, types.FunType) and (
+                        op not in builtin_arities or 2 in builtin_arities[op])):
                 op_arity = 2
             else:
                 op_arity = 1
@@ -717,7 +738,7 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
     # ternary operator support?
     if op_arity == 0 or op_arity > 2:
         raise TypeError(
-                f"Operator wrapping does not support {arity}-ary operators (called on `{op_name} = {repr(e)}`)")
+                f"Operator wrapping does not support {op_arity}-ary operators (called on `{op_name} = {repr(e)}`)")
 
     # store `e` with fresh type vars. XX it would be better if this were
     # handled by application, but it currently isn't (at least, not very well)
@@ -867,7 +888,7 @@ def op_class(*args, **kwargs):
 
 def is_op_symbol(op):
     global registry
-    return op in registry.ops
+    return op in registry.ops or op in builtin_arities
 
 
 def op_expr_factory(op, *args, **kwargs):

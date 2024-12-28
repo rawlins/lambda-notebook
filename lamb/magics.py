@@ -85,7 +85,8 @@ class LambMagics(Magics):
                                                 ambiguity=self.cur_ambiguity)
             self.control_line(line, post=True, accum=accum)
         self.push_accum(accum)
-        IPython.display.display(utils.Namespace(accum))
+        if len(accum):
+            IPython.display.display(utils.Namespace(accum))
     
     def push_accum(self, accum):
         self.shadow_warnings(accum)
