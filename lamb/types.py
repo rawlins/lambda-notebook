@@ -18,6 +18,9 @@ random_len_cap = 5
 def demeta(x):
     # the import here needs to be very narrow, to avoid circular import issues
     from lamb.meta.meta import MetaTerm
+    from lamb.meta.core import TypedExprFacade
+    if isinstance(x, TypedExprFacade):
+        x = x._e
     if isinstance(x, MetaTerm):
         return x.op
     else:

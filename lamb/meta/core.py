@@ -380,6 +380,7 @@ builtin_arities = {
     '%': {2},
     '@': {2},
     '==': {2},
+    '!=': {2},
     '<': {2},
     '>': {2},
     '<=': {2},
@@ -893,6 +894,10 @@ def is_op_symbol(op):
 
 def op_expr_factory(op, *args, **kwargs):
     global registry
+    if op == '[]':
+        # not ideal to special case this, but this needs to be handled a bit
+        # differently than other operators
+        return TupleIndex(*args, **kwargs)
     return registry.expr_factory(op, *args, **kwargs)
 
 
@@ -1702,8 +1707,12 @@ class TypedExpr(object):
             # practice?
         finally:
             _parser_assignment = None
+        if isinstance(result, TypedExprFacade):
+            result = result._e
+
         if isinstance(result, TypedExpr):
             return result
+
         c = from_python_container(result)
         # XX is the container check needed here? code dup with factory
         if c is not None:
@@ -1792,14 +1801,20 @@ class TypedExpr(object):
                 continue
             # ugh this is sort of absurd
             if typ is None:
-                replace = (f'TypedExpr.term_factory("{name}", typ=None, assignment=assignment)')
+                replace = (f'TypedExpr._ptf("{name}", typ=None, assignment=assignment)')
             else:
-                replace = (f'TypedExpr.term_factory("{name}", typ="{repr(typ)}", assignment=assignment)')
+                replace = (f'TypedExpr._ptf("{name}", typ="{repr(typ)}", assignment=assignment)')
             s = s[0:t.start() + offset] + replace + s[end:]
             i = t.start() + offset + len(replace)
             len_original = end - (t.start() + offset)
             offset += len(replace) - len_original
         return s
+
+    @classmethod
+    def _ptf(cls, s, typ=None, assignment=None):
+        # XX return facade here instead of regular value. Current blocker is
+        # hashability for set parsing...
+        return cls.term_factory(s, typ=typ, assignment=assignment)
 
     @classmethod
     def term_factory(cls, s, typ=None, assignment=None, preparsed=False):
@@ -1922,10 +1937,10 @@ class TypedExpr(object):
 
     @classmethod
     def _composite_factory(cls, *args, assignment=None):
-        # assumption: len(args) > 1
+        # assumption: len(args) >= 1
         op = args[0]
         remainder = [cls.ensure_typed_expr(a) for a in args[1:]]
-        if is_op_symbol(op):
+        if is_op_symbol(op) or op == '[]':
             return cls._construct_op(op, *remainder)
 
         # the only kind of operator-expression generated after this point is
@@ -1963,15 +1978,17 @@ class TypedExpr(object):
         if _globals:
             assignment = collections.ChainMap(assignment, _globals)
 
-        if len(args) == 1 and isinstance(args[0], TypedExpr):
-            # handing this a single TypedExpr always returns a copy of the
-            # object.  I set this case aside for clarity. subclasses must
-            # implement copy() for this to work right.
-            return args[0].copy()
-
         if len(args) == 0:
             return None #TODO something else?
         elif len(args) == 1:
+            if isinstance(args[0], TypedExprFacade):
+                args = (args[0]._e,)
+
+            if isinstance(args[0], TypedExpr):
+                # handing the factory function a single TypedExpr always returns
+                # a copy of the object.
+                return args[0].copy()
+
             # args[0] is either an unsaturated function, a term, or a string
             # that needs parsed.
             # in the first two cases, return a unary TypedExpr
@@ -1999,6 +2016,9 @@ class TypedExpr(object):
     @classmethod
     def ensure_typed_expr(cls, s, typ=None, assignment=None):
         """Coerce s to a typed expression if necessary, otherwise, return s."""
+        if isinstance(s, TypedExprFacade):
+            s = s._e
+
         if isinstance(s, TypedExpr):
             if assignment is not None:
                 result = s.under_assignment(assignment)
@@ -2676,8 +2696,9 @@ class TypedExpr(object):
 
         If `i` is a TypedExpr, try to construct an expression representing
         indexing."""
-        if isinstance(i, TypedExpr):
-            return TupleIndex(self, i)
+        if isinstance(i, TypedExpr) or isinstance(i, TypedExprFacade):
+            return self.factory('[]', self, i)
+            # return TupleIndex(self, i)
         else:
             return self.args[i]
 
@@ -2796,8 +2817,95 @@ class TypedExpr(object):
         # results. This is overridden in exactly one place, `MetaTerm`.
         return True
 
+    @property
+    def M(self):
+        return TypedExprFacade(self)
+
 
 TypedExpr.add_local('TypedExpr', TypedExpr)
+
+
+class TypedExprFacade(object):
+    def __init__(self, e):
+        if isinstance(e, TypedExprFacade):
+            e = e._e # no recursion
+        self._e = e
+
+    @property
+    def M(self):
+        return self
+
+    # Not implemented: not, abs, pos, concat, contains, *item, *slice, len
+    def __and__(self, other):    return self._e.__and__(other).M
+    def __invert__(self):        return self._e.__invert__().M
+    def __lshift__(self, other): return self._e.__lshift__(other).M
+    def __rshift__(self, other): return self._e.__rshift__(other).M
+    def __or__(self, other):     return self._e.__or__(other).M
+    def __xor__(self, other):    return self._e.__xor__(other).M
+    def equivalent_to(self, other): return self._e.equivalent_to(other).M
+    def __mod__(self, other):    return self._e.__mod__(other).M
+
+    def __lt__(self, other):     return self._e.__lt__(other).M
+    def __le__(self, other):     return self._e.__le__(other).M
+    def __add__(self, other):    return self._e.__add__(other).M
+    def __sub__(self, other):    return self._e.__sub__(other).M
+    def __div__(self, other):    return self._e.__div__(other).M
+    def __truediv__(self, other):return self._e.__truediv__(other).M
+    def __floordiv__(self, other):return self._e.__floordiv__(other).M
+    def __mul__(self, other):    return self._e.__mul__(other).M
+    def __neg__(self):           return self._e.__neg__().M
+    def __pos__(self):           return self._e.__pos__().M
+    def __pow__(self, other):    return self._e.__pow__(other).M
+    def __matmul__(self, other): return self._e.__matmul__(other).M
+
+    def __radd__(self, other):    return self._e.__radd__(other).M
+    def __rsub__(self, other):    return self._e.__rsub__(other).M
+    def __rtruediv__(self, other): return self._e.__rtruediv__(other).M
+    def __rfloordiv__(self, other): return self._e.__rfloordiv__(other).M
+    def __rmul__(self, other):    return self._e.__rmul__(other).M
+    def __rpow__(self, other):    return self._e.__rpow__(other).M
+    def __rmatmul__(self, other): return self._e.__rmatmul__(other).M
+    def __rmod__(self, other):    return self._e.__rmod__(other).M
+    def __rand__(self, other):    return self._e.__rand__(other).M
+    def __ror__(self, other):     return self._e.__ror__(other).M
+    def __rxor__(self, other):    return self._e.__rxor__(other).M
+    def __rrshift__(self, other): return self._e.__rrshift__(other).M
+    def __rlshift__(self, other): return self._e.__rlshift__(other).M
+
+    def __ge__(self, other):      return self._e.__ge__(other).M
+    def __gt__(self, other):      return self._e.__gt__(other).M
+
+    def __call__(self, *args):
+        return self._e.__call__(*args)
+
+    def __getitem__(self, other):
+        # TypedExpr.__getitem__ is hardcoded to call the factory if its arg is a
+        # TypedExpr, but we want to do this unconditionally (and never trigger
+        # ordinary indexing code)
+        return TypedExpr.factory('[]', self._e, other).M
+
+    # not implemented by regular TypedExpr
+    def __eq__(self, other):
+        return TypedExpr.factory('==', self._e, other).M
+        # return self._e.equivalent_to(other).M
+    def __ne__(self, other):
+        return TypedExpr.factory('!=', self._e, other).M
+        # return self._e.__xor__(other).M
+
+    # not implementable:
+    # * the `in` operator force-converts to bool regardless of what __contains__
+    #   returns
+    # * the `len` operator requires __len__ to return an int
+
+    # not hashable
+
+    # do not want this class to be convertable to bool
+    __bool__ = None
+
+    def __repr__(self): return self._e.__repr__()
+    def __str__(self): return self._e.__str__()
+    def _repr_latex_(self): return self._e._repr_latex_()
+    # def _repr_pretty_(self, p, cycle): return self._e._repr_pretty_(p, cycle)
 
 
 class ApplicationExpr(TypedExpr):
@@ -4039,7 +4147,10 @@ def from_python_container(p, default=None):
         # TODO: support empty function somehow
         return MetaTerm(p)
 
-    return default
+    if isinstance(default, TypedExprFacade):
+        return default._e
+    else:
+        return default
 
 
 def is_concrete(s):
@@ -4519,6 +4630,9 @@ class BindingOpHeader:
         return kwargs
 
     def factory(self, body, assignment=None):
+        if isinstance(body, TypedExprFacade):
+            body = body._e
+
         self.precheck()
         if self.classprop('allow_novars') or self.classprop('allow_multivars'):
             # constructor should take an n-ary sequence of variables

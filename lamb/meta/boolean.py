@@ -240,7 +240,7 @@ class BinaryBiarrowExpr(SyncatOpExpr):
 # TODO: generalize this?
 class BinaryNeqExpr(SyncatOpExpr):
     canonical_name = "^"
-    secondary_names = {"=/="}
+    secondary_names = {"=/=", "!="}
     op_name_uni = "≠"
     op_name_latex = "\\not="
     commutative = True
