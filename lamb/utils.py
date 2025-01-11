@@ -669,9 +669,16 @@ class frozendict(collections.abc.Mapping):
 
     def compute_hash(self):
         # This is *a* hash function, but I really have no idea if it's any good.
-        # could it be better to just use the two lists without zipping?
+        # Uses frozenset's hash to ensure that this is order invariant.
         # note: this requires all values to be hashable types...
-        self._hash = hash(tuple(zip(self._store.keys(), self._store.values())))
+        self._hash = hash(frozenset(zip(self._store.keys(), self._store.values())))
+
+    def __eq__(self, other):
+        # XX compare to MetaTerms?
+        if isinstance(other, frozendict):
+            return self._store == other._store
+        else:
+            return False
 
     def __hash__(self):
         if self._hash is None:

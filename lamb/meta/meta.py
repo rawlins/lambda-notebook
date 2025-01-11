@@ -282,7 +282,11 @@ class MetaTerm(core.TypedTerm):
         return bool(self.op)
 
     def __eq__(self, other):
-        if other in self.type.domain:
+        if isinstance(other, core.TypedExpr):
+            # note: without the type check, 0 vs False and 1 vs True compare equal,
+            # because `bool` is a subtype of `int`
+            return other.meta() and self.type == other.type and self.op == other.op
+        elif other in self.type.domain:
             # compare as equal to domain elements.
             # while this will generally behave symmetrically if the type domain
             # is constructed from python basic types, symmetric behavior can't
@@ -290,10 +294,6 @@ class MetaTerm(core.TypedTerm):
             # implement __eq__, and you want symmetry, you will have to special
             # case the comparison to a MetaTerm.
             return self.op == other
-        elif isinstance(other, core.TypedExpr):
-            # note: without the type check, 0 vs False and 1 vs True compare equal,
-            # because `bool` is a subtype of `int`
-            return other.meta() and self.type == other.type and self.op == other.op
         else:
             # neither a TypedExpr no a python object in the type domain
             return False
