@@ -24,7 +24,9 @@ def setup_operators():
     # te("-1") etc would parse as UnaryNegativeExpr(MetaTerm(1)), which confuses
     # things like tuple indexing. With this, it'll parse just as MetaTerm(-1).
     def unary_presimplify(e):
-        return e.simplify_all()
+        # just calling `simplify` here is enough to trigger the recursion we
+        # need
+        return e.simplify()
     registry.set_custom_transform(UnaryPositiveExpr, unary_presimplify)
     registry.set_custom_transform(UnaryNegativeExpr, unary_presimplify)
 
@@ -33,7 +35,7 @@ def setup_operators():
 def UnaryNegativeExpr(self, x):
     if isinstance(x, TypedExpr):
         if isinstance(x, UnaryNegativeExpr):
-            return x[0].copy()
+            return x[0].copy() # will trigger the custom transform code
         else:
             return self
     return -x
