@@ -4015,7 +4015,7 @@ class SyncatOpExpr(TypedExpr):
         else:
             if self.infix_style:
                 op_text = " %s " % self.op
-                return "(%s)" % utils.parens((op_text.join([repr(a) for a in self.args])))
+                return "(%s)" % (op_text.join([repr(a) for a in self.args]))
             else:
                 return f"{self.op}({", ".join([repr(a) for a in self.args])})"
 
