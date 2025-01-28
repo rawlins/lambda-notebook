@@ -5,7 +5,7 @@ from lamb import types, utils
 from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
 from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality, tp, te
-from .core import op_class
+from .core import op_class, MapFun, ChainFun
 from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key, set_derivation
@@ -164,7 +164,7 @@ class ConditionSet(BindingOp):
             fixed_domain = tuple(types.demeta(x) for x in self.domain_iter())
             domain = lambda context: fixed_domain
         f = self.to_characteristic()._compiled
-        return lambda context: {elem for elem in domain(context) if f(context)(elem)}
+        return lambda context: frozenset({elem for elem in domain(context) if f(context)(elem)})
 
     def eliminate(self, **sopts):
         # For the case where there are no free terms at all, we can convert to
@@ -864,7 +864,7 @@ class SetDifference(BinarySetOp):
                 var = safevar(self)
                 # XX code dup
                 impl = LFun(var, (var << self[1]))._compiled
-                return lambda context: {e for e in s1(context) if not impl(context)(e)}
+                return lambda context: frozenset({e for e in s1(context) if not impl(context)(e)})
         elif is_domainset(self[1]):
             # even if left isn't finite-safe, if we have the domain set on the
             # right, we can know that the result is the empty set.
@@ -1148,3 +1148,129 @@ class SetProperSubset(BinarySetOp):
             return self
         else:
             return simplified
+
+
+class FunDom(TypedExpr):
+    canonical_name = "Dom"
+    pre_simplify = True
+
+    def __init__(self, arg, typ=None, **kwargs):
+        arg = self.type_constraint(arg, types.FunType)
+        typ, _ = self.type_constraint(SetType(arg.type[0]), typ)
+        super().__init__("Dom", arg, typ=typ)
+
+    def _find_domain(self, cur):
+        # XX MetaTerm implementation details shouldn't be here
+        if (isinstance(cur, LFun)
+                    or (isinstance(cur, MetaTerm)
+                        and isinstance(cur.op, collections.abc.Set))):
+            # XX how should this condition interact with Partial?
+            return ConditionSet(TypedTerm('x', typ=cur.type[0]), true_term)
+        elif isinstance(cur, MapFun):
+            return sset(cur.arg_map.keys())
+        elif (isinstance(cur, MetaTerm)
+                    and isinstance(cur.op, collections.abc.Mapping)):
+            return sset(cur.dict().keys())
+        elif isinstance(cur, ChainFun):
+            return self._find_domain(cur[0]) | self._find_domain(cur[1])
+        else:
+            # unvalued terms, MetaTerm with a python function implementation, Partial, ...
+            if cur is self:
+                return self
+            else:
+                return FunDom(cur)
+
+    def _compile(self):
+        if self[0].term():
+            f_term = self[0]._compiled
+            # we need to compile this on spec. This will raise if we aren't
+            # working with a finite domain for the type at time of compilation.
+            max_domain = ConditionSet(TypedTerm('x', typ=cur.type[0]), true_term)._compiled
+            def term_inner(context):
+                f = f_term(context)
+                if isinstance(f, collections.abc.Mapping):
+                    return frozenset(f.keys())
+                elif isinstance(f, collections.abc.Set):
+                    return max_domain(context)
+                else:
+                    # if this term is backed by a python function, it's not
+                    # possible to get the domain set. Unfortunately we can't
+                    # detect this until runtime...
+                    raise NotImplementedError
+            return term_inner
+        else:
+            # XX this won't handle complex domains involving terms...
+            dom = self._find_domain(self[0])
+            if dom is self:
+                raise NotImplementedError
+            return dom._compiled
+
+    def simplify(self, **sopts):
+        result = self._find_domain(self[0])
+        if result is not self:
+            result = derived(result, self, "Function domain simplification")
+        return result
+
+
+class FunCodom(TypedExpr):
+    canonical_name = "Codom"
+    pre_simplify = True
+
+    def __init__(self, arg, typ=None, **kwargs):
+        arg = self.type_constraint(arg, types.FunType)
+        typ, _ = self.type_constraint(SetType(arg.type[1]), typ)
+        super().__init__("Codom", arg, typ=typ)
+
+    def _find_codomain(self, cur):
+        # XX MetaTerm implementation details shouldn't be here
+        if (isinstance(cur, LFun)
+                    or (isinstance(cur, MetaTerm)
+                        and isinstance(cur.op, collections.abc.Set))):
+            # the char function case could be streamlined
+            return ConditionSet(TypedTerm('x', typ=cur.type[1]), true_term)
+        elif isinstance(cur, MapFun):
+            return sset(cur.arg_map.values())
+        elif (isinstance(cur, MetaTerm)
+                    and isinstance(cur.op, collections.abc.Mapping)):
+            return sset(cur.dict().values())
+        elif isinstance(cur, ChainFun):
+            return self._find_codomain(cur[0]) | self._find_codomain(cur[1])
+        else:
+            # unvalued terms, MetaTerm with a python function implementation, Partial, ...
+            return self
+
+    def _compile(self):
+        if self[0].term():
+            f_term = self[0]._compiled
+            # we need to compile this on spec. This will raise if we aren't
+            # working with a finite domain for the type at time of compilation.
+            max_range = ConditionSet(TypedTerm('x', typ=cur.type[1]), true_term)._compiled
+            def term_inner(context):
+                f = f_term(context)
+                if isinstance(f, collections.abc.Mapping):
+                    return frozenset(f.keys())
+                elif isinstance(f, collections.abc.Set):
+                    return max_range(context)
+                else:
+                    # if this term is backed by a python function, it's not
+                    # possible to get the domain set. Unfortunately we can't
+                    # detect this until runtime...
+                    raise NotImplementedError
+            return term_inner
+        else:
+            # XX this won't handle complex domains involving terms...
+            codom = self._find_codomain(self[0])
+            if codom is self:
+                raise NotImplementedError
+            return codom._compiled
+
+    def simplify(self, **sopts):
+        result = self._find_codomain(self[0])
+        if result is not self:
+            result = derived(result, self, "Function codomain simplification")
+        return result
+
+
+TypedExpr.add_local("Dom", FunDom)
+TypedExpr.add_local("Codom", FunCodom)
+

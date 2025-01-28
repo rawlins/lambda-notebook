@@ -35,7 +35,7 @@ class DomainError(Exception):
 
 class OutOfDomain(DomainError):
     def __init__(self, f, a):
-        if is_te(f):
+        if is_te(f) and f.meta():
             dom = f.type.left.domain
             self.f = f.op
         else:
@@ -103,6 +103,7 @@ class MetaTerm(core.TypedTerm):
         # is useful to set it in advance and then rely on it in the type check
         self.op = name
         self.type = None
+        self._setfun = setfun
 
         if not copying:
             typ = self.check_type_domain(typ=typ, setfun=setfun)
@@ -165,7 +166,7 @@ class MetaTerm(core.TypedTerm):
         def find_atoms_r(t):
             if isinstance(t, collections.abc.Set) or isinstance(t, tuple):
                 return set.union(*[find_atoms_r(sub) for sub in t])
-            elif isinstance(t, dict):
+            elif isinstance(t, dict): # should this be Mapping?
                 return set(t.keys()) | set.union(*[find_atoms_r(t[k]) for k in t])
             elif callable(t):
                 raise ValueError("Can't find atoms for non-decomposable function")
@@ -176,6 +177,8 @@ class MetaTerm(core.TypedTerm):
         # rewrap the results
         return {MetaTerm(x) for x in find_atoms_r(self.op)}
 
+    def will_reduce(self, arg):
+        return isinstance(self.type, types.FunType) and is_concrete(arg)
 
     def _compile(self):
         # caveat: functional types return as their underlying python
@@ -195,6 +198,23 @@ class MetaTerm(core.TypedTerm):
         if get_sopt('evaluate', sopts) and len(self.type) == 0:
             self._recheck_domain()
         return self
+
+    def try_merge(self, other):
+        if not other.meta() or self.type != other.type:
+            return None
+        # XX domain implementation details shouldn't be here
+        if (isinstance(self.op, collections.abc.Mapping)
+                        and isinstance(other.op, collections.abc.Mapping)):
+            d = {k:self.op[k] for k in self.op if k not in other.op}
+            d.update(other.op)
+            return MetaTerm(d, typ=self.type)
+        elif (self._setfun
+                        and isinstance(self.op, collections.abc.Set)
+                        and isinstance(other.op, collections.abc.Set)):
+            # characteristic functions fully overwrite on merge
+            return other
+        else: # XX set + dict is implementable
+            return None
 
     @classmethod
     def _apply_impl(cls, fun, arg):
@@ -228,7 +248,7 @@ class MetaTerm(core.TypedTerm):
             raise ValueError("Can't convert set-based function to a dict without a domain")
 
         if domain is None:
-            domain = self.op.keys() # can't be a set due to above check
+            domain = [MetaTerm(k) for k in self.op.keys()] # can't be a set due to above check
         domain = sorted(domain, key=mt_key)
         return {k: self.apply(k) for k in domain}
 

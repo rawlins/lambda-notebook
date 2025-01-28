@@ -395,8 +395,13 @@ def unsafe_variables(fun, arg):
     return v
 
 
+def can_reduce(t):
+    from .core import LFun, MapFun, ChainFun
+    # XX don't hardcode this
+    return isinstance(t, LFun) or isinstance(t, MapFun) or isinstance(t, ChainFun)
+
+
 def beta_reduce_ts(t, varname, subst):
-    from .core import LFun
     if varname in t.free_variables():
         if (t.term() and t.op == varname):
             t = subst.copy()
@@ -432,7 +437,7 @@ def beta_reduce_ts(t, varname, subst):
 
         # conditional chart modification. These are exactly the two cases where
         # an existing `True` in the chart may need to be revised.
-        if isinstance(subst, LFun) or subst_reducible:
+        if can_reduce(subst) or subst_reducible:
             for i in range(len(rcache)):
                 if (rcache[i] == False # unchanged, reduction won't cause a subreduction
                         # checks cache generated earlier and t[i].reducible():

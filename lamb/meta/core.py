@@ -10,7 +10,7 @@ from lamb.utils import ensuremath, dbg_print, Namespace
 from lamb.types import TypeMismatch, BasicType, FunType, TupleType, is_type_var
 # meta.ply is the only meta module imported by core
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
-from .ply import simplify_all, symbol_is_var_symbol
+from .ply import simplify_all, symbol_is_var_symbol, alphanorm_key
 from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
 from .ply import term_replace_unify, variable_convert, alpha_variant
 from .ply import commutative, associative, left_commutative, right_commutative
@@ -1391,10 +1391,39 @@ class TypedExpr(object):
         else:
             name = cls.__name__
 
-        if constant and isinstance(b, type) and issubclass(b, types.TypeConstructor):
-            if not isinstance(a, b):
+        if isinstance(b, type) and issubclass(b, types.TypeConstructor):
+            # XX: this case doesn't support error=False or setting error
+            if is_te(a):
+                a_typ = a.type
+            else:
+                a_typ = a
+            if b == types.FunType:
+                # special handling for functions, we can use tailored unify code
+                # to do adjustment if needed.
+                # XX could this be generalized? This essentially plugs type
+                # variables in for arguments to the type constructor
+                principal = get_type_system().unify_fun(a_typ, None, None)
+                if principal is None:
+                    raise TypeMismatch(a, b,
+                        f"Failed to reconcile type constraint for `{name}`: {repr(a)} is a {b.__name__}")
+                if principal != a_typ:
+                    if constant:
+                        raise TypeMismatch(a, b,
+                            "Type constraint ({a} == constant {b.__name__}) would require adjusting constant to {principal}")
+                    if is_te(a):
+                        a = a.try_adjust_type(principal,
+                            derivation_reason=f"Type constraint from {name}: {a_typ} == {b}")
+                        if a is None:
+                            raise TypeMismatch(
+                                f"Failed to reconcile type constraint for `{name}`: {repr(a)} is a {b.__name__}")
+                    else:
+                        a = principal
+                return a
+
+            # otherwise, fail unconditionally on type class mismatch
+            if not isinstance(a_typ, b):
                 raise TypeMismatch(a, b,
-                    f"Failed to reconcile type constraint for `{name}`: {a} is a {b.__name__}")
+                    f"Failed to reconcile type constraint for `{name}`: {repr(a)} is a {b.__name__}")
             # nothing else to be done
             return a
 
@@ -2454,6 +2483,9 @@ class TypedExpr(object):
     def reducible(self):
         return False
 
+    def will_reduce(self, arg):
+        return False
+
     def reduce(self):
         return self
 
@@ -2463,7 +2495,7 @@ class TypedExpr(object):
         if self.reducible():
             return False
         seen_true = False
-        for i in range(len(self)):
+        for i in self._reduction_order():
             if self._reduced_cache[i]:
                 seen_true = True
             elif self._reduced_cache[i] == False:
@@ -2626,12 +2658,26 @@ class TypedExpr(object):
         This is guaranteed (barring bugs) to produce a parsable string that
         builds the same object.
         """
-        if not self.args:         # Constant or proposition with arity 0
-            return repr(self.op)
-        elif len(self.args) == 1: # Prefix operator
-            return repr(self.op) + repr(self.args[0])
-        else:                     # Infix operator
-            return '(%s)' % (' '+self.op+' ').join([repr(a) for a in self.args])
+        # default repr code: should be able to handle most cases without too
+        # much weirdness. Handles term-like elements (len 0), unary operators,
+        # n-ary operators in either prefix or infix form.
+        name = getattr(self, 'canonical_name', self.op)
+        if len(self.args) == 1:
+            if getattr(self, 'operator_style', False):
+                return f"{name}{repr(self.args[0])}"
+            else:
+                # using utils.parens here relies on infix operator code
+                # guaranteeing parentheses. If that code ever returned
+                # anything like `(1+2)+(3+4)`, this wouldn't be safe.
+                return f"{name}{utils.parens(repr(self.args[0]))}"
+        else:
+            if getattr(self, 'infix_style', False):
+                op_text = f" {name} "
+                return "(%s)" % (op_text.join([repr(a) for a in self.args]))
+            else:
+                return f"{name}({", ".join([repr(a) for a in self.args])})"
+
+    # XX default _repr_pretty_?
 
     def latex_str(self, suppress_parens=False, **kwargs):
         """Return a representation of the TypedExpr suitable for Jupyter
@@ -2639,17 +2685,29 @@ class TypedExpr(object):
 
         The output should be pure LaTeX (i.e., no HTML)."""
 
+        # default latex output, should be able to handle most basic cases.
+        # SyncatOpExpr has more sophisticated code. (XX: can these be unified?)
+
         if not self.args:
             return ensuremath(str(self.op))
         # past this point in the list of cases should only get hard-coded
         # operators
         elif len(self.args) == 1: # Prefix operator
-            return ensuremath(f"{self.op}{self.args[0].latex_str(**kwargs)}")
-        else:                     # Infix operator
-            base = f" {self.op} ".join([a.latex_str(**kwargs) for a in self.args])
-            if not suppress_parens:
-                base = f"({base})"
-            return ensuremath(base)
+            if getattr(self, 'operator_style', False):
+                return ensuremath(
+                    f"{self.op}{self.args[0].latex_str(**kwargs)}")
+            else:
+                return ensuremath(
+                    f"{self.op}({self.args[0].latex_str(suppress_parens=True, **kwargs)})")
+        else:
+            if getattr(self, 'infix_style', False):
+                base = f" {self.op} ".join([a.latex_str(**kwargs) for a in self.args])
+                if not suppress_parens:
+                    base = f"({base})"
+                return ensuremath(base)
+            else:
+                arg_str = ", ".join(a.latex_str(suppress_parens=True, **kwargs) for a in self.args)
+                return ensuremath(f"{self.op} ({arg_str})")
 
     def _repr_latex_(self):
         return self.latex_str(suppress_parens=True)
@@ -2660,6 +2718,9 @@ class TypedExpr(object):
         else:
             # should this just return repr unconditionally?
             return f"{self.__repr__()}, type {self.type}"
+
+    def _eq_elem(self):
+        return tuple(self.args)
 
     def __eq__(self, other):
         """x and y are equal iff their ops and args are equal.
@@ -2672,21 +2733,18 @@ class TypedExpr(object):
         # need to explicitly check this in case recursion accidentally descends into a string Op
         # TODO revisit
         if isinstance(other, TypedExpr):
-            return (other is self) or (self.op == other.op and self.args == other.args and self.type == other.type)
+            return (other is self
+                or (self.op == other.op
+                    and self._eq_elem() == other._eq_elem()
+                    and self.type == other.type))
         else:
             return False
-        #TODO: equality by semantics, not syntax?
 
     def __ne__(self, other):
         return not self.__eq__(other)
 
     def __hash__(self):
-        """Need a hash method so TypedExprs can live in dicts.
-
-        Note that there are some special cases to worry about: ListedSets are
-        not guaranteed to hash correctly.
-        """
-        return hash(self.op) ^ hash(tuple(self.args)) ^ hash(self.type)
+        return hash(self.op) ^ hash(self._eq_elem()) ^ hash(self.type)
 
     def __getitem__(self, i):
         """If `i` is a number, returns a part of `self` by index.  
@@ -3034,13 +3092,11 @@ class ApplicationExpr(TypedExpr):
         from .meta import MetaTerm
         def c(context):
             f_exec = fun(context)
-            if callable(f_exec):
-                return f_exec(arg(context))
-            else:
-                # allows dicts/sets to act as functions. This could be pushed
-                # to MetaTerm._compile but for now I prefer to leave the compiled
-                # values as their actual python implementation
-                return MetaTerm._apply_impl(f_exec, arg(context))
+            # allows dicts/sets to act as functions. This could be pushed
+            # to MetaTerm._compile but for now I prefer to leave the compiled
+            # values as their actual python implementation.
+            # XX don't do this dynamically?
+            return MetaTerm._apply_impl(f_exec, arg(context))
 
         return c
         # # otherwise, fun should return a callable, use it:
@@ -3055,11 +3111,8 @@ class ApplicationExpr(TypedExpr):
         return self.args[0].meta() and is_concrete(self.args[1])
 
     def reducible(self):
-        if (isinstance(self.args[0], LFun)
-                or isinstance(self.args[0], Disjunctive)
-                or self.meta_reducible()):
-            return True
-        return False
+        # XX disjunctive logic??
+        return self.args[0].will_reduce(self.args[1])
 
     def reduce(self):
         """if there are arguments to op, see if a single reduction is
@@ -3319,6 +3372,7 @@ class TypedTerm(TypedExpr):
         # this is completely unsafe as to what `context` gives you; wrapper
         # functions in meta can be used to ensure type-safety.
         # XX should this at least use meta.compiled?
+        # XX this does not do any sort of domain check on the context value
         return lambda context : context[self.op]
 
     def apply(self, arg):
@@ -3583,6 +3637,7 @@ class Partial(TypedExpr):
         if self.undefined():
             # identical to superclass __hash__, except the dummy None value in
             # the body slot
+            from .boolean import false_term
             return hash(self.op) ^ hash((None, false_term)) ^ hash(self.type)
         else:
             return super().__hash__()
@@ -3601,6 +3656,15 @@ class Partial(TypedExpr):
             return body(context)
         return c
 
+    def _reduction_order(self):
+        if self[1] == True:
+            return super()._reduction_order()
+        else:
+            # do not reduce the body at all if the condition is not True. Note
+            # that simplify_point for this class can restart reduction, if
+            # reduce=True.
+            return (1,)
+
     def simplify(self, **sopts):
         if self.condition == True:
             # the copy here is (apparently) needed to get derivation bookkeeping right...
@@ -3615,6 +3679,8 @@ class Partial(TypedExpr):
 
     def simplify_point(self, pre=False, **sopts):
         # for Partial, we want to simplify first the condition, then the body.
+        # this requires messing with simplification internals in a complex way,
+        # unfortunately.
 
         result = self
         new_condition = result[1].simplify_all(**sopts)
@@ -3624,22 +3690,24 @@ class Partial(TypedExpr):
                     subexpression=new_condition)
 
         evaluate = get_sopt('evaluate', sopts)
+        sreduce = get_sopt('evaluate', sopts)
 
-        if (new_condition == False
-                    or isinstance(new_condition, Partial) and new_condition.undefined()
-                    or new_condition != True):
-            # do not evaluate the body if the expression is undefined, or if
-            # simplifying the condition failed to reach True/False. (Perhaps,
+        if new_condition != True:
+            # do not evaluate the body if the expression has not resolved to
+            # True (e.g. if it is unsimplified, or undefined). (Perhaps,
             # if the condition is False, the body shouldn't even be simplified?
             # another approach would be to simply replace the body with a
             # different TyepdExpr that implemented non-simplification.)
             sopts['evaluate'] = False
+            sopts['reduce'] = False
+        # otherwise, this call may trigger a reduce_all step
         new_body = result[0].simplify_all(**sopts)
         if new_body is not result[0]:
             result = derived(result.subst(0, new_body), result,
                     desc=f"Recursive simplification of {result.name_of(0)}",
                     subexpression=new_body)
         sopts['evaluate'] = evaluate
+        sopts['reduce'] = sreduce
         result = result.simplify(**sopts)
         return result
 
@@ -3675,14 +3743,14 @@ class Partial(TypedExpr):
         
     @classmethod
     def get_condition(cls, p):
-        if isinstance(p, Partial) or isinstance(p, PLFun):
+        if isinstance(p, Partial):
             return p.condition
         else:
             return from_python(True)
         
     @classmethod
     def get_atissue(cls, p):
-        if isinstance(p, Partial) or isinstance(p, PLFun):
+        if isinstance(p, Partial):
             return p.body
         else:
             return p
@@ -4005,20 +4073,6 @@ class SyncatOpExpr(TypedExpr):
                 p.pretty(self.args[-1])
                 p.text(")")
 
-    def __repr__(self):
-        # XX probably overdoes parens in some cases
-        if self.arity == 1:
-            if (self.operator_style):
-                return "%s%s" % (self.op, repr(self.args[0]))
-            else:
-                return "%s(%s)" % (self.op, repr(self.args[0]))
-        else:
-            if self.infix_style:
-                op_text = " %s " % self.op
-                return "(%s)" % (op_text.join([repr(a) for a in self.args]))
-            else:
-                return f"{self.op}({", ".join([repr(a) for a in self.args])})"
-
     def _sub_latex_str(self, i, suppress_parens = False, **kwargs):
         from .sets import SetEquivalence
         if (self.left_assoc
@@ -4142,10 +4196,11 @@ def from_python_container(p, default=None):
         # hack: empty dict is treated as empty set, so that "{}" makes sense
         return sset(set())
     elif isinstance(p, dict):
-        from .meta import MetaTerm
-        # raises if the elements are not MetaTerms!
-        # TODO: support empty function somehow
-        return MetaTerm(p)
+        if (all(k.meta() and p[k].meta() for k in p)):
+            from .meta import MetaTerm
+            return MetaTerm(p)
+        else:
+            return MapFun.from_dict(p)
 
     if isinstance(default, TypedExprFacade):
         return default._e
@@ -5300,6 +5355,9 @@ class LFun(BindingOp):
     def functional(self):
         return True # no need to do any calculations
 
+    def will_reduce(self, arg):
+        return True
+
     def _compile(self):
         body = self[1]._compiled
         if is_te(self[0], LFun) and self[0].vacuous():
@@ -5358,6 +5416,282 @@ class LFun(BindingOp):
         # not great at reusing bound variables
         ftyp = get_type_system().random_from_class(types.FunType)
         return test.random_lfun(ftyp, ctrl)
+
+
+class ChainFun(SyncatOpExpr):
+    """This class chains two functions together to produce a new function. When
+    the new function is called, it first tries the second, and if a DomainError
+    is thrown, tries the first. (As the name indicates, this is roughly modeled
+    after collections.ChainMap.)
+    """
+    canonical_name = "+"
+    commutative = False
+    associative = True
+
+    # argument signature set in __init__.py
+    # arg_signature = tp("(<X,Y>,<X,Y>)")
+
+    def __init__(self, f1, f2, *, typ=None, **kwargs):
+        f1 = self.type_constraint(f1, types.FunType)
+        f1, f2 = self.type_constraint(f1, f2)
+        typ, _ = self.type_constraint(f1.type, typ)
+        super().__init__(typ, f1, f2, tcheck_args=False)
+
+    def functional(self):
+        return True # no need to do any calculations
+
+    def will_reduce(self, arg):
+        # XX this might diverge from some cases of simplify + reduce?
+        return self[0].will_reduce(arg) and self[1].will_reduce(arg)
+
+    def _compile(self):
+        from .meta import DomainError, MetaTerm
+        f1 = self[0]._compiled
+        f2 = self[1]._compiled
+        def outer(context):
+            f1_c = f1(context)
+            f2_c = f2(context)
+            def inner(x):
+                try:
+                    return MetaTerm._apply_impl(f2_c, x)
+                except DomainError:
+                    # XX if this fails, the error only mentions the final
+                    # function
+                    return MetaTerm._apply_impl(f1_c, x)
+            return inner
+        return outer
+
+    def apply(self, arg):
+        from .meta import DomainError
+        try:
+            return self[1].apply(arg)
+        except DomainError:
+            return self[0].apply(arg)
+
+    def _try_merge_funs(self):
+        f1 = self[0] # for readability
+        f2 = self[1]
+        if f1.meta() and f2.meta():
+            # for this case, we can use MetaTerm code that will return a
+            # MetaTerm
+            return f1.try_merge(f2)
+
+        # # XX meta implementation details shouldn't be here
+        if f2.meta() and isinstance(f2.op, collections.abc.Set):
+            return f2
+
+        # otherwise, if f1 and f2 are both implemented via maps, find the maps
+        # and use dict updating to combine them
+        if f1.meta():
+            # XX a set implementation MetaTerm fun is in principle handleable
+            # here
+            try:
+                lmap = f1.dict()
+            except ValueError:
+                return None
+        elif isinstance(f1, MapFun):
+            lmap = f1.arg_map
+        else:
+            # not a mergeable function class
+            return None
+
+        if f2.meta():
+            try:
+                rmap = f2.dict()
+            except ValueError:
+                return None
+        elif isinstance(f2, MapFun):
+            rmap = f2.arg_map
+        else:
+            # not a mergeable function class
+            return None
+        # merge the maps in order. We do this in a somewhat complicated way so
+        # that keys in both are ordered after keys in lmap; if we used the full
+        # lmap, keys in both would inherit their ordering from lmap.
+        result = {k: lmap[k] for k in lmap if k not in rmap}
+        result.update(rmap)
+        return MapFun(*[(k, result[k]) for k in result], typ=self.type, copying=True)
+
+    def simplify(self, **kwargs):
+        merged = self._try_merge_funs()
+        if merged is not None:
+            return derived(merged, self, "Map chaining")
+        return self
+
+    @classmethod
+    def random(cls, ctrl, max_type_depth=1):
+        # XX this probably doesn't generate very reasonable examples
+        ftyp = get_type_system().random_from_class(types.FunType)
+        f1 = random_ctrl_fun(typ=ftyp)
+        f2 = random_ctrl_fun(typ=ftyp)
+        return ChainFun(f1, f2)
+
+
+class MapFun(TypedExpr):
+    canonical_name = "Fun"
+    op_name_uni="Fun"
+    op_name_latex="Fun"
+    pre_simplify = True
+
+    def __init__(self, *args, typ=None, copying=False, **kwargs):
+        if copying and typ is None:
+            raise ValueError("Bug: MapFun copying requires `typ` to be specified")
+        if not copying:
+            # *args is a sequence of tuples. Note that this does not check TupleType,
+            # but requires a Tuple.
+            for a in args:
+                # XX MetaTerm tuple?
+                if (is_te(a) and not isinstance(a, Tuple)
+                                or not is_te(a) and not isinstance(a, collections.abc.Sequence)
+                                or len(a) != 2):
+                    raise TypeError(f"MapFun requires a sequences of pairs (received non-pair `{repr(a)}`)")
+
+            # normalize into python lists so we can work in place
+            args = [[a[0], a[1]] for a in args]
+
+            if typ is not None and isinstance(typ, FunType):
+                # start with `typ` so we don't have to do it later
+                ltype = typ[0]
+                rtype = typ[1]
+            elif len(args):
+                ltype = args[0][0].type
+                rtype = args[0][1].type # start with first pair
+            else:
+                # could be anything
+                ltype = types.VariableType.any()
+                rtype = types.VariableType.any()
+
+            # type inference here is somewhat horrendous
+            def _update_types(ityp, args, i):
+                # take a single pass through range elements and apply `ityp` as a
+                # constraint
+                for j in range(len(args)):
+                    ityp, args[j][i] = self.type_constraint(ityp, args[j][i],
+                        error=f"MapFun elements must have compatible types (`{repr(args[j][i])}` at type `{ityp}`)")
+                return ityp
+
+            new_ltype = _update_types(ltype, args, 0)
+            new_rtype = _update_types(rtype, args, 1)
+            if typ is not None and not isinstance(typ, FunType):
+                # not handled above, so we still need to reconcile with typ...
+                typ, _ = self.type_constraint(types.FunType(new_ltype, new_rtype), typ)
+                # if this last step led to further changes, do the resulting type
+                # coercion
+                if typ[0] != new_ltype:
+                    typ = types.FunType(_update_types(typ[0], args, 0), typ[1])
+                if typ[1] != new_rtype:
+                    typ = types.FunType(typ[0], _update_types(typ[1], args, 1))
+            else:
+                typ = types.FunType(new_ltype, new_rtype)
+
+        args = [Tuple(*a) for a in args]
+
+        super().__init__("MapFun", *args)
+        self.type = typ
+        self.map_simplified = len(self.args) <= 1
+        self.left_concrete = all(is_concrete(a[0]) for a in self.args)
+        self.arg_map = utils.frozendict(self.args)
+
+    def _eq_elem(self):
+        return (self.arg_map, self.map_simplified)
+
+    def _compile(self):
+        from .meta import OutOfDomain
+        # assumption: keys are purely meta
+        keys = {k: k._compiled for k in self.arg_map}
+        m = {k: self.arg_map[k]._compiled for k in self.arg_map}
+        def outer(context):
+            # we can't construct the final map until this point. This could be
+            # a bit optimized for meta-only maps, since those keys would be
+            # safe to used directly
+            full_map = {keys[k](context): m[k] for k in keys}
+            def inner(x):
+                # XX deferred context issues here
+                if not x in full_map:
+                    # use of self._compiled here is safe, because this function
+                    # can't be called before the current compilation returns
+                    raise OutOfDomain(self._compiled, x)
+                return full_map[x](context)
+            return inner
+        return outer
+
+    def will_reduce(self, arg):
+        return self.left_concrete and is_concrete(arg)
+
+    def apply(self, arg):
+        # this will go more badly wrong than usual if will_reduce is not
+        # checked!
+        from .meta import OutOfDomain
+        if get_type_system().eq_check(self.type[0], arg.type):
+            if not arg in self.arg_map:
+                raise OutOfDomain(self, arg)
+            return self.arg_map[arg]
+        else:
+            raise TypeMismatch(self, arg,
+                error="Function-argument application: mismatched argument type")
+
+    def copy_local(self, *args, typ=None, copying=False, **kwargs):
+        if (copying or len(args) == 0) and typ is None:
+            # empty maps: don't allow any types weaker than self.type
+            # to be inferred
+            typ = self.type
+
+        return self.copy_core(MapFun(*args, typ=typ, **kwargs))
+
+    def do_simplify(self, **sopts):
+        if self.map_simplified:
+            return self
+
+        args = [(k, self.arg_map[k]) for k in self.arg_map]
+        result = self.copy_local(*args, copying=True)
+        result.map_simplified = True
+        result.arg_map = self.arg_map # preserve cosmetic order
+        # don't set a derivation
+        return result
+
+    def simplify(self, **sopts):
+        result = self.do_simplify(**sopts)
+        if result is not self:
+            result = derived(result, self, desc="Map normalization")
+        return result
+
+    def __repr__(self):
+        if len(self) == 0:
+            # `{}` means empty set, not empty function
+            return 'Fun()'
+        if self.map_simplified:
+            # show cosmetic order from arg_map
+            body = ", ".join([f"{repr(p)}:{repr(self.arg_map[p])}" for p in self.arg_map])
+        else:
+            body = ", ".join([f"{repr(p[0])}:{repr(p[1])}" for p in self.args])
+        return f"{{{body}}}"
+
+    def latex_str(self, **kwargs):
+        # XX use vertical layout?
+        if self.map_simplified:
+            # show cosmetic order from arg_map
+            args = [(k, self.arg_map[k]) for k in self.arg_map]
+        else:
+            args = self.args
+        inner = ", ".join(
+            [f"{p[0].latex_str(**kwargs)}\\rightarrow{{}}{p[1].latex_str(**kwargs)}"
+                    for p in args])
+        if not len(self.args):
+            # show an explicit type for the empty map
+            return utils.ensuremath(f"\\{{{inner}\\}}_{{{self.type.latex_str()}}}")
+        else:
+            return utils.ensuremath(f"\\left\\{{{inner}\\right\\}}")
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(*[(k, d[k]) for k in d])
+
+    @classmethod
+    def from_tuple(cls, t):
+        return cls(*t)
+
+
+TypedExpr.add_local("Fun", MapFun.from_tuple)
 
 
 def reset():

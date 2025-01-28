@@ -690,6 +690,45 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(te("(L f_<e,e> : f((L x_e : x)(Iota y_e : (L x_e : P_<e,t>(f(x)))(f(y)))))(L x_e : x)").reduce_all(),
             te("Iota y_e : P_<e,t>(y)"))
 
+    def test_map(self):
+        # XX test compilation
+        self.assertEqual(
+            te("{1:3} + {3:4} + {3:5}").simplify_all(),
+            te("{1:3,3:5}"))
+        self.assertEqual(
+            te("{1:x_n} + {3:x_n} + {3:x_n}").simplify_all(),
+            te("{1:x_n,3:x_n}"))
+
+        # this is kind of weird behavior inherited from python, but we might as
+        # well test it. dicts with duplicate keys use key order, so this
+        # sequence results in the x_n:5 mapping being ignored. That is,
+        # {x_n:3, 1:4, x_n:5} == {x_n:5, 1:4}
+        self.assertEqual(te("((L x_n : ({x_n:3, 1:4, x_n:5}))(1))(1)").reduce_all(), 4)
+
+        # mixing MapFun with MetaTerm maps
+        self.assertEqual(te("({1:x_n} + {1:3, 2:4})(1)").simplify_all().reduce_all(), 3)
+        self.assertEqual(te("({1:3, 2:4} + {1:x_n})(1)").simplify_all().reduce_all(), te("x_n"))
+        self.assertEqual(te("({1:y_n} + {1:x_n})(1)").simplify_all().reduce_all(), te("x_n"))
+        self.assertEqual(te("({1:4, 2:4} + {1:3})(1)").simplify_all().reduce_all(), 3)
+
+        # Test that + is invariant to reduce vs simplify order
+        self.assertEqual(
+            te("(L x_n :{x_n:3, 1:4} + {x_n:x_n})(1)(1)").reduce_all(),
+            te("(L x_n :{x_n:3, 1:4} + {x_n:x_n})(1)(1)").simplify_all().reduce_all())
+
+        self.assertEqual(
+            te("({1:x_n} + {1:3, 2:4})(1)").simplify_all().reduce_all(),
+            te("({1:x_n} + {1:3, 2:4})(1)").reduce_all())
+        self.assertEqual(
+            te("({1:3, 2:4} + {1:x_n})(1)").simplify_all().reduce_all(),
+            te("({1:3, 2:4} + {1:x_n})(1)").reduce_all())
+        self.assertEqual(
+            te("({1:y_n} + {1:x_n})(1)").simplify_all().reduce_all(),
+            te("({1:y_n} + {1:x_n})(1)").reduce_all())
+        self.assertEqual(
+            te("({1:4, 2:4} + {1:3})(1)").simplify_all().reduce_all(),
+            te("({1:4, 2:4} + {1:3})(1)").reduce_all())
+
     def test_polymorphism(self):
         # geach combinator test
         g = te("L g_<Y,Z> : L f_<X,Y> : L x_X : g(f(x))")
