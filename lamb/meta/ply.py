@@ -1079,11 +1079,9 @@ def derived(result, origin,
     if _suppress_derivations:
         return result
 
-    from .core import TypedTerm # can these be done without isinstance checks?
-    from .meta import MetaTerm
-    if isinstance(result, MetaTerm) and result.derivation is None:
+    if result.meta():
         result = result.copy()
-    elif isinstance(result, TypedTerm) and result.derivation is None:
+    elif result.term():
         try:
             # need to manually copy the typeenv??  TODO: double check...
             tenv = result._type_env_store

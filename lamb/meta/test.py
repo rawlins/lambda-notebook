@@ -307,6 +307,13 @@ def test_repr_parse_abstract(self, depth):
         self.assertTrue(result)
 
 
+def testexec(self, a, b, **kwargs):
+    execed_a = meta.exec(a, **kwargs)
+    execed_b = meta.exec(te(b), **kwargs)
+    self.assertEqual(execed_a, execed_b,
+            f"Failed exec test: '{repr(a)} == {repr(b)}' (got `{repr(execed_a)}` == `{repr(execed_b)}`)")
+
+
 def testsimp(self, a, b, all=False, exec=False, **kwargs):
     if exec:
         all = True
@@ -314,14 +321,10 @@ def testsimp(self, a, b, all=False, exec=False, **kwargs):
         intermediate = a.simplify_all(**kwargs)
     else:
         intermediate = a.simplify(**kwargs)
-    teb = te(b)
-    self.assertEqual(intermediate, teb,
+    self.assertEqual(intermediate, te(b),
                 f"Failed simplification test: '{repr(a)} == {repr(b)}' (got {repr(intermediate)})")
     if exec:
-        execed_a = meta.exec(a)
-        execed_b = meta.exec(teb)
-        self.assertEqual(execed_a, execed_b,
-                f"Failed exec test: '{repr(a)} == {repr(b)}' (got `{repr(execed_a)}` == `{repr(execed_b)}`)")
+        testexec(self, a, b, **kwargs)
     return intermediate
 
 
@@ -949,6 +952,21 @@ class MetaTest(unittest.TestCase):
         testsimp(self, te("p_t =/= True"), te("~p_t"))
         testsimp(self, te("p_t =/= q_t"), te("p_t =/= q_t"))
         testsimp(self, te("p_t =/= p_t"), False)
+
+        # Case
+        testsimp(self, te("Case(p_t | ~p_t, _c1, Case(p_t | ~p_t, _c2, _c3))"),
+            te('_c1'), all=True, exec=True, p=True)
+        testsimp(self, te("Case(p_t & ~p_t, _c1, Case(p_t | ~p_t, _c2, _c3))"),
+            te('_c2'), all=True, exec=True, p=True)
+        testsimp(self, te("Case(p_t & ~p_t, _c1, Case(p_t & ~p_t, _c2, _c3))"),
+            te('_c3'), all=True, exec=True, p=True)
+
+        testexec(self, te("Case(p_t, _c1, Case(q_t, _c2, _c3))"), '_c1', p=True, q=True)
+        testexec(self, te("Case(p_t, _c1, Case(q_t, _c2, _c3))"), '_c2', p=False, q=True)
+        testexec(self, te("Case(p_t, _c1, Case(q_t, _c2, _c3))"), '_c3', p=False, q=False)
+        # test short-circuiting behavior: `q` should be completely ignored by
+        # the raw compiled code for this case. (Note that `exec` still complains.)
+        self.assertEqual(te("Case(p_t, _c1, Case(q_t, _c2, _c3))")._compiled({'p':True}), '_c1')
 
         # interactions (not exhaustive)
         testsimp(self, te("True & ~~True"), True, exec=True)

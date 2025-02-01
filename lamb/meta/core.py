@@ -1343,6 +1343,13 @@ class TypedExpr(object):
         # reset on copy without explicit handling
         self._reduced_cache = [None] * len(self.args)
 
+    @classmethod
+    def from_tuple(cls, tup, **kwargs):
+        try:
+            return cls(*tup, **kwargs)
+        except TypeError as e:
+            raise parsing.ParseError(f"{cls.__name__} instantiated with incorrect argument signature (`{str(e)}`)") from None
+
     @property
     def _type_cache(self):
         try:
@@ -2661,7 +2668,9 @@ class TypedExpr(object):
         # default repr code: should be able to handle most cases without too
         # much weirdness. Handles term-like elements (len 0), unary operators,
         # n-ary operators in either prefix or infix form.
-        name = getattr(self, 'canonical_name', self.op)
+        name = getattr(self, 'canonical_name')
+        if name is None:
+            name = self.op
         if len(self.args) == 1:
             if getattr(self, 'operator_style', False):
                 return f"{name}{repr(self.args[0])}"
@@ -3733,15 +3742,6 @@ class Partial(TypedExpr):
         return ensuremath(f"\\left|\\begin{{array}}{{l}}{body_str}\\\\{condition_str}\\end{{array}}\\right|")
 
     @classmethod
-    def from_Tuple(cls, t):
-        if (isinstance(t, TypedExpr)
-                            and (not isinstance(t, Tuple) or len(t) != 2)):
-            raise parsing.ParseError(
-                "Partial requires a Tuple of length 2.  (Received `%s`.)"
-                % repr(t))
-        return Partial(t[0], t[1])
-        
-    @classmethod
     def get_condition(cls, p):
         if isinstance(p, Partial):
             return p.condition
@@ -3826,7 +3826,7 @@ class Condition(TypedExpr):
 
 
 # let these classes be instantiatable in the metalanguage parser
-TypedExpr.add_local("Partial", Partial.from_Tuple)
+TypedExpr.add_local("Partial", Partial.from_tuple)
 TypedExpr.add_local("Body", Body)
 TypedExpr.add_local("Condition", Condition)
 
@@ -3951,11 +3951,6 @@ class Disjunctive(TypedExpr):
             raise TypeMismatch(self,arg,
                         error="Application to a non-functional Disjunction")
         return result
-
-
-    @classmethod
-    def from_tuple(cls, t):
-        return Disjunctive(*t)
 
     @classmethod
     def factory(cls, *disjuncts):
@@ -5685,10 +5680,6 @@ class MapFun(TypedExpr):
     @classmethod
     def from_dict(cls, d):
         return cls(*[(k, d[k]) for k in d])
-
-    @classmethod
-    def from_tuple(cls, t):
-        return cls(*t)
 
 
 TypedExpr.add_local("Fun", MapFun.from_tuple)

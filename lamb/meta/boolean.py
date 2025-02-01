@@ -285,6 +285,55 @@ class BinaryNeqExpr(SyncatOpExpr):
             # note: don't simplify p =/= q; this would be a job for a prover
             return self
 
+
+class Case(TypedExpr):
+    canonical_name = 'Case'
+    def __init__(self, cond, if_case, else_case, *, typ=None, **kwargs):
+        cond, _ = self.type_constraint(cond, types.type_t)
+        if_case, typ = self.type_constraint(if_case, typ)
+        if_case, else_case = self.type_constraint(if_case, else_case)
+        super().__init__("Case", cond, if_case, else_case, typ=if_case.type)
+
+    def simplify(self, **sopts):
+        # note: simplify_all on this class is currently not short-circuiting, but
+        # possibly it should be
+        if self[0] == True:
+            return derived(self[1], self, "Case simplification: True")
+        elif self[0] == False:
+            return derived(self[2], self, "Case simplification: False")
+        else:
+            return self
+
+    def _compile(self):
+        cond = self[0]._compiled
+        if_case = self[1]._compiled
+        # this is semi-short-circuiting, in that the else case is still compiled
+        # but may never be run. Note that running this from exec will still
+        # generate term errors if the else case is missing terms, but lower
+        # level calls don't care
+        else_case = self[2]._compiled
+        def inner(context):
+            if cond(context):
+                return if_case(context)
+            else:
+                return else_case(context)
+        return inner
+
+    def latex_str(self, **kwargs):
+        cases = []
+        c = self
+        while isinstance(c, Case):
+            cases.append((c[1], c[0]))
+            c = c[2]
+        cases = [f"{case[0].latex_str(**kwargs)} & \\text{{if }}{case[1].latex_str(**kwargs)} \\\\" for case in cases]
+        return utils.ensuremath(
+            f"\\begin{{cases}}\n{'\n'.join(cases)}"
+            f"{c.latex_str(**kwargs)} & \\text{{otherwise}} \\end{{cases}}")
+
+
+TypedExpr.add_local("Case", Case.from_tuple)
+
+
 pure_ops = {UnaryNegExpr, BinaryAndExpr, BinaryOrExpr, BinaryArrowExpr,
             BinaryNeqExpr, BinaryBiarrowExpr}
 
