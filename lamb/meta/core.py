@@ -3418,7 +3418,7 @@ class TypedTerm(TypedExpr):
         if not self.type_guessed:
             return None
         coerced_op = self.term_factory(self.op,
-                                typ=self.type.add_internal_argument(typ),
+                                typ=types.add_internal_argument(self.type, typ),
                                 preparsed=True)
         if not remove_guessed:
             coerced_op.type_guessed = True

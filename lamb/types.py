@@ -353,10 +353,12 @@ except:
 
 class TypeConstructor(object):
     domain_class = None
-    def __init__(self, *, domain=None):
-        self.symbol = None
-        self.unify_source = None
-        self.generic = False
+    arity = None
+    def __init__(self, *signature, symbol=None, domain=None):
+        self.symbol = symbol
+        if self.arity is not None and len(signature) != self.arity:
+            raise TypeParseError(f"Type constructor {self.__class__.__name__} requires {self.arity} arguments (got {len(signature)})")
+        self.signature = tuple(signature)
         self.init_type_vars()
         if domain is None:
             if self.domain_class is None:
@@ -374,24 +376,41 @@ class TypeConstructor(object):
         return self._type_hash()
 
     def _type_eq(self, other):
-        # in principle, could use the sequence interface to implement this
-        # more generically
-        raise NotImplementedError
+        if not isinstance(other, TypeConstructor):
+            return False
+
+        if (self.symbol or other.symbol) and self.symbol != other.symbol:
+            # assumption: valid values for `symbol` are not falsey
+            return False
+        elif not isinstance(other, type(self)):
+            # back compat: only use class if `symbol` is not set
+            return False
+
+        if len(self.signature) != len(other.signature):
+            return False
+        return all((self.signature[i]._type_eq(other.signature[i])
+                                        for i in range(len(self.signature))))
 
     def _type_hash(self):
-        raise NotImplementedError
+        if self.symbol is not None:
+            symbol = self.symbol
+        else:
+            # back compat
+            symbol = self.__class__.__name__
+
+        return hash((symbol,) + tuple(t._type_hash() for t in self.signature))
 
     def __len__(self):
-        return 0
+        return len(self.signature)
 
     def __getitem__(self, i):
-        raise IndexError
+        return self.signature[i]
 
     def __iter__(self):
-        return iter(list())
+        return iter(self.signature)
 
     def functional(self):
-        raise NotImplementedError
+        return False
 
     def check(self, x):
         raise NotImplementedError
@@ -490,10 +509,11 @@ class TypeConstructor(object):
         but *parts substituted appropriately.
 
         Note that for complex types, this acts much like a factory function."""
-        raise NotImplementedError
+
+        return type(self)(*parts)
 
     def copy(self):
-        return self.copy_local(*list(iter(self)))
+        return self.copy_local(*self.signature)
 
     def __repr__(self):
         raise NotImplementedError
@@ -507,8 +527,9 @@ class TypeConstructor(object):
 
     @classmethod
     def random(cls, random_ctrl_fun):
-        print(repr(cls))
-        raise NotImplementedError
+        if cls.arity is None:
+            raise NotImplementedError
+        return cls(*[random_ctrl_fun() for i in range(cls.arity)])
 
     def bound_type_vars(self):
         """Returns all bound type variables in the type.  Reminder: In
@@ -569,6 +590,39 @@ class TypeConstructor(object):
             sig.append(part_result)
         return (self.copy_local(*sig), assignment)
 
+    @classmethod
+    def parse_bracketed(cls, delim, s, i, parse_control_fun):
+        """Generic parsing code for a bracketed type"""
+        open, sep, close = delim # for example, delim="<,>" unpacks to "<", ",", ">"
+        starting_i = i
+        next = parsing.consume_char(s, i, open)
+        if next is None:
+            return (None, i)
+        else:
+            i = next
+            signature = []
+            while i < len(s) and s[i] != close:
+                (m, i) = parse_control_fun(s, i)
+                signature.append(m)
+                if i >= len(s) or s[i] == close:
+                    break
+                # this message could probably be more intelligent
+                i = parsing.consume_char(s, i, sep, f"Extraneous character after subexpression `{m}` while parsing `{cls.__name__}`")
+            i = parsing.consume_char(s, i, close, f"Unmatched `{open}` while parsing `{cls.__name__}`")
+            if cls.arity is not None and len(signature) != cls.arity:
+                raise TypeParseError(
+                    f"Type constructor `{cls.__name__}` requires {cls.arity} arguments (received {len(signature)})",
+                    s=s, i=starting_i)
+
+            try:
+                return (cls(*signature), i)
+            except TypeParseError as e:
+                # intercept any exceptions and fill in the info about what we
+                # are trying to parse
+                e.s = s
+                e.i = starting_i
+                raise e
+
 
 class BasicType(TypeConstructor):
     """Class for atomic types.  The core atomic type interface:
@@ -589,6 +643,7 @@ class BasicType(TypeConstructor):
         'v': 'e'
         }
 
+    arity = 0
     def __init__(self, symbol, values=None, name=None):
         super().__init__()
         self.symbol = symbol
@@ -607,23 +662,18 @@ class BasicType(TypeConstructor):
         # pre-escape because of the use of "?" for undetermined type
         self.regex = re.compile(re.escape(self.symbol))
 
-    def functional(self):
-        return False
-
     def check(self, x):
         return self.domain.check(x)
 
     def copy_local(self):
-        return BasicType(self.symbol, self.domain, self.name)
+        return BasicType(self.symbol, values=self.domain, name=self.name)
 
     def _type_eq(self, other):
+        # XX superclass call?
         if isinstance(other, BasicType):
             return self.symbol == other.symbol
         else:
             return False
-
-    def _type_hash(self):
-        return hash(self.symbol)
 
     def __repr__(self):
         return "%s" % self.symbol
@@ -637,14 +687,15 @@ class BasicType(TypeConstructor):
     def _repr_latex_(self):
         return self.latex_str()
 
-    def add_internal_argument(self, arg_type):
-        return FunType(arg_type, self)
-
     def unify(self, other, unify_control_fun, assignment=None):
         if self == other:
             return (self, assignment)
         else:
             return (None, assignment)
+
+    @classmethod
+    def random(cls, random_ctrl_fun):
+        raise NotImplementedError
 
 
 class FunDomainSet(ComplexDomainSet):
@@ -764,6 +815,17 @@ class FunDomainSet(ComplexDomainSet):
         return None
 
 
+def add_internal_argument(typ, arg_type):
+    """Given some type, return a functional type with `arg_type` inserted as the
+    deepest possible internal argument. (If `typ` is not functional, return a
+    functional type with `arg_type` as the argument.)"""
+    # Forall functional types not handled here...
+    if isinstance(typ, FunType):
+        return FunType(typ.left, add_internal_argument(typ.right, arg_type))
+    else:
+        return FunType(arg_type, typ)
+
+
 class FunType(TypeConstructor):
     """Class for non-atomic (functional) binary types.  These characterize a
     set of functions. The core functional type interface:
@@ -773,25 +835,20 @@ class FunType(TypeConstructor):
     right: the output/right type of functions in the set.
     """
     domain_class = FunDomainSet
+    arity = 2
     def __init__(self, left, right):
-        self.left = left
-        self.right = right
-        TypeConstructor.__init__(self)
+        super().__init__(left, right, symbol="Fun")
 
-    def __len__(self):
-        return 2
+    @property
+    def left(self):
+        return self.signature[0]
 
-    def __getitem__(self, i):
-        return (self.left, self.right)[i]
-
-    def __iter__(self):
-        return iter((self.left, self.right))
+    @property
+    def right(self):
+        return self.signature[1]
 
     def functional(self):
         return True
-
-    def copy_local(self, l, r):
-        return FunType(l, r)
 
     def check(self, x):
         raise NotImplementedError()
@@ -799,47 +856,13 @@ class FunType(TypeConstructor):
     def __repr__(self):
         return "<%s,%s>" % (self.left, self.right)
 
-    def _type_eq(self, other):
-        if isinstance(other, FunType):
-            return (self.left._type_eq(other.left)
-                and self.right._type_eq(other.right))
-        else:
-            return False
-
-    def _type_hash(self):
-        return (self.left._type_hash()
-                ^ self.right._type_hash())
-
-    def __call__(self, other):
-        return FunType(self, other)
-
     def latex_str(self, **kwargs):
         return ensuremath("\\left\\langle{}%s,%s\\right\\rangle{}"
                             % (self.left.latex_str(), self.right.latex_str()))
 
-    def _repr_latex_(self):
-        return self.latex_str()
-
-    def add_internal_argument(self, arg_type):
-        return FunType(self.left, self.right.add_internal_argument(arg_type))
-
     @classmethod
     def parse(cls, s, i, parse_control_fun):
-        next = parsing.consume_char(s, i, "<")
-        if next is None:
-            return (None, i)
-        else:
-            i = next
-            (left, i) = parse_control_fun(s, i)
-            i = parsing.consume_char(s, i, ",", "Missing comma in type")
-            (right, i) = parse_control_fun(s, i)
-            i = parsing.consume_char(s, i, ">", "Unmatched < in function type")
-            return (FunType(left, right), i)
-
-    @classmethod
-    def random(cls, random_ctrl_fun):
-        return FunType(random_ctrl_fun(), random_ctrl_fun())
-
+        return cls.parse_bracketed("<,>", s, i, parse_control_fun)
 
 class SetDomainSet(ComplexDomainSet):
     def __init__(self, typ):
@@ -926,25 +949,14 @@ class SetDomainSet(ComplexDomainSet):
 
 class SetType(TypeConstructor):
     domain_class = SetDomainSet
+    arity = 1
     """Type for sets.  See `lang.ConditionSet` and `lang.ListedSet`."""
     def __init__(self, ctype):
-        self.content_type = ctype
-        super().__init__()
+        super().__init__(ctype, symbol="Set")
 
-    def __len__(self):
-        return 1
-
-    def __getitem__(self, i):
-        return (self.content_type,)[i]
-
-    def __iter__(self):
-        return iter((self.content_type,))
-
-    def copy_local(self, ctype):
-        return SetType(ctype)
-
-    def functional(self):
-        return False
+    @property
+    def content_type(self):
+        return self.signature[0]
 
     def check(self, x):
         raise NotImplementedError()
@@ -956,29 +968,9 @@ class SetType(TypeConstructor):
         return ensuremath("\\left\\{%s\\right\\}"
                                             % self.content_type.latex_str())
 
-    def _type_eq(self, other):
-        if isinstance(other, SetType):
-            return self.content_type._type_eq(other.content_type)
-        else:
-            return False
-
-    def _type_hash(self):
-        return hash("Set") ^ self.content_type._type_hash()
-
     @classmethod
     def parse(cls, s, i, parse_control_fun):
-        next = parsing.consume_char(s, i, "{")
-        if next is None:
-            return (None, i)
-        else:
-            i = next
-            (ctype, i) = parse_control_fun(s, i)
-            i = parsing.consume_char(s, i, "}", "Unmatched { in set type")
-            return (SetType(ctype), i)
-
-    @classmethod
-    def random(cls, random_ctrl_fun):
-        return SetType(random_ctrl_fun())
+        return cls.parse_bracketed("{,}", s, i, parse_control_fun)
 
 
 class TupleDomainSet(ComplexDomainSet):
@@ -1039,18 +1031,10 @@ class TupleDomainSet(ComplexDomainSet):
 
 class TupleType(TypeConstructor):
     domain_class = TupleDomainSet
+    arity = None # no fixed arity!
     """Type for tuples.  See `lang.Tuple`."""
     def __init__(self, *signature):
-        #if len(signature) == 0:
-        #    raise ValueError("Tuple type can't be 0 length")
-        self.signature = tuple(signature)
-        super().__init__()
-
-    def copy_local(self, *sig):
-        return TupleType(*sig)
-
-    def functional(self):
-        return False
+        super().__init__(*signature, symbol="Tuple")
 
     def check(self, x):
         raise NotImplementedError()
@@ -1064,29 +1048,6 @@ class TupleType(TypeConstructor):
             [self.signature[i].latex_str()
                                     for i in range(len(self.signature))]))
 
-    def __len__(self):
-        return len(self.signature)
-
-    def __getitem__(self, i):
-        return self.signature[i]
-
-    def __iter__(self):
-        return iter(self.signature)
-
-
-    def _type_eq(self, other):
-        if not isinstance(other, TupleType):
-            return False
-        if len(self.signature) != len(other.signature):
-            return False
-        return all((self.signature[i]._type_eq(other.signature[i])
-                                        for i in range(len(self.signature))))
-
-    def _type_hash(self):
-        # converting to tuple is necessary: generators hash but their hash
-        # is not determined by (what would be their) content!
-        return hash(tuple(t._type_hash() for t in self.signature))
-
     def __call__(self, other):
         return FunType(self, other)
 
@@ -1095,21 +1056,7 @@ class TupleType(TypeConstructor):
 
     @classmethod
     def parse(cls, s, i, parse_control_fun):
-        next = parsing.consume_char(s, i, "(")
-        if next is None:
-            return (None, i)
-        else:
-            i = next
-            signature = []
-            while i < len(s) and s[i] != ")":
-                (m, i) = parse_control_fun(s, i)
-                signature.append(m)
-                if i >= len(s) or s[i] == ")":
-                    break
-                # this error message shouldn't actually arise.
-                i = parsing.consume_char(s, i, ",", "Missing comma in type")
-            i = parsing.consume_char(s, i, ")", "Unmatched ( in tuple type")
-            return (TupleType(*signature), i)       
+        return cls.parse_bracketed("(,)", s, i, parse_control_fun)
 
     @classmethod
     def random(cls, random_ctrl_fun):
@@ -1290,18 +1237,13 @@ class Forall(TypeConstructor):
     any type variables in its scope."""
 
     domain_class = PolymorphicDomainSet
+    arity = 1
     def __init__(self, arg):
-        self.arg = compact_type_vars(arg, fresh_only=True)
-        super().__init__()
+        super().__init__(compact_type_vars(arg, fresh_only=True), symbol="∀")
 
-    def __len__(self):
-        return 1
-
-    def __getitem__(self, i):
-        return (self.arg,)[i]
-
-    def __iter__(self):
-        return iter((self.arg,))
+    @property
+    def arg(self):
+        return self.signature[0]
 
     def init_type_vars(self):
         self._type_vars = set()
@@ -1355,9 +1297,6 @@ class Forall(TypeConstructor):
         # XX note on `left`
         return Forall(self.arg.right).normalize()
 
-    def copy_local(self, arg):
-        return Forall(arg)
-
     def check(self, x):
         raise self.arg.check(x)
 
@@ -1370,15 +1309,6 @@ class Forall(TypeConstructor):
         if self.sugar():
             return "?"
         return f"∀{repr(self.arg)}"
-
-    def _type_eq(self, other):
-        if isinstance(other, Forall):
-            return self.arg._type_eq(other.arg)
-        else:
-            return False
-
-    def _type_hash(self):
-        return (hash("∀") ^ self.arg._type_hash())
 
     def latex_str(self, **kwargs):
         if self.sugar():
@@ -1447,6 +1377,7 @@ class VariableType(TypeConstructor):
     A type variable represents a (not-necessarily-finite) set of types."""
 
     domain_class = PolymorphicDomainSet
+    arity = 0
     def __init__(self, symbol, number=None):
         self.number = None
         super().__init__()
@@ -1603,16 +1534,10 @@ class VariableType(TypeConstructor):
         """This implements token equality.  This is _not_ semantic equality due
         to type variable binding.
         """
-        if isinstance(other, VariableType):
-            return self._key_str == other._key_str
-        else:
-            return False
+        return isinstance(other, VariableType) and self._key_str == other._key_str
 
     def sort_key(self):
         return (self.symbol, self.number)
-
-    def _type_eq(self, other):
-        return isinstance(other, VariableType) and self._key_str == other._key_str
 
     def _type_hash(self):
         return hash(self._key_str)
@@ -1782,7 +1707,8 @@ class DisjunctiveType(TypeConstructor):
     These types represent finite sets of non-polymorphic types.  (Accordingly,
     disjunctions of variable types are disallowed.)"""
     domain_class = DisjunctiveDomainSet
-    def __init__(self, *type_list, raise_s=None, raise_i=None):
+    arity = None # no fixed arity!
+    def __init__(self, *type_list):
         disjuncts = set()
         for t in type_list:
             if isinstance(t, DisjunctiveType):
@@ -1792,38 +1718,21 @@ class DisjunctiveType(TypeConstructor):
                 # generalized. But, then unification would be more complicated.
                 raise TypeParseError(
                     "Polymorphic types can't be used disjunctively.",
-                    raise_s, raise_i)
+                    None, None)
             else:
                 disjuncts.add(t)
         if len(disjuncts) <= 1:
             raise TypeParseError(
                 "Disjunctive type must have multiple unique disjuncts",
-                raise_s, raise_i)
+                None, None)
         self.disjuncts = disjuncts
-        # still sort for a canonical ordering
-        self.type_list = sorted(self.disjuncts, key=repr)
-        super().__init__()
+        # sort the signature for a canonical ordering
+        super().__init__(*sorted(self.disjuncts, key=repr), symbol="Disj")
         self.store_functional_info()
-        
-    def _type_eq(self, other):
-        # no variable types allowed, it is safe to ignore `cache`
-        if isinstance(other, DisjunctiveType):
-            return self.disjuncts == other.disjuncts
-        else:
-            return False
 
-    def _type_hash(self):
-        # no variable types allowed, it is safe to ignore `cache`
-        return hash(tuple(self.type_list))
-        
-    def __len__(self):
-        return len(self.disjuncts)
-    
-    def __getitem__(self, i):
-        return self.type_list[i]
-    
-    def __iter__(self):
-        return iter(self.type_list)
+    @property
+    def type_list(self):
+        return self.signature
         
     def __repr__(self):
         return "[" + "|".join([repr(t) for t in self.type_list]) + "]"
@@ -1840,9 +1749,6 @@ class DisjunctiveType(TypeConstructor):
     
     def __and__(self, b):
         return poly_system.unify(self, b)
-
-    def copy_local(self, *parts):
-        return DisjunctiveType(*parts)
 
     @classmethod
     def factory(cls, *disjuncts):
@@ -1949,32 +1855,7 @@ class DisjunctiveType(TypeConstructor):
     
     @classmethod
     def parse(cls, s, i, parse_control_fun):
-        starting_i = i
-        next = parsing.consume_char(s, i, "[")
-        if next is None:
-            return (None, i)
-        else:
-            i = next
-            signature = []
-            # sequences like `[e|t|]` are valid, should they be?
-            while i < len(s) and s[i] != "]":
-                (m, i) = parse_control_fun(s, i)
-                signature.append(m)
-                # break on upcoming ].
-                if i < len(s) and s[i] == "]":
-                    break
-                # error handling: if we have >1 disjuncts error on missing ],
-                # otherwise error on missing |
-                if i >= len(s) and len(signature) > 1:
-                    break
-                i = parsing.consume_char(s, i, "|",
-                                            "Missing | in disjunctive type")
-            # note: if there's a missing type in an expression like `[e|`, we
-            # slightly misleadingly produce this error..
-            i = parsing.consume_char(s, i, "]",
-                                            "Unmatched [ in disjunctive type")
-            return (DisjunctiveType(*signature, raise_s=s, raise_i=starting_i),
-                                                                            i)
+        return cls.parse_bracketed('[|]', s, i, parse_control_fun)
     
     @classmethod
     def random(cls, random_ctrl_fun):
