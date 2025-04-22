@@ -42,3 +42,9 @@ New features:
  Fixes:
  - fix several polymorphic type inference issues
  - improved ipython/jupyter rendering
+
+## [0.7.1] - Fix for windows / pip installs - 2025-04-22
+
+Fixes:
+
+- Rename a demo notebook to avoid windows filename issues
