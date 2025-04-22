@@ -1,7 +1,7 @@
 import lamb
 from lamb import types, utils
 from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
-from .core import BindingOp, Partial, LFun, get_sopt
+from .core import BindingOp, Partial, LFun, get_sopt, tp
 from .meta import MetaTerm, DomainError
 from .ply import simplify_all, alphanorm
 from lamb.types import type_t
@@ -20,6 +20,8 @@ def setup_operators():
     add_t_op(BinaryArrowExpr)
     add_t_op(BinaryNeqExpr)
     add_t_op(BinaryBiarrowExpr)
+
+    registry.add_operator(Case)
 
 true_term = MetaTerm(True)
 false_term = MetaTerm(False)
@@ -288,6 +290,8 @@ class BinaryNeqExpr(SyncatOpExpr):
 
 class Case(TypedExpr):
     canonical_name = 'Case'
+    arg_signature = tp("(t,X,X)")
+
     def __init__(self, cond, if_case, else_case, *, typ=None, **kwargs):
         cond, _ = self.type_constraint(cond, types.type_t)
         if_case, typ = self.type_constraint(if_case, typ)
@@ -329,9 +333,6 @@ class Case(TypedExpr):
         return utils.ensuremath(
             f"\\begin{{cases}}\n{'\n'.join(cases)}"
             f"{c.latex_str(**kwargs)} & \\text{{otherwise}} \\end{{cases}}")
-
-
-TypedExpr.add_local("Case", Case.from_tuple)
 
 
 pure_ops = {UnaryNegExpr, BinaryAndExpr, BinaryOrExpr, BinaryArrowExpr,

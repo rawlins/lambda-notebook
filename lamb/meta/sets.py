@@ -48,6 +48,9 @@ def setup_operators():
     registry.add_operator(SetProperSubset)
     registry.add_binding_op(ConditionSet)
 
+    registry.add_operator(FunDom)
+    registry.add_operator(FunCodom)
+
     derived_classes()
     registry.add_operator(SetSupset)
     registry.add_operator(SetProperSupset)
@@ -1154,6 +1157,8 @@ class FunDom(TypedExpr):
     canonical_name = "Dom"
     pre_simplify = True
 
+    arg_signature = tp("(<X,Y>,)")
+
     def __init__(self, arg, typ=None, **kwargs):
         arg = self.type_constraint(arg, types.FunType)
         typ, _ = self.type_constraint(SetType(arg.type[0]), typ)
@@ -1216,6 +1221,8 @@ class FunCodom(TypedExpr):
     canonical_name = "Codom"
     pre_simplify = True
 
+    arg_signature = tp("(<X,Y>,)")
+
     def __init__(self, arg, typ=None, **kwargs):
         arg = self.type_constraint(arg, types.FunType)
         typ, _ = self.type_constraint(SetType(arg.type[1]), typ)
@@ -1269,8 +1276,4 @@ class FunCodom(TypedExpr):
         if result is not self:
             result = derived(result, self, "Function codomain simplification")
         return result
-
-
-TypedExpr.add_local("Dom", FunDom)
-TypedExpr.add_local("Codom", FunCodom)
 

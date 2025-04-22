@@ -38,6 +38,10 @@ def default_metalanguage():
     registry.add_operator(core.BinaryGenericEqExpr, tp("X"), tp("X"))
     registry.add_binding_op(LFun)
     registry.add_operator(core.ChainFun, tp("<X,Y>"), tp("<X,Y>"))
+    registry.add_operator(core.Partial, tp("X"), tp("t"))
+    registry.add_operator(core.Body, tp("X"))
+    registry.add_operator(core.Condition, tp("X"))
+    # TODO: core.MapFun
     for m in [boolean, number, sets, quantifiers]:
         m.setup_operators()
 

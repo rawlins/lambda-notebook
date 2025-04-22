@@ -365,7 +365,7 @@ class SingletonComposable(Composable):
         if content is None or isinstance(content, Exception):
             self.content = content
         else:
-            self.content = TypedExpr.ensure_typed_expr(content)
+            self.content = te(content)
 
     @property
     def type(self):
@@ -1553,7 +1553,6 @@ class Item(TreeComposite):
         `mode`: passed to superclass (not currently used).
         """
         TreeComposite.__init__(self, content=content, mode=mode)
-        #self.content = TypedExpr.ensure_typed_expr(content)
         self.__node_name__ = nl_name
         if index is None:
             self.index = None

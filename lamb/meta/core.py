@@ -172,6 +172,20 @@ def let_wrapper(s):
     return result
 
 
+def tenorm(e):
+    if isinstance(e, TypedExprFacade):
+        return e._e
+    else:
+        return e
+
+
+def tefnorm(e):
+    if isinstance(e, TypedExpr):
+        return e.M
+    else:
+        return e
+
+
 def te(s, *, let=True, assignment=None, _globals=None):
     """Public interface for constructing `TypedExpr` objects; `s` may be a
     string, in which case it will be parsed."""
@@ -179,7 +193,7 @@ def te(s, *, let=True, assignment=None, _globals=None):
     # XX incorporate lexicon namespace into this function somehow?
     if _globals is None:
         _globals = global_namespace()
-    result = TypedExpr.factory(s, assignment=assignment, _globals=_globals)
+    result = tenorm(TypedExpr.factory(s, assignment=assignment, _globals=_globals))
     if let and isinstance(result, TypedExpr):
         result = let_wrapper(result)
     return result
@@ -190,6 +204,17 @@ def is_te(x, cls=None):
         return isinstance(x, TypedExpr)
     else:
         return issubclass(cls, TypedExpr) and isinstance(x, cls)
+
+
+def validate_te(x, s=None):
+    if not is_te(x):
+        name = getattr(x, '_meta_name_', None)
+        if name is not None:
+            raise parsing.ParseError(f"Invalid syntax: stray operator `{name}`", s=s)
+        else:
+            # how to make this less cryptic?
+            raise parsing.ParseError(f"Invalid syntax", s=s)
+    return x
 
 
 def is_equality(x):
@@ -444,11 +469,15 @@ class OperatorRegistry(object):
         def signature_str(self):
             return repr(self.arg_signature)
 
+        @property
+        def base_impl(self):
+            return getattr(self.cls, 'base_impl', None)
+
         def __str__(self):
             return f"Operator({self.name}, {self.cls.__name__}, arity: {self.arity}, signature: {self.signature_str()})"
 
         def __repr__(self):
-            if (e := getattr(self.cls, 'base_impl', None)) is not None:
+            if (e := self.base_impl) is not None:
                 # use a metalanguage implementation if present
                 return f"operator {self.name}({self.arity}) = {repr(e)}"
             else:
@@ -456,7 +485,7 @@ class OperatorRegistry(object):
                 return str(self)
 
         def _repr_latex_(self):
-            if (e := getattr(self.cls, 'base_impl', None)) is not None:
+            if (e := self.base_impl) is not None:
                 # XX texttt here may not be stable across mathjax/katex versions
                 return ensuremath(f'\\texttt{{operator {self.name}({self.arity})}} = {e.latex_str(suppress_parens=True)}')
             else:
@@ -465,7 +494,10 @@ class OperatorRegistry(object):
 
         def get_names(self):
             # maybe include unicode?
-            return [self.name] + list(self.cls.secondary_names)
+            r = [self.name]
+            if getattr(self.cls, 'secondary_names', None):
+                r = r + list(self.cls.secondary_names)
+            return r
 
         def check_types_viable(self, *typs):
             """Return a comparison value with the type of this operator. This
@@ -499,6 +531,8 @@ class OperatorRegistry(object):
         self.unparsed_binding_ops = set()
         self.custom_transforms = {}
         self.ordering = {}
+        self.exported = set()
+        self._term_re = re.compile(parsing.base_term_re)
 
     def add_operator(self, _cls, *targs, shadow_warning=True):
         if not targs and (sig := getattr(_cls, 'arg_signature', None)) is not None:
@@ -544,6 +578,12 @@ class OperatorRegistry(object):
                     self.ordering[symbol][o2][desc] = None
                 else:
                     self.ordering[symbol][o2][desc] = -self.ordering[symbol][desc][o2]
+            if self._term_re.match(symbol):
+                if not symbol in self.exported and TypedExpr.has_local(symbol):
+                    logger.warning(
+                        f"Operator `{desc.name}/{desc.arg_signature}` shadows existing parsing local for `{symbol}`")
+                TypedExpr.add_local(symbol, self.op_instantiator(symbol))
+                self.exported.add(symbol)
 
         if not desc.arity in self.arities:
             self.arities[desc.arity] = dict()
@@ -555,6 +595,9 @@ class OperatorRegistry(object):
         for o2 in self.ordering[symbol]:
             del self.ordering[symbol][o2][op]
         del self.ordering[symbol][op]
+        if symbol in self.exported and symbol not in self.ops:
+            TypedExpr.del_local(symbol)
+            del self.exported[symbol]
 
     def get_operators(self, *types, symbol=None, arity=None, cls=None, exact=False):
         # this is currently basically a search function.
@@ -568,7 +611,8 @@ class OperatorRegistry(object):
         # duplicates for cases where an operator matches multiple symbols
         all_matches = {}
         for s in symbol:
-            all_matches.update(self.ops[s])
+            if s in self.ops:
+                all_matches.update(self.ops[s])
         all_matches = list(all_matches.keys())
 
         if cls is not None:
@@ -620,6 +664,18 @@ class OperatorRegistry(object):
             if all([self.ordering[symbol][o][o2] != antitarget for o2 in ops]):
                 result.append(o)
         return result
+
+    def expr_factory_for(self, symbol):
+        return lambda *args, **kwargs: self.expr_factory(symbol, *args, **kwargs)
+
+    def op_instantiator(self, symbol):
+        """Return a function that can be used to instantiate an operator in
+        the metalanguage parser."""
+        f = (lambda seq, **kwargs:
+            call_from_te_seq(self.expr_factory_for(symbol), seq, **kwargs))
+        f.__name__ = symbol
+        f._meta_name_ = symbol
+        return f
 
     def expr_factory(self, symbol, *args, **kwargs):
         """Given some operator/relation symbol with arguments, construct an
@@ -679,8 +735,9 @@ class OperatorRegistry(object):
                     % op.canonical_name)
                 self.remove_binding_op(op)
             self.binding_ops[op.canonical_name] = op
-            for alias in op.secondary_names:
-                self.canonicalize_binding_ops[alias] = op.canonical_name
+            if getattr(op, 'secondary_names', None):
+                for alias in op.secondary_names:
+                    self.canonicalize_binding_ops[alias] = op.canonical_name
         BindingOp.compile_ops_re()
 
     def remove_binding_op(self, op):
@@ -763,6 +820,9 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
     if _secondary_names is None:
         _secondary_names = set()
 
+    # note: validation happens elsewhere
+    is_py_op = not re.match(parsing.base_term_re, kwargs['canonical_name'])
+
     class WrappedOp(superclass):
         arity = op_arity
         # allow setting various class parameters via kwargs
@@ -770,8 +830,8 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
         secondary_names = _secondary_names
         op_name_uni = kwargs.get('op_name_uni', None)
         op_name_latex = kwargs.get('op_name_latex', None)
-        operator_style = kwargs.get('operator_style', True)
-        infix_style = kwargs.get('infix_style', True)
+        operator_style = kwargs.get('operator_style', is_py_op)
+        infix_style = kwargs.get('infix_style', is_py_op)
         commutative = kwargs.get('commutative', superclass.commutative)
         associative = kwargs.get('associative', superclass.associative)
         left_assoc = kwargs.get('left_assoc', superclass.left_assoc)
@@ -839,8 +899,7 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
 
             if get_sopt('evaluate', sopts):
                 # this is overly aggressive, but currently there's no better
-                # way to sequence this, because the normal reduction path happens
-                # very early in simplification
+                # way to sequence this
                 # XX could wrap the guaranteed reduction steps with a better
                 # derivation explanation?
                 result = result.reduce_all() # may have side effects!
@@ -1270,8 +1329,28 @@ def merge_tes(te1, te2, symmetric=True):
 
 ############### Core TypedExpr objects
 
+
 global _parser_assignment
 _parser_assignment = None
+
+
+def call_from_te_seq(f, seq, **kwargs):
+    # this function allows a function to be directly called from standard
+    # argument syntax in the metalanguage parser. seq is either a single
+    # argument, or a (t/T)uple giving a sequence of arguments. 
+
+    seq = tenorm(seq)
+    if (not is_te(seq) and not isinstance(seq, collections.abc.Sequence)
+            or is_te(seq) and not isinstance(seq, Tuple)):
+        # wrap any non-sequences as a 1-ary tuple
+        seq = (seq,)
+    else:
+        seq = (tenorm(e) for e in seq)
+    try:
+        return f(*seq, **kwargs)
+    except TypeError as e:
+        raise parsing.ParseError(f"{f.__name__} instantiated with incorrect argument signature (`{str(e)}`)") from None
+
 
 class TypedExpr(object):
     """Basic class for a typed n-ary logical expression in a formal language.
@@ -1344,11 +1423,13 @@ class TypedExpr(object):
         self._reduced_cache = [None] * len(self.args)
 
     @classmethod
-    def from_tuple(cls, tup, **kwargs):
-        try:
-            return cls(*tup, **kwargs)
-        except TypeError as e:
-            raise parsing.ParseError(f"{cls.__name__} instantiated with incorrect argument signature (`{str(e)}`)") from None
+    def from_arg_seq(cls, seq, **kwargs):
+        return call_from_te_seq(cls, seq, **kwargs)
+
+    @classmethod
+    def from_tuple(cls, seq, **kwargs):
+        # backwards compatibility
+        return cls.from_arg_seq(seq, **kwargs)
 
     @property
     def _type_cache(self):
@@ -1658,6 +1739,12 @@ class TypedExpr(object):
         `assignment`: a variable assignment to use when parsing.
         `locals`: a dict to use as the local variables when parsing.
         """
+        # prevent reentrance from within an eval call
+        if _parser_assignment is not None:
+            # this can happen if a python string shows up in a metalanguage
+            # expression. This solution is pretty hacky...
+            raise parsing.ParseError("Invalid syntax", s=s)
+
         if assignment is None:
             assignment = dict()
         ts = get_type_system()
@@ -1668,13 +1755,23 @@ class TypedExpr(object):
         # like, show the biggest subexpression that has no replacements in which
         # the error occurred.
         with parsing.parse_error_wrap("Failed to parse expression", s=s, wrap_all=False):
-            return cls.try_parse_paren_struc_r(struc, assignment=assignment,
-                                                                locals=locals)
+            try:
+                return tenorm(cls.try_parse_paren_struc_r(struc,
+                                        assignment=assignment, locals=locals))
+            except AttributeError as e:
+                # convert AttributeError from TypedExprFacade.__getattr__ into a ParseError
+                raise parsing.ParseError(str(e), s=s) from e
 
     _parsing_locals = dict()
 
     @classmethod
-    def add_local(cls, l, value):
+    def add_local(cls, l, value, raw=False):
+        # ensure that variable capture is handled correctly
+        ovalue = value
+        if not raw and getattr(value, 'from_arg_seq', None):
+            mname = getattr(value, 'canonical_name', value.__name__)
+            value = lambda *args, **kwargs: ovalue.from_arg_seq(*args, **kwargs)
+            value._meta_name_ = mname
         cls._parsing_locals[l] = value
 
     @classmethod
@@ -1682,6 +1779,10 @@ class TypedExpr(object):
         if l == "TypedExpr" or l == "TypedTerm":
             raise Exception("Cannot delete parsing local '%s'" % l)
         del cls._parsing_locals[l]
+
+    @classmethod
+    def has_local(cls, l):
+        return l in cls._parsing_locals
 
     @classmethod
     def try_parse_flattened(cls, s, assignment=None, locals=None):
@@ -1704,7 +1805,10 @@ class TypedExpr(object):
         tuples.
         """
         if locals is None:
-            locals = dict()
+            locals = {}
+
+        if assignment is None:
+            assignment = {}
 
         # handle an error case: if we try to parse this, it generates a
         # SyntaxError. But if None is returned, the caller can provide a
@@ -1725,7 +1829,7 @@ class TypedExpr(object):
         # cannot figure out a better way of doing this short of actually parsing
         # TODO: reimplement as a real parser, don't rely on `eval`
         global _parser_assignment
-        _parser_assignment = assignment # not remotely thread-safe
+        _parser_assignment = assignment # not remotely thread-safe or reentrance-safe
         # Now eval the string.  (A security hole; do not use with an adversary.)
         try:
             result = eval(to_eval, dict(), lcopy)
@@ -1743,20 +1847,14 @@ class TypedExpr(object):
             # practice?
         finally:
             _parser_assignment = None
-        if isinstance(result, TypedExprFacade):
-            result = result._e
 
-        if isinstance(result, TypedExpr):
-            return result
+        result = tenorm(result)
 
-        c = from_python_container(result)
         # XX is the container check needed here? code dup with factory
-        if c is not None:
+        if (c := from_python_container(result)) is not None:
             return c
-        else:
-            # XX limit some more cases of this?
-            logger.warning("parse_flattened returning non-TypedExpr")
-            return result
+
+        return validate_te(result)
 
     @classmethod
     def try_parse_binding_struc(cls, s, assignment=None, locals=None,
@@ -1768,7 +1866,9 @@ class TypedExpr(object):
         figure out whether this was a plausible attempt at a binding operator
         expression, so as to get the error message right."""
         try:
-            return BindingOp.try_parse_binding_struc_r(s, assignment=assignment, locals=locals, vprefix=vprefix)
+            return tefnorm(
+                BindingOp.try_parse_binding_struc_r(s,
+                        assignment=assignment, locals=locals, vprefix=vprefix))
         except parsing.ParseError as e:
             if not e.met_preconditions:
                 return None
@@ -1805,11 +1905,10 @@ class TypedExpr(object):
                         f"Empty subexpression {vnum}",
                         s=f"`{parsing.flatten_paren_struc(struc)}`")
                 var = vprefix + str(vnum)
-                s += "(" + var + ")"
+                s += f"({var})"
                 vnum += 1
                 h[var] = sub_expr
-        expr = cls.try_parse_flattened(s, assignment=assignment, locals=h)
-        return expr
+        return tefnorm(cls.try_parse_flattened(s, assignment=assignment, locals=h))
 
 
     @classmethod
@@ -1837,9 +1936,9 @@ class TypedExpr(object):
                 continue
             # ugh this is sort of absurd
             if typ is None:
-                replace = (f'TypedExpr._ptf("{name}", typ=None, assignment=assignment)')
+                replace = (f'__ptf("{name}", typ=None, assignment=assignment)')
             else:
-                replace = (f'TypedExpr._ptf("{name}", typ="{repr(typ)}", assignment=assignment)')
+                replace = (f'__ptf("{name}", typ="{repr(typ)}", assignment=assignment)')
             s = s[0:t.start() + offset] + replace + s[end:]
             i = t.start() + offset + len(replace)
             len_original = end - (t.start() + offset)
@@ -1847,10 +1946,8 @@ class TypedExpr(object):
         return s
 
     @classmethod
-    def _ptf(cls, s, typ=None, assignment=None):
-        # XX return facade here instead of regular value. Current blocker is
-        # hashability for set parsing...
-        return cls.term_factory(s, typ=typ, assignment=assignment)
+    def __ptf(cls, s, typ=None, assignment=None):
+        return cls.term_factory(s, typ=typ, assignment=assignment).M
 
     @classmethod
     def term_factory(cls, s, typ=None, assignment=None, preparsed=False):
@@ -2017,8 +2114,7 @@ class TypedExpr(object):
         if len(args) == 0:
             return None #TODO something else?
         elif len(args) == 1:
-            if isinstance(args[0], TypedExprFacade):
-                args = (args[0]._e,)
+            args = (tenorm(args[0]),)
 
             if isinstance(args[0], TypedExpr):
                 # handing the factory function a single TypedExpr always returns
@@ -2034,7 +2130,6 @@ class TypedExpr(object):
             elif s in types.type_n.domain:
                 return from_python(s, types.type_n)
             elif isinstance(s, str):
-                #return cls.parse_expr_string(s, assignment)
                 return cls.parse(s, assignment)
             else:
                 c = from_python_container(s)
@@ -2065,8 +2160,7 @@ class TypedExpr(object):
             try:
                 result = te(s, assignment=assignment)
             except NotImplementedError:
-                raise ValueError(
-                    "Do not know how to ensure TypedExpr for '%s'" % repr(s))
+                return validate_te(s)
         if typ is None:
             return result
         else:
@@ -2456,6 +2550,13 @@ class TypedExpr(object):
             sopts['calc_partiality'] = False
 
         result = result._simplify_all_r(pre=pre, **sopts)
+        if get_sopt('reduce', sopts) and result.subreducible() and result is not self:
+            # sigh, simplification has generated some expressions that now need
+            # reduction. We need to start everything over again.
+            # XX the `self` check is an inelegant way to avoid infinite loops
+            # if there are bugs in reducible.
+            # XX what about `evaluate`?
+            return result.simplify_all(pre=pre, **sopts)
         if result.let or initial_let:
             result = let_wrapper(result)
         return result
@@ -2765,7 +2866,6 @@ class TypedExpr(object):
         indexing."""
         if isinstance(i, TypedExpr) or isinstance(i, TypedExprFacade):
             return self.factory('[]', self, i)
-            # return TupleIndex(self, i)
         else:
             return self.args[i]
 
@@ -2889,7 +2989,11 @@ class TypedExpr(object):
         return TypedExprFacade(self)
 
 
-TypedExpr.add_local('TypedExpr', TypedExpr)
+def __ptf(s, typ=None, assignment=None):
+    return TypedExpr.term_factory(s, typ=typ, assignment=assignment).M
+
+
+TypedExpr.add_local('__ptf', __ptf, raw=True)
 
 
 class TypedExprFacade(object):
@@ -2901,6 +3005,16 @@ class TypedExprFacade(object):
     @property
     def M(self):
         return self
+
+    def __getattr__(self, name):
+        global registry
+        matches = registry.get_operators(arity=1, symbol=name)
+        if not matches:
+            # this has to be AttributeError or it breaks the api
+            # for parsing, this exception is later converted to ParseError
+            raise AttributeError(
+                f"Unknown postfix unary operator `{name}` for expression type `{self._e.type}`")
+        return TypedExpr.factory(name, self._e).M
 
     # Not implemented: not, abs, pos, concat, contains, *item, *slice, len
     def __and__(self, other):    return self._e.__and__(other).M
@@ -2951,13 +3065,12 @@ class TypedExprFacade(object):
         # ordinary indexing code)
         return TypedExpr.factory('[]', self._e, other).M
 
-    # not implemented by regular TypedExpr
     def __eq__(self, other):
-        return TypedExpr.factory('==', self._e, other).M
-        # return self._e.equivalent_to(other).M
-    def __ne__(self, other):
-        return TypedExpr.factory('!=', self._e, other).M
-        # return self._e.__xor__(other).M
+        # python equality only -- necessary for this class to be hashable
+        return self._e.__eq__(tenorm(other))
+
+    def __hash__(self):
+        return self._e.__hash__()
 
     # not implementable:
     # * the `in` operator force-converts to bool regardless of what __contains__
@@ -3486,9 +3599,6 @@ class TypedTerm(TypedExpr):
         return TypedExpr.term_factory(varname, typ)
 
 
-TypedExpr.add_local('TypedTerm', TypedTerm)
-
-
 class CustomTerm(TypedTerm):
     """A subclass of TypedTerm used for custom displays of term names.
 
@@ -3699,7 +3809,7 @@ class Partial(TypedExpr):
                     subexpression=new_condition)
 
         evaluate = get_sopt('evaluate', sopts)
-        sreduce = get_sopt('evaluate', sopts)
+        sreduce = get_sopt('reduce', sopts)
 
         if new_condition != True:
             # do not evaluate the body if the expression has not resolved to
@@ -3823,12 +3933,6 @@ class Condition(TypedExpr):
     def latex_str(self, suppress_parens=False, **kwargs):
         body_str = self[0].latex_str(suppress_parens=True, **kwargs)
         return ensuremath(f"\\textsf{{Condition}}({body_str})")
-
-
-# let these classes be instantiatable in the metalanguage parser
-TypedExpr.add_local("Partial", Partial.from_tuple)
-TypedExpr.add_local("Body", Body)
-TypedExpr.add_local("Condition", Condition)
 
 
 def pcond(t):
@@ -3973,9 +4077,10 @@ class Disjunctive(TypedExpr):
         args = [ctrl(typ=t) for t in signature]
         return cls.factory(*args) # may not actually generate a Disjunctive
 
-TypedExpr.add_local("Disjunctive", Disjunctive.from_tuple)
 
-
+# TODO: convert to a binary operator, or allow n-ary operators, so that this
+# can be in the registry
+TypedExpr.add_local("Disjunctive", Disjunctive)
 
 
 ###############
@@ -4174,13 +4279,12 @@ def from_python(p, typ=None):
 
 
 def from_python_container(p, default=None):
-    """Construct a TypedExpr given a (potentially recursive) python set/tuple.
-    This is expected to have something that is or can be converted to TypedExprs
-    at the bottom of the structure. (The factory is called, so strings are
-    accepted.)
+    """Construct a TypedExpr given a (potentially recursive) python set/tuple
+    of TypedExpr objects. This normalizes `tuple` to `Tuple`, `set` to
+    `ListedSet`, and `dict` to `MapFun`.
 
-    Quirk: in order to get a set-theoretic interpretation for `{}`, the empty
-    dict is treated as an empty set at an unknown type."""
+    Quirk relative to python: in order to get a set-theoretic interpretation
+    for `{}`, the empty dict is treated as an empty set at an unknown type."""
     from .sets import sset
     if isinstance(p, tuple): # or collections.abc.Sequence
         # should an empty tuple force a MetaTerm?
@@ -4188,19 +4292,19 @@ def from_python_container(p, default=None):
     elif isinstance(p, collections.abc.Set):
         return sset((from_python_container(elem, default=elem) for elem in p))
     elif isinstance(p, dict) and len(p) == 0:
-        # hack: empty dict is treated as empty set, so that "{}" makes sense
+        # empty dict is treated as empty set, so that `{}` has its expected
+        # mathematical meaning
         return sset(set())
     elif isinstance(p, dict):
+        p = {from_python_container(k, default=k):
+                from_python_container(p[k], default=p[k]) for k in p}
         if (all(k.meta() and p[k].meta() for k in p)):
             from .meta import MetaTerm
             return MetaTerm(p)
         else:
             return MapFun.from_dict(p)
 
-    if isinstance(default, TypedExprFacade):
-        return default._e
-    else:
-        return default
+    return tenorm(default)
 
 
 def is_concrete(s):
@@ -4274,7 +4378,7 @@ def op(op, arg_type, ret_type,
         # constructs a subclass of either Syncat
         if not (op_arity == 1 or op_arity == 2):
             raise ValueError(f"@op needs function of arity 1 or 2 (got {op_arity})")
-        class WrappedOp(SyncatOpExpr):
+        class WrappedPyOp(SyncatOpExpr):
             arity = op_arity
             canonical_name = op
             op_name_uni = op_uni
@@ -4317,7 +4421,7 @@ def op(op, arg_type, ret_type,
 
         # some metaprogramming to get nicer reprs for the class object. If we
         # don't overwrite these, the repr will show something like:
-        # `lamb.meta.core.op.<locals>.op_decorator.<locals>.WrappedOp`,
+        # `lamb.meta.core.op.<locals>.op_decorator.<locals>.WrappedPyOp`,
         # which is of course completely unhelpful. The builtin (C) repr for
         # `type` uses specifically __module__ and __qualname__. Because `func`
         # here is the decorated function, using its `__qualname__` gets the
@@ -4325,10 +4429,10 @@ def op(op, arg_type, ret_type,
         # `lamb.meta.boolean.UnaryNegExpr`. (An alternative here that might be
         # clearer would be to use a metaclass; but as of py3.3 I don't think
         # the python internals this is relying on are likely to change...)
-        WrappedOp.__name__ = func.__name__
-        WrappedOp.__qualname__ = func.__qualname__
-        WrappedOp.__module__ = func.__module__
-        return WrappedOp
+        WrappedPyOp.__name__ = func.__name__
+        WrappedPyOp.__qualname__ = func.__qualname__
+        WrappedPyOp.__module__ = func.__module__
+        return WrappedPyOp
     return op_decorator
 
 
@@ -4676,13 +4780,10 @@ class BindingOpHeader:
     def get_kwargs(self, assignment=None):
         kwargs = dict(assignment=assignment)
         if self.classprop('allow_restrictor'):
-            kwargs['restrictor'] = self.restrictor
+            kwargs['restrictor'] = tenorm(self.restrictor)
         return kwargs
 
     def factory(self, body, assignment=None):
-        if isinstance(body, TypedExprFacade):
-            body = body._e
-
         self.precheck()
         if self.classprop('allow_novars') or self.classprop('allow_multivars'):
             # constructor should take an n-ary sequence of variables
@@ -4691,7 +4792,7 @@ class BindingOpHeader:
             # constructor should take a single variable
             var_arg = self.var_init(self.var_seq[0])
 
-        return self.op_class(var_arg, body, **self.get_kwargs())
+        return self.op_class(var_arg, tenorm(body), **self.get_kwargs())
 
     @property
     def opname(self):
@@ -5682,7 +5783,7 @@ class MapFun(TypedExpr):
         return cls(*[(k, d[k]) for k in d])
 
 
-TypedExpr.add_local("Fun", MapFun.from_tuple)
+TypedExpr.add_local("Fun", MapFun)
 
 
 def reset():

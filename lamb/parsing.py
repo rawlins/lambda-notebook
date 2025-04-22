@@ -400,8 +400,13 @@ def parse_assign_op(s, i, met_preconditions=False):
         return None, i
 
 
+def valid_op_symbol(s):
+    from lamb.meta.core import is_op_symbol
+    return is_op_symbol(s) or re.match(match_term_re, s) is not None
+
+
 def parse_op_assign(s, env, var_env, transforms=None):
-    from lamb.meta.core import op_from_te, registry, is_op_symbol
+    from lamb.meta.core import op_from_te, registry
     _, i = consume_pattern(s, 0, 'operator ',
                     error="Missing `operator`", met_preconditions=False)
     # this massively over-accepts compared to what is supported, but it makes
@@ -416,8 +421,8 @@ def parse_op_assign(s, env, var_env, transforms=None):
     # some operator symbols
     transform, i = parse_assign_op(s, i)
 
-    if not is_op_symbol(op_symbol):
-        raise ParseError(f"Unknown operator symbol `{op_symbol}`", s=s, i=op_i)
+    if not valid_op_symbol(op_symbol):
+        raise ParseError(f"Invalid operator symbol `{op_symbol}`", s=s, i=op_i)
 
     var_env = vars_only(env)
     right_side = parse_right(op_symbol, s[i:], var_env, constants=True)
@@ -674,17 +679,24 @@ def flatten_paren_struc(struc):
             s += flatten_paren_struc(sub)
     return s.strip()
 
-global brackets, close_brackets
-brackets = {"(" : ")", "{" : "}"}
-close_brackets = {brackets[y] : y for y in brackets.keys()}
+global all_brackets, close_brackets
+all_brackets = {"(" : ")", "{" : "}"}
+close_brackets = {all_brackets[y] : y for y in all_brackets.keys()}
 
 
 term_symbols_re = r'[a-zA-Z0-9]'
+base_term_re = fr'{term_symbols_re}+'
+full_term_re = fr'(_?{base_term_re})(_)?'
+match_term_re = fr'{base_term_re}$'
 
 
-def bracketed(struc):
-    # assumes bracket balancing has been checked
-    if len(struc) > 0 and isinstance(struc[0], str) and struc[0] in brackets:
+def bracketed(struc, brackets=None):
+    if brackets is None:
+        brackets = all_brackets
+    if (len(struc) > 0
+            and isinstance(struc[0], str)
+            and struc[0] in brackets
+            and all_brackets[struc[0]] == struc[-1]):
         return struc[0]
     else:
         return None
@@ -693,8 +705,6 @@ def bracketed(struc):
 def debracket(struc):
     # n.b. this does nothing on cases like [['(', 'stuff', ')']]
     if bracketed(struc):
-        # assert is a sanity check, balancing should already be ensured
-        assert(brackets[struc[0]] == struc[-1])
         return debracket(struc[1:-1])
     else:
         return struc
@@ -787,7 +797,7 @@ def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
             # this is unfortunate...
             accum += s[i+1:end]
             i = end
-        elif s[i] in brackets.keys():
+        elif s[i] in all_brackets:
             stack.append(s[i])
             i += 1
 
@@ -798,8 +808,8 @@ def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
                 accum = ""
             seq.append(r)
             i = new_i
-        elif s[i] in close_brackets.keys():
-            if len(stack) > 0 and s[i] == brackets[stack[-1]]:
+        elif s[i] in close_brackets:
+            if len(stack) > 0 and s[i] == all_brackets[stack[-1]]:
                 if len(accum) > 0:
                     seq.append(accum)
                     accum = ""
@@ -831,14 +841,14 @@ def parse_paren_str(s, i, type_sys=None):
     (seq, i) = parse_paren_str_r(s, i, stack, type_sys=type_sys)
     if len(stack) != 0:
         raise ParseError("Unbalanced '%s...%s' expression at end of string" %
-                                    (stack[-1], brackets[stack[-1]]), s, i)
+                                    (stack[-1], all_brackets[stack[-1]]), s, i)
     return (seq, i)
 
 
 def find_term_locations(s, i=0):
     """Find locations in a string `s` that are term names."""
     # TODO: code dup with parse_term
-    term_re = re.compile(r'(_?' + term_symbols_re + '+)(_)?')
+    term_re = re.compile(full_term_re)
     unfiltered_result = find_pattern_locations(term_re, s, i=i, end=None)
     result = list()
     for r in unfiltered_result:
@@ -857,8 +867,7 @@ def parse_term(s, i=0, return_obj=True, assignment=None):
     `assignment`, use that.  If a type is specified and is present in
     `assignment`, check type compatibility immediately."""
 
-    term_re = r'(_?' + term_symbols_re + '+)(_)?'
-    term_name, next = consume_pattern(s, i, term_re, return_match=True)
+    term_name, next = consume_pattern(s, i, full_term_re, return_match=True)
 
     if not term_name:
         if return_obj:
