@@ -72,9 +72,9 @@ def mt_key(m):
         if m.startswith("_"):
             m = m[1:]
         try:
-            return m[0], int(m[1:])
+            return (m[0], int(m[1:]))
         except:
-            return m
+            return (m,)
     elif isinstance(m, tuple):
         return (" ()",) + tuple(mt_key(e) for e in m)
     elif isinstance(m, collections.abc.Set):
@@ -85,7 +85,7 @@ def mt_key(m):
         # XX something better, this will give a pretty arbitrary sort
         return (" dict", len(m), hash(m))
     else:
-        return m
+        return (m,)
 
 
 class MetaTerm(core.TypedTerm):
