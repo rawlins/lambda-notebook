@@ -85,7 +85,10 @@ def mt_key(m):
         # XX something better, this will give a pretty arbitrary sort
         return (" dict", len(m), hash(m))
     else:
-        return (m,)
+        try:
+            return m.__mt_key__()
+        except AttributeError:
+            return (m,) # needs to support comparison to str / tuple
 
 
 class MetaTerm(core.TypedTerm):
