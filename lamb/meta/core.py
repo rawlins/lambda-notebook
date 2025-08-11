@@ -591,13 +591,16 @@ class OperatorRegistry(object):
 
     def remove_operator(self, symbol, op):
         del self.ops[symbol][op]
-        del self.arities[op.arity][op]
         for o2 in self.ordering[symbol]:
             del self.ordering[symbol][o2][op]
         del self.ordering[symbol][op]
         if symbol in self.exported and symbol not in self.ops:
             TypedExpr.del_local(symbol)
             del self.exported[symbol]
+        if op in self.arities[op.arity]:
+            if not any(op in self.ops[symbol] for symbol in self.ops):
+                # only delete from `arities` if no instances of op left
+                del self.arities[op.arity][op]
 
     def get_operators(self, *types, symbol=None, arity=None, cls=None, exact=False):
         # this is currently basically a search function.
@@ -1970,23 +1973,29 @@ class TypedExpr(object):
             aname = s
             s = assignment[s]
 
-        from .meta import MetaTerm
-        if isinstance(s, MetaTerm):
-            # MetaTerms are immutable under all operations that call this, so
-            # return without copying. (The only thing that may change across
-            # instances with the same value is `derivation`.)
-            if typ is not None:
-                s.check_type_domain(typ=typ)
-            if aname is not None:
-                s = s.copy()
-                s.assignment_name = cls.term_factory(aname, s.type)
-            return s
-        elif isinstance(s, TypedTerm):
-            # todo: handle conversion to custom
-            result = s.copy()
-            if typ is not None:
-                result = result.try_adjust_type(typ)
-            return result
+        if is_te(s):
+            if s.meta():
+                # MetaTerms are immutable under all operations that call this, so
+                # return without copying. (The only thing that may change across
+                # instances with the same value is `derivation`.)
+                if typ is not None:
+                    s.check_type_domain(typ=typ)
+                if aname is not None:
+                    s = s.copy()
+                    s.assignment_name = cls.term_factory(aname, s.type)
+                return s
+            elif s.term():
+                # If `s` is already a term of some kind, make a copy. Note
+                # that this will call a non-standard term class' copy.
+                result = s.copy()
+                if typ is not None:
+                    result = result.try_adjust_type(typ)
+                return result
+            else:
+                v = aname
+                # fallthrough: construct a new term based on the term name.
+                # Note: assignment could supply a non-term value here, but
+                # the idea is that terms only get substituted on evaluation.
         else:
             if isinstance(s, str) and not preparsed:
                 # in principle, if typ is supplied, could try parsing and
@@ -2005,32 +2014,34 @@ class TypedExpr(object):
             else:
                 # this does not validate term name formatting!
                 v = s
-            v = utils.num_or_str(v)
-            if typ is not None:
-                type_vars = typ.bound_type_vars() # ??
+        v = utils.num_or_str(v)
+        if typ is not None:
+            type_vars = typ.bound_type_vars() # ??
 
-            if not isinstance(v, str) or v.startswith("_"):
-                # casting behavior when parsing: pythonic conversions between
-                # type t and n in both directions. For now this is *only* in
-                # parsing, so (for example) is not visited by try_adjust_type.
-                if v == 0 and not isinstance(v, bool) and typ == types.type_t:
-                    v = False
-                elif types.is_numeric(v) and not isinstance(v, bool) and typ == types.type_t:
-                    v = True
-                elif v == 0 and isinstance(v, bool) and typ == types.type_n:
-                    v = 0
-                elif v == 1 and isinstance(v, bool) and typ == types.type_n:
-                    v = 1
-                r = MetaTerm(v, typ=typ)
-                if aname is not None:
-                    r.assignment_name = cls.term_factory(aname, r.type)
-                return r
+        if not isinstance(v, str) or v.startswith("_"):
+            # casting behavior when parsing: pythonic conversions between
+            # type t and n in both directions. For now this is *only* in
+            # parsing, so (for example) is not visited by try_adjust_type.
+            if v == 0 and not isinstance(v, bool) and typ == types.type_t:
+                v = False
+            elif types.is_numeric(v) and not isinstance(v, bool) and typ == types.type_t:
+                v = True
+            elif v == 0 and isinstance(v, bool) and typ == types.type_n:
+                v = 0
+            elif v == 1 and isinstance(v, bool) and typ == types.type_n:
+                v = 1
 
-            global _constants_use_custom
-            if _constants_use_custom and not is_var_symbol(v):
-                return CustomTerm(v, typ=typ, assignment=assignment)
-            else:
-                return TypedTerm(v, typ=typ, assignment=assignment)
+            from .meta import MetaTerm
+            r = MetaTerm(v, typ=typ)
+            if aname is not None:
+                r.assignment_name = cls.term_factory(aname, r.type)
+            return r
+
+        global _constants_use_custom
+        if _constants_use_custom and not is_var_symbol(v):
+            return CustomTerm(v, typ=typ, assignment=assignment)
+        else:
+            return TypedTerm(v, typ=typ, assignment=assignment)
 
     @classmethod
     def _construct_op(cls, op,  *args):
@@ -2785,7 +2796,12 @@ class TypedExpr(object):
                 op_text = f" {name} "
                 return "(%s)" % (op_text.join([repr(a) for a in self.args]))
             else:
-                return f"{name}({", ".join([repr(a) for a in self.args])})"
+                if len(self.args) == 0 and getattr(self, 'term_style', False):
+                    # note that term subclasses don't use this branch, they
+                    # override
+                    return f"{name}"
+                else:
+                    return f"{name}({", ".join([repr(a) for a in self.args])})"
 
     # XX default _repr_pretty_?
 
@@ -2798,11 +2814,9 @@ class TypedExpr(object):
         # default latex output, should be able to handle most basic cases.
         # SyncatOpExpr has more sophisticated code. (XX: can these be unified?)
 
-        if not self.args:
-            return ensuremath(str(self.op))
         # past this point in the list of cases should only get hard-coded
         # operators
-        elif len(self.args) == 1: # Prefix operator
+        if len(self.args) == 1: # Prefix operator
             if getattr(self, 'operator_style', False):
                 return ensuremath(
                     f"{self.op}{self.args[0].latex_str(**kwargs)}")
@@ -2816,8 +2830,13 @@ class TypedExpr(object):
                     base = f"({base})"
                 return ensuremath(base)
             else:
-                arg_str = ", ".join(a.latex_str(suppress_parens=True, **kwargs) for a in self.args)
-                return ensuremath(f"{self.op} ({arg_str})")
+                if len(self.args) == 0 and getattr(self, 'term_style', False):
+                    # note that term subclasses don't use this branch, they
+                    # override
+                    return ensuremath(f"{self.op}")
+                else:
+                    arg_str = ", ".join(a.latex_str(suppress_parens=True, **kwargs) for a in self.args)
+                    return ensuremath(f"{self.op} ({arg_str})")
 
     def _repr_latex_(self):
         return self.latex_str(suppress_parens=True)
