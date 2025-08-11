@@ -86,9 +86,10 @@ def mt_key(m):
         return (" dict", len(m), hash(m))
     else:
         try:
+            # XX can something like this be provided by the DomainSet implementation?
             return m.__mt_key__()
         except AttributeError:
-            return (m,) # needs to support comparison to str / tuple
+            return (" meta", str(m),) # fallback, should do *something* without crashing
 
 
 class MetaTerm(core.TypedTerm):
