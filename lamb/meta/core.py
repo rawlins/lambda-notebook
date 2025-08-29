@@ -8,7 +8,9 @@ from lamb import types, parsing, utils
 from lamb.utils import ensuremath, dbg_print, Namespace
 
 from lamb.types import TypeMismatch, BasicType, FunType, TupleType, is_type_var
-# meta.ply is the only meta module imported by core
+# meta.ply and meta.parsing are the only meta modules imported by core
+from .parser import find_term_locations, parse_term, try_parse_term_sequence
+from .parser import base_term_re, try_parse_typed_term
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
 from .ply import simplify_all, symbol_is_var_symbol, alphanorm_key
 from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
@@ -532,7 +534,7 @@ class OperatorRegistry(object):
         self.custom_transforms = {}
         self.ordering = {}
         self.exported = set()
-        self._term_re = re.compile(parsing.base_term_re)
+        self._term_re = re.compile(base_term_re)
 
     def add_operator(self, _cls, *targs, shadow_warning=True):
         if not targs and (sig := getattr(_cls, 'arg_signature', None)) is not None:
@@ -824,7 +826,7 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
         _secondary_names = set()
 
     # note: validation happens elsewhere
-    is_py_op = not re.match(parsing.base_term_re, kwargs['canonical_name'])
+    is_py_op = not re.match(base_term_re, kwargs['canonical_name'])
 
     class WrappedOp(superclass):
         arity = op_arity
@@ -1921,7 +1923,7 @@ class TypedExpr(object):
 
         This is an expanded version of the original regex approach; one reason
         to move away from that is that this will truely parse the types."""
-        terms = parsing.find_term_locations(s, i)
+        terms = find_term_locations(s, i)
         if ignore is None:
             ignore = set()
         offset = 0
@@ -1930,7 +1932,7 @@ class TypedExpr(object):
                 # parsing has already consumed this candidate term, ignore.
                 # (E.g. an "e" in a type signature.)
                 continue
-            (name, typ, end) = parsing.parse_term(s, t.start() + offset,
+            (name, typ, end) = parse_term(s, t.start() + offset,
                                     return_obj=False, assignment=assignment)
             if name is None:
                 logger.warning("Unparsed term '%s'" % t.group(0)) # TODO: more?
@@ -2000,7 +2002,7 @@ class TypedExpr(object):
             if isinstance(s, str) and not preparsed:
                 # in principle, if typ is supplied, could try parsing and
                 # confirm the type?
-                v, parsed_typ = parsing.try_parse_typed_term(s,
+                v, parsed_typ = try_parse_typed_term(s,
                                             assignment=assignment)
                 if typ is not None and parsed_typ is not None:
                     principal = ts.unify(typ, parsed_typ)
@@ -5307,7 +5309,7 @@ class BindingOp(TypedExpr):
                 met_preconditions=True)
 
         try:
-            var_seq = parsing.try_parse_term_sequence(restric_split[0], lower_bound=None,
+            var_seq = try_parse_term_sequence(restric_split[0], lower_bound=None,
                                     upper_bound=None, assignment=assignment)
         except parsing.ParseError as e:
             # somewhat involved logic: try to parse the var sequence before

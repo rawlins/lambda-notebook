@@ -73,7 +73,7 @@ def try_parse_type_term(s, i):
     if m is None:
         raise lamb.parsing.ParseError("Failed to match `type `",
             s=s, i=i, met_preconditions=False)
-    typ, end = lamb.parsing.parsing_ts().type_parser_recursive(s, next) # should raise
+    typ, end = lamb.meta.parser.parsing_ts().type_parser_recursive(s, next) # should raise
     assert(typ is not None)
     return typ, end
 

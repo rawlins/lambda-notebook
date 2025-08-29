@@ -66,7 +66,9 @@ def reload_lamb(use_nltk_tree=None):
             # inherit default from currently running version. TODO: too confusing?
             lamb.utils.use_nltk = use_nltk_tree
         lamb.magics.reset_envs()
+        importlib.reload(lamb.parsing)
         importlib.reload(lamb.types)
+        importlib.reload(lamb.meta.parser)
         importlib.reload(lamb.meta.ply)
         importlib.reload(lamb.meta.core)
         importlib.reload(lamb.meta.meta)
@@ -78,7 +80,6 @@ def reload_lamb(use_nltk_tree=None):
         importlib.reload(lamb.meta.test)
         importlib.reload(lamb.meta)
         importlib.reload(lamb.lang)
-        importlib.reload(lamb.parsing)
         importlib.reload(lamb.display)
         colab_setup()
         importlib.reload(lamb.combinators)
