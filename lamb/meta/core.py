@@ -1949,10 +1949,6 @@ class TypedExpr(object):
         return s
 
     @classmethod
-    def __ptf(cls, s, typ=None, assignment=None):
-        return cls.term_factory(s, typ=typ, assignment=assignment).M
-
-    @classmethod
     def term_factory(cls, s, typ=None, assignment=None, preparsed=False):
         """Attempt to construct a TypedTerm from argument s.
 
@@ -1996,12 +1992,16 @@ class TypedExpr(object):
                 # fallthrough: construct a new term based on the term name.
                 # Note: assignment could supply a non-term value here, but
                 # the idea is that terms only get substituted on evaluation.
+        elif types.is_type(s):
+            # early return for this case, no further processing needed
+            from .meta import MetaTerm
+            return MetaTerm(s, typ=typ)
         else:
             if isinstance(s, str) and not preparsed:
                 # in principle, if typ is supplied, could try parsing and
                 # confirm the type?
                 v, parsed_typ = parsing.try_parse_typed_term(s,
-                                            assignment=assignment, strict=True)
+                                            assignment=assignment)
                 if typ is not None and parsed_typ is not None:
                     principal = ts.unify(typ, parsed_typ)
                     if principal is None:
@@ -2014,6 +2014,7 @@ class TypedExpr(object):
             else:
                 # this does not validate term name formatting!
                 v = s
+
         v = utils.num_or_str(v)
         if typ is not None:
             type_vars = typ.bound_type_vars() # ??
@@ -3615,7 +3616,7 @@ class TypedTerm(TypedExpr):
                     base = base.upper()
                 varname = alpha_variant(base, blockset | {n.op for n in usedset})
         
-        return TypedExpr.term_factory(varname, typ)
+        return TypedExpr.term_factory(varname, typ=typ)
 
 
 class CustomTerm(TypedTerm):

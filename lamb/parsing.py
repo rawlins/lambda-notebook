@@ -775,6 +775,7 @@ def struc_strip(struc):
 
 
 def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
+    # XX type_sys param vs parsing_ts()
     accum = ""
     seq = list()
     if initial_accum is not None:
@@ -874,6 +875,7 @@ def parse_term(s, i=0, return_obj=True, assignment=None):
             return (None, i)
         else:
             return (None, None, i)
+
     if term_name.group(2):
         # try to parse a type
         # if there is a _, will force an attempt
@@ -957,7 +959,7 @@ def try_parse_term_sequence(s, lower_bound=1, upper_bound=None,
     return sequence
 
 
-def try_parse_typed_term(s, assignment=None, strict=False):
+def try_parse_typed_term(s, assignment=None):
     """Try to parse string 's' as a typed term.
     assignment: a variable assignment to parse s with.
 
