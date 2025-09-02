@@ -133,11 +133,11 @@ class ParseError(Exception):
 
 
 @contextmanager
-def try_parse():
+def try_parse(suppress=False):
     try:
         yield
     except ParseError as e:
-        if not e.met_preconditions:
+        if suppress or not e.met_preconditions:
             return None
         else:
             raise e
@@ -146,7 +146,7 @@ def try_parse():
 def consume_char(s, i, match, error=None):
     if i >= len(s):
         if error is not None:
-            raise ParseError(error, s, i)
+            raise ParseError(error, s=s, i=i)
         else:
             return None
     if s[i] == match:
@@ -155,14 +155,15 @@ def consume_char(s, i, match, error=None):
         if error is None:
             return None
         else:
-            raise ParseError(error, s, i)
+            raise ParseError(error, s=s, i=i)
+
 
 def consume_pattern(s, i, regex, error=None, return_match=False, **kwargs):
     if i > len(s):
         if error is not None:
             raise ParseError(error, s=s, i=i, **kwargs)
         else:
-            return (None, None)
+            return None
     m = re.match(regex, s[i:])
     if m:
         if return_match:
@@ -171,7 +172,7 @@ def consume_pattern(s, i, regex, error=None, return_match=False, **kwargs):
             return (m.group(), m.end() + i)
     else:
         if error is None:
-            return (None, None)
+            return None, None
         else:
             raise ParseError(error, s=s, i=i, **kwargs)
 
@@ -197,9 +198,185 @@ def find_pattern_locations(re, s, i=0, end=None):
         next = search.end() + 1
     return matches
 
-def consume_whitespace(s, i, error=None):
+
+def consume_whitespace(s, i, plus=False, error=None):
     m_group, i = consume_pattern(s, i, r'\s*', error)
     return i
+
+
+class ASTNode(object):
+    def __init__(self, label, *values, s=None, i=None):
+        self.label = label
+        self.values = values
+        self.s = s
+        self.i = i
+
+    def __repr__(self):
+        return f"({self.label}: {', '.join(repr(v) for v in self.values)})"
+
+
+class Parselet(object):
+    def __init__(self, parser, ast_label=None, error=None):
+        self.parser = parser
+        self.ast_label = ast_label
+        self.error_msg = error
+
+    def default_error(self, s, i):
+        return f"Failed to parse {self.ast_label}"
+
+    def error(self, s, i, error=None):
+        if error:
+            e = error
+        elif self.error_msg:
+            e = self.error_msg
+        else:
+            e = self.default_error(s, i)
+        raise ParseError(e, s=s, i=i)
+
+    def parse(self, s, i):
+        if self.parser is None:
+            # noop parse
+            return (i,)
+        result = self.parser(s, i)
+        if result is None or result[-1] is None:
+            # interpret this as a failed parse
+            self.error(s, i)
+        new_i = result[-1]
+        result = [x for x in result[0:-1] if x is not None]
+        if not result:
+            # interpret this as a consumer-only parse
+            return (new_i,)
+        return ASTNode(self.ast_label, *result, s=s, i=i), new_i
+
+    def __call__(self, s, i):
+        return self.parse(s, i)
+
+    def __or__(self, other):
+        if isinstance(self, DisjunctiveParselet):
+            # left association
+            self.parser.append(other)
+            return self
+        else:
+            return DisjunctiveParselet(self, other, ast_label=self.ast_label)
+
+    def __add__(self, other):
+        if isinstance(self, SeqParselet):
+            # left association
+            self.parser.append(other)
+            return self
+        else:
+            return SeqParselet(self, other, ast_label=self.ast_label)
+
+    def __matmul__(self, other):
+        return self + Whitespace() + other
+
+
+class Label(Parselet):
+    """Dummy Parselet that serves only to provide an AST label"""
+    def __init__(self, ast_label):
+        super().__init__(None, ast_label=ast_label)
+
+
+class Optional(Parselet):
+    def __init__(self, parser, ast_label=None, **kwargs):
+        if ast_label is None:
+            ast_label = parser.ast_label
+        super().__init__(parser, ast_label=ast_label, **kwargs)
+
+    def parse(self, s, i):
+        try:
+            return self.parser.parse(s, i)
+        except ParseError as e:
+            if e.met_preconditions:
+                raise e
+            else:
+                # null but succesful consumer-only parse
+                return (i,)
+
+
+class Precondition(Parselet):
+    def __init__(self, parser, ast_label=None, **kwargs):
+        if ast_label is None:
+            ast_label = parser.ast_label
+        super().__init__(parser, ast_label=ast_label, **kwargs)
+
+    def parse(self, s, i):
+        try:
+            return self.parser.parse(s, i)
+        except ParseError as e:
+            e.met_preconditions = False
+            raise e
+
+
+class REParselet(Parselet):
+    def __init__(self, regex, consume=False, flags=0, **kwargs):
+        self.raw_regex = regex
+        self.consume = consume
+        regex = re.compile(regex, flags=flags)
+        super().__init__(regex, **kwargs)
+
+    def default_error(self, s, i):
+        return f"Failed to match pattern for {self.ast_label}"
+
+    def parse(self, s, i):
+        m = self.parser.match(s[i:])
+        if m:
+            if self.consume:
+                return (m.end() + i,)
+            # could do something with named groups
+            result = m.groups()
+            if not result:
+                result = (m.group(),)
+            return ASTNode(self.ast_label, *result, s=s, i=i), m.end() + i
+        else:
+            self.error(s, i)
+
+
+# XX linebreaks
+def Whitespace(plus=False):
+    if plus:
+        return REParselet(r'\s+', consume=True, error="failed to match whitespace")
+    else:
+        return REParselet(r'\s*', consume=True)
+
+
+class SeqParselet(Parselet):
+    def __init__(self, *parsers, **kwargs):
+        super().__init__(list(parsers), **kwargs)
+
+    def parse(self, s, i):
+        result = []
+        cur = i
+        for p in self.parser:
+            r = p.parse(s, cur)
+            cur = r[-1]
+            result.extend(r[0:-1])
+        if not result:
+            # interpret this as a succesful consumer-only parse
+            return (cur,)
+        return ASTNode(self.ast_label, *result, s=s, i=i), cur
+
+
+class DisjunctiveParselet(Parselet):
+    def __init__(self, *parsers, **kwargs):
+        super().__init__(list(parsers), **kwargs)
+
+    def default_error(self, s, i):
+        return f"Failed to find disjunct in `{self.ast_label}`"
+
+    def parse(self, s, i):
+        for p in self.parser:
+            with try_parse():
+                result = p.parse(s, i)
+                new_i = result[-1]
+                if not result:
+                    # interpret this as a succesful consumer-only parse
+                    return (cur,)
+                return ASTNode(self.ast_label, *result, s=s, i=i), cur
+        self.error(s, i)
+
+
+
 
 def vars_only(env):
     """Ensure that env is a 'pure' variable assignment -- exclude anything but
@@ -509,6 +686,10 @@ def parse_lex_assign(s, env, var_env, ambiguity=False, transforms=None):
                 env[lex_name][item_index] = item
             item = env[lex_name]
     return ({lex_name: item}, env)
+
+
+# ParseAssignment = (Label("Assignment")
+#                     |  
 
 
 def parse_assignment(s, env=None, transforms=None, ambiguity=False):
