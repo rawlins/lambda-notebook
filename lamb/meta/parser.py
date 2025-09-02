@@ -2,6 +2,7 @@ import sys, re, traceback, collections, enum
 
 from lamb.parsing import find_pattern_locations, consume_pattern, consume_whitespace
 from lamb.parsing import consume_char, ParseError, struc_strip, flatten_paren_struc
+from lamb.parsing import Parselet, REParselet, Label, Optional, Precondition, term_re
 
 
 def parsing_ts():
@@ -65,6 +66,20 @@ def parse_term(s, i=0, return_obj=True, assignment=None):
         return (term, end)
     else:
         return (term_name.group(1), typ, end)
+
+
+def parse_type_wrapper(s, i=0):
+    # wrapper to avoid circular import issues
+    return parsing_ts().type_parser_recursive(s, i=i)
+
+
+type_parser = Parselet(parse_type_wrapper, ast_label="type")
+
+
+term_parser = (Label('term')
+               + REParselet(term_re, ast_label='name')
+               + Optional(Precondition(REParselet('_', consume=True)) + type_parser,
+                         fully=False))
 
 
 def try_parse_term_sequence(s, lower_bound=1, upper_bound=None,

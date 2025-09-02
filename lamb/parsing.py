@@ -133,11 +133,11 @@ class ParseError(Exception):
 
 
 @contextmanager
-def try_parse():
+def try_parse(suppress=False):
     try:
         yield
     except ParseError as e:
-        if not e.met_preconditions:
+        if suppress or not e.met_preconditions:
             return None
         else:
             raise e
@@ -146,7 +146,7 @@ def try_parse():
 def consume_char(s, i, match, error=None):
     if i >= len(s):
         if error is not None:
-            raise ParseError(error, s, i)
+            raise ParseError(error, s=s, i=i)
         else:
             return None
     if s[i] == match:
@@ -155,14 +155,15 @@ def consume_char(s, i, match, error=None):
         if error is None:
             return None
         else:
-            raise ParseError(error, s, i)
+            raise ParseError(error, s=s, i=i)
+
 
 def consume_pattern(s, i, regex, error=None, return_match=False, **kwargs):
     if i > len(s):
         if error is not None:
             raise ParseError(error, s=s, i=i, **kwargs)
         else:
-            return (None, None)
+            return None
     m = re.match(regex, s[i:])
     if m:
         if return_match:
@@ -171,7 +172,7 @@ def consume_pattern(s, i, regex, error=None, return_match=False, **kwargs):
             return (m.group(), m.end() + i)
     else:
         if error is None:
-            return (None, None)
+            return None, None
         else:
             raise ParseError(error, s=s, i=i, **kwargs)
 
@@ -197,15 +198,243 @@ def find_pattern_locations(re, s, i=0, end=None):
         next = search.end() + 1
     return matches
 
-def consume_whitespace(s, i, error=None):
+
+def consume_whitespace(s, i, plus=False, error=None):
     m_group, i = consume_pattern(s, i, r'\s*', error)
     return i
+
+
+class ASTNode(object):
+    __match_args__ = ("label", "values")
+    def __init__(self, label, *values, s=None, i=None):
+        self.label = label
+        self.values = values
+        self.map = {v.label: v for v in values if isinstance(v, ASTNode) and v.label is not None}
+        self.s = s
+        self.i = i
+
+    def get(self, x, default=None, error=None):
+        if x in self.map:
+            r = self.map[x]
+            if isinstance(r, ASTNode) and len(r.values) == 1 and not isinstance(r.values[0], ASTNode):
+                return r.values[0]
+            else:
+                return r
+
+        if error:
+            raise ParseError(error, s=self.s, i=self.i)
+        else:
+            return default
+
+    def __getattr__(self, name):
+        if name in self.map:
+            return self.get(name)
+        else:
+            raise AttributeError(f"Unknown field `{name}` for ASTNode `{self.label}`")
+
+    def __contains__(self, x):
+        return x in self.map
+
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, i):
+        return self.values[i]
+
+    def __repr__(self):
+        return f"({self.label}: {', '.join(repr(v) for v in self.values)})"
+
+
+class Parselet(object):
+    def __init__(self, parser, ast_label=None, error=None):
+        self.parser = parser
+        self.ast_label = ast_label
+        self.error_msg = error
+
+    def default_error(self, s, i):
+        return f"Failed to parse {self.ast_label}"
+
+    def error(self, s, i, error=None):
+        if error:
+            e = error
+        elif self.error_msg:
+            e = self.error_msg
+        else:
+            e = self.default_error(s, i)
+        raise ParseError(e, s=s, i=i)
+
+    def parse(self, s, i=0):
+        if self.parser is None:
+            # noop parse
+            return (i,)
+        result = self.parser(s, i)
+        if result is None or result[-1] is None:
+            # interpret this as a failed parse
+            self.error(s, i)
+        new_i = result[-1]
+        result = [x for x in result[0:-1] if x is not None]
+        if not result:
+            # interpret this as a consumer-only parse
+            return (new_i,)
+        return ASTNode(self.ast_label, *result, s=s, i=i), new_i
+
+    def __call__(self, s, i):
+        return self.parse(s, i)
+
+    def __or__(self, other):
+        if isinstance(self, DisjunctiveParselet):
+            # left association
+            self.parser.append(other)
+            return self
+        else:
+            return DisjunctiveParselet(self, other)
+
+    def __add__(self, other):
+        if isinstance(self, SeqParselet):
+            # left association
+            self.parser.append(other)
+            return self
+        else:
+            return SeqParselet(self, other, ast_label=self.ast_label)
+
+
+class Label(Parselet):
+    """Dummy Parselet that serves only to provide an AST label"""
+    def __init__(self, ast_label, parser=None):
+        super().__init__(parser, ast_label=ast_label)
+
+    def parse(self, s, i=0):
+        if self.parser is not None:
+            result = self.parser.parse(s, i)
+        else:
+            result = super().parse(s, i=i)
+        if isinstance(result[0], ASTNode):
+            result[0].label = self.ast_label
+        return result
+
+
+class Optional(Parselet):
+    def __init__(self, parser, fully=True, ast_label=None, **kwargs):
+        if ast_label is None:
+            ast_label = parser.ast_label
+        self.fully = fully
+        super().__init__(parser, ast_label=ast_label, **kwargs)
+
+    def parse(self, s, i=0):
+        try:
+            return self.parser.parse(s, i)
+        except ParseError as e:
+            if not self.fully and e.met_preconditions:
+                raise e
+            else:
+                # null but succesful consumer-only parse
+                return (i,)
+
+
+class Precondition(Parselet):
+    def __init__(self, parser, ast_label=None, **kwargs):
+        if ast_label is None:
+            ast_label = parser.ast_label
+        super().__init__(parser, ast_label=ast_label, **kwargs)
+
+    def parse(self, s, i=0):
+        try:
+            return self.parser.parse(s, i)
+        except ParseError as e:
+            e.met_preconditions = False
+            raise e
+
+
+class REParselet(Parselet):
+    def __init__(self, regex, consume=None, ast_label=None, flags=0, **kwargs):
+        if consume is None:
+            consume = not bool(ast_label)
+        self.raw_regex = regex
+        self.consume = consume
+        regex = re.compile(regex, flags=flags)
+        super().__init__(regex, ast_label=ast_label, **kwargs)
+
+    def default_error(self, s, i):
+        return f"Failed to match pattern for {self.ast_label}"
+
+    def parse(self, s, i=0):
+        m = self.parser.match(s[i:])
+        if m:
+            if self.consume:
+                return (m.end() + i,)
+            # could do something with named groups
+            result = m.groups()
+            if not result:
+                result = (m.group(),)
+            return ASTNode(self.ast_label, *result, s=s, i=i), m.end() + i
+        else:
+            self.error(s, i)
+
+
+class Keyword(REParselet):
+    def __init__(self, kw, **kwargs):
+        # `kw` is intended to be alphanumeric here
+        # end token check: only match if we do not continue matching alphanum
+        # characters next (XX op version of this?)
+        regex = rf'{kw}(?![a-zA-Z0-9])'
+        super().__init__(regex, **kwargs)
+
+
+# XX linebreaks
+def Whitespace(plus=False):
+    if plus:
+        return REParselet(r'\s+', consume=True, error="failed to match whitespace")
+    else:
+        return REParselet(r'\s*', consume=True)
+
+
+class SeqParselet(Parselet):
+    def __init__(self, *parsers, **kwargs):
+        super().__init__(list(parsers), **kwargs)
+
+    def parse(self, s, i=0):
+        result = []
+        cur = i
+        for p in self.parser:
+            r = p.parse(s, cur)
+            cur = r[-1]
+            result.extend(r[0:-1])
+        if not result:
+            # interpret this as a succesful consumer-only parse
+            return (cur,)
+        elif len(result) == 1 and not self.ast_label and isinstance(result[0], ASTNode):
+            # don't add extra AST nodes for unlabeled sequences
+            return result[0], cur
+        else:
+            return ASTNode(self.ast_label, *result, s=s, i=i), cur
+
+
+class DisjunctiveParselet(Parselet):
+    def __init__(self, *parsers, **kwargs):
+        super().__init__(list(parsers), **kwargs)
+
+    def default_error(self, s, i):
+        return f"Failed to find disjunct in `{self.ast_label}`"
+
+    def parse(self, s, i=0):
+        for p in self.parser:
+            with try_parse():
+                result = p.parse(s, i)
+                new_i = result[-1]
+                result = result[:-1]
+                if not result:
+                    # interpret this as a succesful consumer-only parse
+                    return (new_i,)
+                return ASTNode(self.ast_label, *result, s=s, i=i), new_i
+        self.error(s, i)
+
 
 def vars_only(env):
     """Ensure that env is a 'pure' variable assignment -- exclude anything but
     TypedExprs."""
     env2 = {key: env[key] for key in env.keys() if is_te(env[key])}
     return env2
+
 
 # wrap other exception types in ParseError with designated parameters
 @contextmanager
@@ -320,28 +549,6 @@ def parse_te(line, env=None, use_env=False):
     return (final_r, accum)
 
 
-def try_parse_item_name(s, env=None, ambiguity=False):
-    match, i = consume_pattern(s, 0,
-                r'^\s*\|\|([a-zA-Z _]+[a-zA-Z0-9 _]*)(\[-?([0-9]+|\*)\])?\|\|',
-                return_match=True)
-    if not match:
-        return (None, None, None)
-    lex_name = match.group(1).replace(" ", "_")
-    if lex_name != match.group(1):
-        logger().info("Exporting item ||%s|| to python variable `%s`."
-                                % (match.group(1), lex_name))
-    index = None
-    index_str = match.group(2)
-    if not index_str or len(index_str) == 0 or index_str == "[*]":
-        if (lex_name in env.keys() and (ambiguity or index_str == "[*]")):
-            index = True
-        else:
-            index = None # override existing item or add a new one
-    else:
-        index = int(index_str[1:-1])
-    return (lex_name, index, i)
-
-
 # used both in %(%)lamb and in %te
 def under_assignment(right_side, env):
     assigned = right_side.under_assignment(env, compact=True)
@@ -383,146 +590,168 @@ def apply_rs_transform(right_side, transform, transforms=None):
     return right_side
 
 
-def parse_assign_op(s, i, met_preconditions=False):
-    # parse the `=` in the middle of an assignment line
-    m, i = consume_pattern(s, i, r'^\s*=(?:<([a-zA-Z0-9_]*)>)?\s*',
-                    return_match=True,
-                    met_preconditions=met_preconditions,
-                    error="Missing `=` in assignment")
-    if m.group(1):
-        # transform name
-        return m.group(1), i
-    else:
-        return None, i
+# overmatches relative to valid term names
+term_re = r'_?[a-zA-Z0-9]+'
+op_re = r'[!@%^&*~<>|\\/\-=+]+'
+term_or_op_re = fr'({term_re}|{op_re})'
 
 
-def parse_op_assign(s, env, var_env, transforms=None):
-    from lamb.meta.core import op_from_te, registry
-    from lamb.meta.parser import valid_op_symbol
-    _, i = consume_pattern(s, 0, 'operator ',
-                    error="Missing `operator`", met_preconditions=False)
-    # this massively over-accepts compared to what is supported, but it makes
-    # error messaging easier later. Similarly for arity.
-    op_i = i
-    m, i = consume_pattern(s, i, r'^([a-zA-Z0-9_!@%^&*~<>:|\\/?\-=+]+)(?:\((\d+)\))?',
-                    return_match=True,
-                    error=f"Invalid operator name in `{s}`",
-                    met_preconditions=False)
-    op_symbol = m.group(1)
-    # note: the above pattern will greedily match =, so a space is needed for
-    # some operator symbols
-    transform, i = parse_assign_op(s, i)
+def build_assign_parser():
+    eq_parser = (Whitespace()
+                 + REParselet(r'=(?:<([a-zA-Z0-9_]*)>)?',
+                      ast_label='transform',
+                      error="Missing `=` in assignment")
+                 + Whitespace())
 
-    if not valid_op_symbol(op_symbol):
-        raise ParseError(f"Invalid operator symbol `{op_symbol}`", s=s, i=op_i)
+    op_assign_parser = (Label('op_assign')
+         + Precondition(Keyword('operator', error="Missing `operator` prefix"))
+         + Whitespace()
+         + REParselet(term_or_op_re, ast_label='operator')
+         + Whitespace()
+         + REParselet(r'(?:\((\d+)\))?', ast_label='arity')
+         + eq_parser
+         + REParselet(r'.*', ast_label='remainder'))
 
-    var_env = vars_only(env)
-    right_side = parse_right(op_symbol, s[i:], var_env, constants=True)
-    if right_side is None:
-        return ({}, env)
-    right_side = apply_rs_transform(right_side, transform, transforms=transforms)
-    if m.group(2):
-        op_arity = int(m.group(2)) # should be safe given a succesful match
-    else:
-        op_arity = None # autodetect
-    op_cls = op_from_te(op_symbol, right_side, arity=op_arity)
-    registry.add_operator(op_cls)
-    op = registry.get_operators(cls=op_cls)[0]
-    try:
-        # operators aren't stored in the env, so attempt to display them
-        # now (TODO: sequencing will be wrong)
-        from IPython.display import display
-        display(op)
-    except ImportError:
-        pass
+    lex_assign_parser = (
+        Label("lex_assign")
+        + Precondition(REParselet(r'\|\|', error="Missing interpretation brackets"))
+        + REParselet(r'[a-zA-Z _]+[a-zA-Z0-9 _]*', ast_label='name')
+        + REParselet(r'(?:\[(-?[0-9]+|\*)\])?\|\|', ast_label='index', error='error in lexical entry name')
+        + eq_parser
+        + REParselet(r'.*', ast_label='remainder'))
 
-    # XX maybe store new operators as global state somehow, for easier access?
-    return ({}, env)
+    from lamb.meta.parser import term_parser
+    var_assign_parser = (
+        Label("var_assign")
+        + term_parser
+        + eq_parser
+        + REParselet(r'.*', ast_label='remainder'))
+
+    assign_parser = Label('assignment', op_assign_parser
+                                        | lex_assign_parser
+                                        | var_assign_parser)
+    return assign_parser
 
 
-def parse_var_assign(s, env, var_env, transforms=None):
-    # this overaccepts here
-    left_s, i = consume_pattern(s, 0, r'^\s*([a-zA-Z0-9_]+)',
-        error="Invalid variable name in assignment",
-        met_preconditions=False)
-    transform, i = parse_assign_op(s, i)
-    right_side = parse_right(left_s, s[i:], var_env, constants=True)
-    if right_side is None:
-        return ({}, env)
-
-    from lamb.meta import TypedExpr
-    with error_manager():
-        with parse_error_wrap(f"Assignment to `{left_s}` failed"):
-            # don't pass assignment here, to allow for redefinition.  TODO: revisit
-            term = TypedExpr.term_factory(left_s, typ=right_side.type)
-            if term.type != right_side.type:
-                # the left-side term parsing resulted in a stronger principal
-                # type
-                right_side = TypedExpr.ensure_typed_expr(right_side, typ=term.type)
-
-            right_side = apply_rs_transform(right_side, transform, transforms=transforms)
-
-            # NOTE side-effect here
-            env[term.op] = right_side
-            return ({term.op : right_side}, env)
-
-    # shouldn't be reachable
-    return ({}, env)
+assign_parser = None
 
 
-def parse_lex_assign(s, env, var_env, ambiguity=False, transforms=None):
-    from lamb.lang import get_system, Item, Items
-    lex_name, item_index, i = try_parse_item_name(s, env=env,
-                                                        ambiguity=ambiguity)
-    if lex_name is None:
-        # XX convert the item name parser to raise directly
-        raise ParseError(f"Invalid lexical entry name in `{s}`", met_preconditions=False)
-
-    transform, i = parse_assign_op(s, i)
-
-    a_ctl = get_system().assign_controller
-    default = a_ctl.default()
-    db_env = default.new_child(var_env)
-    right_side = parse_right(lex_name, s[i:], db_env)
-    if right_side is None:
-        return ({}, env)
-    right_side = apply_rs_transform(right_side, transform, transforms=transforms)
-
-    item = Item(lex_name, right_side)
-    if item_index is None:
-        env[lex_name] = item
-    else:
-        # item_index is only set to a value if the item already exists in
-        # env.
-        if isinstance(env[lex_name], Item):
-            tmp_list = list([env[lex_name]])
-            if item_index is True:
-                tmp_list.append(item)
+def insert_item(item, index, env):
+    from lamb.lang import Items
+    lex_name = item.name
+    if index is not None:
+        if lex_name in env:
+            if isinstance(env[lex_name], Items):
+                l = env[lex_name]
             else:
-                tmp_list[item_index] = item # may throw an exception
-            item = Items(tmp_list)
-            env[lex_name] = item
+                l = Items([env[lex_name]])
         else:
-            if item_index is True:
-                env[lex_name].add_result(item)
-            else:
-                env[lex_name][item_index] = item
-            item = env[lex_name]
-    return ({lex_name: item}, env)
+            l = Items([])
+        if index is True:
+            l.add_result(item)
+        else:
+            l[index] = item # may throw an exception
+        if len(l) > 1:
+            # only keep the Items object if it's actually non-trivial
+            item = l
+    env[lex_name] = item
 
 
-def parse_assignment(s, env=None, transforms=None, ambiguity=False):
-    # XX this is a standard parsing combinator approach that could be
-    # generalized
+def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
+    global assign_parser
+    if assign_parser is None:
+        # avoid circular import issues
+        assign_parser = build_assign_parser()
+
+    if env is None:
+        env = {}
     var_env = vars_only(env)
-    with try_parse():
-        return parse_op_assign(s, env, var_env, transforms=transforms)
-    with try_parse():
-        return parse_var_assign(s, env, var_env, transforms=transforms)
-    with try_parse():
-        return parse_lex_assign(s, env, var_env, transforms=transforms, ambiguity=ambiguity)
+    with error_manager():
+        ast, _ = assign_parser.parse(s, i=i)
+        # collect left_s name first for error messaging
+        match ast:
+            case ASTNode("assignment", [ASTNode("var_assign")]):
+                left_desc = ast[0].term.name
+            case ASTNode("assignment", [ASTNode("lex_assign")]):
+                from lamb.lang import get_system
+                left_desc = f"||{ast[0].name}||"
+                a_ctl = get_system().assign_controller
+                default = a_ctl.default()
+                var_env = default.new_child(var_env)
+            case ASTNode("assignment", [ASTNode("op_assign")]):
+                left_desc = f"operator {ast[0].operator}"
+            case ASTNode("assignment"):
+                raise ParseError(f"Unknown assignment type `{ast.values}`", s=s, i=i)
+            case _:
+                raise ParseError(f"Unknown statement type `{ast.label}`", s=s, i=i)
 
-    raise ParseError("Parsing of assignment failed", s)
+        with parse_error_wrap(f"Assignment to `{left_desc}` failed"):
+            match ast[0]:
+                case ASTNode(transform=t, remainder=x):
+                    right_side = parse_right(left_desc, x, var_env, constants=True)
+                    if right_side is None:
+                        return ({}, env)
+                    right_side = apply_rs_transform(right_side, t, transforms=transforms)
+                case _:
+                    # should be unreachable, `remainder` matches ''.
+                    return ({}, env)
+
+            match ast[0]:
+                case ASTNode("var_assign", term=term_ast):
+                    from lamb.meta import TypedExpr
+                    if (left_type := term_ast.get("type", default=None)) is None:
+                        left_type = right_side.type
+                    if left_type != right_side.type:
+                        right_side = lTypedExpr.ensure_typed_expr(right_side, typ=left_type)
+                    term = TypedExpr.term_factory(term_ast.name,
+                                                            typ=right_side.type)
+                    # NOTE side-effect here
+                    env[term.op] = right_side
+                    return ({term.op : right_side}, env)
+
+                case ASTNode("lex_assign", name=name, index=index_str) as n:
+                    from lamb.lang import Item
+                    lex_name = name.replace(" ", "_")
+                    if lex_name != name:
+                        logger().info(f"Exporting item `||{name}||` to python variable `{lex_name}`.")
+                    item = Item(lex_name, right_side)
+                    if not index_str or index_str == "*":
+                        if (lex_name in env and (ambiguity or index_str == "*")):
+                            index = True
+                        else:
+                            index = None # replace existing item or add a new one
+                    else:
+                        index = int(index_str)
+                    try:
+                        insert_item(item, index, env)
+                    except IndexError:
+                        index_ast = n.map['index']
+                        raise ParseError(f"Invalid index `{index}` in assignment to lexical entry `{left_desc}`", s=index_ast.s, i=index_ast.i)
+                    return {lex_name: env[lex_name]}, env
+                case ASTNode("op_assign", operator=op_symbol, arity=op_arity) as n:
+                    from lamb.meta.core import op_from_te, registry
+                    from lamb.meta.parser import valid_op_symbol
+                    if not valid_op_symbol(op_symbol):
+                        err_ast = n.map['operator']
+                        raise ParseError(f"Invalid operator symbol `{op_symbol}`", s=err_ast.s, i=err_ast.i)
+                    if op_arity:
+                        op_arity = int(op_arity)
+
+                    left_desc = f"operator {ast[0].operator}"
+                    op_cls = op_from_te(op_symbol, right_side, arity=op_arity)
+                    registry.add_operator(op_cls)
+                    op = registry.get_operators(cls=op_cls)[0]
+                    try:
+                        # operators aren't stored in the env, so attempt to display them
+                        # now (TODO: sequencing will be wrong)
+                        from IPython.display import display
+                        display(op)
+                    except ImportError:
+                        pass
+                
+                    # XX maybe store new operators as global state somehow, for easier access?
+                    return ({}, env)
+    return ({}, env)
 
 
 def remove_comments(s):

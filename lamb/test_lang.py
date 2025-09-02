@@ -1,7 +1,8 @@
-import unittest
+import unittest, logging
 
 import lamb
 from . import lang, parsing, meta, types
+from lamb.meta import logger
 
 parsing.errors_raise = True
 
@@ -11,6 +12,11 @@ basic_testcases = [
     "||test2|| = L f_<e,t> : L x_e : f(x)",
     "||test3|| = f_<X,Y>",
     "test4 = g_<e,t>",
+    "||is amb|| = L f_<e,t> : f",
+    "||is amb[*]|| = L x_e : L y_e : x <=> y",
+    "||is amb[*]|| = L x_n : L y_n : x <=> y",
+    "||is amb[0]|| = L f_<e,t> : L x_e : f(x)",
+    "||Kyle|| = K_e"
     ]
 
 class LangParsingTest(unittest.TestCase):
@@ -24,8 +30,10 @@ class LangParsingTest(unittest.TestCase):
     def test_parsing(self):
         # really basic stuff:
         state = dict()
+        logger.setLevel(logging.WARNING)
         parsing.parse("\n".join(basic_testcases), state=state)
-        self.assertEqual(len(state), 4)
+        logger.setLevel(logging.INFO)
+        self.assertEqual(len(state), 6)
         self.assertEqual(state["test1"].content, meta.te("L x_e : P_<e,t>(x)"))
         self.assertEqual(state["test2"].content, meta.te("L f_<e,t> : L x_e : f(x)"))
         self.assertEqual(state["test3"].content, meta.te("f_<X,Y>"))        
@@ -54,7 +62,9 @@ class LangTest(unittest.TestCase):
     def setUp(self):
         meta.core.set_strict_type_parsing()
         self.state = dict()
+        logger.setLevel(logging.WARNING)
         parsing.parse("\n".join(basic_testcases), state=self.state)
+        logger.setLevel(logging.INFO)
 
     def tearDown(self):
         # other tests may want this, but let them decide
@@ -93,6 +103,15 @@ class LangTest(unittest.TestCase):
         r3 = self.state['test2'] * self.state['test2']
         # should fail to compose:
         self.assertEqual(len(r3), 0)
+
+    def test_amb(self):
+        r1 = self.state['test1'] * self.state['is_amb']
+        self.assertEqual(len(r1), 1)
+        self.assertEqual(r1[0].content, self.state['test1'].content) # identify function
+
+        r2 = self.state['Kyle'] * (self.state['is_amb'] * self.state['Kyle'])
+        self.assertEqual(len(r2), 1)
+        self.assertEqual(r2[0].content, True) # identify function
 
     def test_pm(self):
         r1 = self.state['test1'] * self.state['test1']
