@@ -208,8 +208,27 @@ class ASTNode(object):
     def __init__(self, label, *values, s=None, i=None):
         self.label = label
         self.values = values
+        self.map = {v.label: v for v in values if isinstance(v, ASTNode) and v.label is not None}
         self.s = s
         self.i = i
+
+    def get(self, x, error=None):
+        if x in self.map:
+            return self.map[x]
+
+        if error:
+            raise ParseError(error, s=self.s, i=self.i)
+        else:
+            return None
+
+    def __contains__(self, x):
+        return x in self.map
+
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, i):
+        return self.values[i]
 
     def __repr__(self):
         return f"({self.label}: {', '.join(repr(v) for v in self.values)})"
@@ -278,16 +297,17 @@ class Label(Parselet):
 
 
 class Optional(Parselet):
-    def __init__(self, parser, ast_label=None, **kwargs):
+    def __init__(self, parser, fully=True, ast_label=None, **kwargs):
         if ast_label is None:
             ast_label = parser.ast_label
+        self.fully = fully
         super().__init__(parser, ast_label=ast_label, **kwargs)
 
     def parse(self, s, i):
         try:
             return self.parser.parse(s, i)
         except ParseError as e:
-            if e.met_preconditions:
+            if not self.fully and e.met_preconditions:
                 raise e
             else:
                 # null but succesful consumer-only parse
@@ -354,7 +374,11 @@ class SeqParselet(Parselet):
         if not result:
             # interpret this as a succesful consumer-only parse
             return (cur,)
-        return ASTNode(self.ast_label, *result, s=s, i=i), cur
+        elif len(result) == 1 and not self.ast_label and isinstance(result[0], ASTNode):
+            # don't add extra AST nodes for unlabeled sequences
+            return result[0], cur
+        else:
+            return ASTNode(self.ast_label, *result, s=s, i=i), cur
 
 
 class DisjunctiveParselet(Parselet):
@@ -374,8 +398,6 @@ class DisjunctiveParselet(Parselet):
                     return (cur,)
                 return ASTNode(self.ast_label, *result, s=s, i=i), cur
         self.error(s, i)
-
-
 
 
 def vars_only(env):
