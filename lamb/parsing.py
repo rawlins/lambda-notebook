@@ -252,7 +252,7 @@ class Parselet(object):
             e = self.default_error(s, i)
         raise ParseError(e, s=s, i=i)
 
-    def parse(self, s, i):
+    def parse(self, s, i=0):
         if self.parser is None:
             # noop parse
             return (i,)
@@ -276,7 +276,7 @@ class Parselet(object):
             self.parser.append(other)
             return self
         else:
-            return DisjunctiveParselet(self, other, ast_label=self.ast_label)
+            return DisjunctiveParselet(self, other)
 
     def __add__(self, other):
         if isinstance(self, SeqParselet):
@@ -286,15 +286,23 @@ class Parselet(object):
         else:
             return SeqParselet(self, other, ast_label=self.ast_label)
 
-    def __matmul__(self, other):
-        return self + Whitespace() + other
+    # def __matmul__(self, other):
+    #     return self + Whitespace() + other
 
 
 class Label(Parselet):
     """Dummy Parselet that serves only to provide an AST label"""
-    def __init__(self, ast_label):
-        super().__init__(None, ast_label=ast_label)
+    def __init__(self, ast_label, parser=None):
+        super().__init__(parser, ast_label=ast_label)
 
+    def parse(self, s, i=0):
+        if self.parser is not None:
+            result = self.parser.parse(s, i)
+        else:
+            result = super().parse(s, i=i)
+        if isinstance(result[0], ASTNode):
+            result[0].label = self.ast_label
+        return result
 
 class Optional(Parselet):
     def __init__(self, parser, fully=True, ast_label=None, **kwargs):
@@ -303,7 +311,7 @@ class Optional(Parselet):
         self.fully = fully
         super().__init__(parser, ast_label=ast_label, **kwargs)
 
-    def parse(self, s, i):
+    def parse(self, s, i=0):
         try:
             return self.parser.parse(s, i)
         except ParseError as e:
@@ -320,7 +328,7 @@ class Precondition(Parselet):
             ast_label = parser.ast_label
         super().__init__(parser, ast_label=ast_label, **kwargs)
 
-    def parse(self, s, i):
+    def parse(self, s, i=0):
         try:
             return self.parser.parse(s, i)
         except ParseError as e:
@@ -329,16 +337,18 @@ class Precondition(Parselet):
 
 
 class REParselet(Parselet):
-    def __init__(self, regex, consume=False, flags=0, **kwargs):
+    def __init__(self, regex, consume=None, ast_label=None, flags=0, **kwargs):
+        if consume is None:
+            consume = not bool(ast_label)
         self.raw_regex = regex
         self.consume = consume
         regex = re.compile(regex, flags=flags)
-        super().__init__(regex, **kwargs)
+        super().__init__(regex, ast_label=ast_label, **kwargs)
 
     def default_error(self, s, i):
         return f"Failed to match pattern for {self.ast_label}"
 
-    def parse(self, s, i):
+    def parse(self, s, i=0):
         m = self.parser.match(s[i:])
         if m:
             if self.consume:
@@ -350,6 +360,15 @@ class REParselet(Parselet):
             return ASTNode(self.ast_label, *result, s=s, i=i), m.end() + i
         else:
             self.error(s, i)
+
+
+class Keyword(REParselet):
+    def __init__(self, kw, **kwargs):
+        # `kw` is intended to be alphanumeric here
+        # end token check: only match if we do not continue matching alphanum
+        # characters next (XX op version of this?)
+        regex = rf'{kw}(?![a-zA-Z0-9])'
+        super().__init__(regex, **kwargs)
 
 
 # XX linebreaks
@@ -364,7 +383,7 @@ class SeqParselet(Parselet):
     def __init__(self, *parsers, **kwargs):
         super().__init__(list(parsers), **kwargs)
 
-    def parse(self, s, i):
+    def parse(self, s, i=0):
         result = []
         cur = i
         for p in self.parser:
@@ -388,15 +407,15 @@ class DisjunctiveParselet(Parselet):
     def default_error(self, s, i):
         return f"Failed to find disjunct in `{self.ast_label}`"
 
-    def parse(self, s, i):
+    def parse(self, s, i=0):
         for p in self.parser:
             with try_parse():
                 result = p.parse(s, i)
                 new_i = result[-1]
                 if not result:
                     # interpret this as a succesful consumer-only parse
-                    return (cur,)
-                return ASTNode(self.ast_label, *result, s=s, i=i), cur
+                    return (new_i,)
+                return ASTNode(self.ast_label, *result, s=s, i=i), new_i
         self.error(s, i)
 
 
