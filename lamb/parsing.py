@@ -205,6 +205,7 @@ def consume_whitespace(s, i, plus=False, error=None):
 
 
 class ASTNode(object):
+    __match_args__ = ("label", "values")
     def __init__(self, label, *values, s=None, i=None):
         self.label = label
         self.values = values
@@ -212,14 +213,24 @@ class ASTNode(object):
         self.s = s
         self.i = i
 
-    def get(self, x, error=None):
+    def get(self, x, default=None, error=None):
         if x in self.map:
             return self.map[x]
 
         if error:
             raise ParseError(error, s=self.s, i=self.i)
         else:
-            return None
+            return default
+
+    def __getattr__(self, name):
+        if name in self.map:
+            r = self.map[name]
+            if isinstance(r, ASTNode) and len(r.values) == 1 and not isinstance(r[0], ASTNode):
+                return r.values[0]
+            else:
+                return r
+        else:
+            raise AttributeError(f"Unknown field `{name}` for ASTNode `{self.label}`")
 
     def __contains__(self, x):
         return x in self.map
@@ -412,6 +423,7 @@ class DisjunctiveParselet(Parselet):
             with try_parse():
                 result = p.parse(s, i)
                 new_i = result[-1]
+                result = result[:-1]
                 if not result:
                     # interpret this as a succesful consumer-only parse
                     return (new_i,)
