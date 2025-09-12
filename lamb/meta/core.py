@@ -188,14 +188,15 @@ def tefnorm(e):
         return e
 
 
-def te(s, *, let=True, assignment=None, _globals=None):
+def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True):
     """Public interface for constructing `TypedExpr` objects; `s` may be a
     string, in which case it will be parsed."""
 
     # XX incorporate lexicon namespace into this function somehow?
     if _globals is None:
         _globals = global_namespace()
-    result = tenorm(TypedExpr.factory(s, assignment=assignment, _globals=_globals))
+    result = tenorm(TypedExpr.factory(s, assignment=assignment,
+                                        _globals=_globals, fullcopy=fullcopy))
     if let and isinstance(result, TypedExpr):
         result = let_wrapper(result)
     return result
@@ -2096,7 +2097,7 @@ class TypedExpr(object):
         return cls._construct_appl(op, *remainder, assignment=assignment)
 
     @classmethod
-    def factory(cls, *args, assignment=None, _globals=None):
+    def factory(cls, *args, assignment=None, _globals=None, fullcopy=False):
         """Factory method for TypedExprs.  Will return a TypedExpr or subclass.
 
         Special cases:
@@ -2133,7 +2134,10 @@ class TypedExpr(object):
             if isinstance(args[0], TypedExpr):
                 # handing the factory function a single TypedExpr always returns
                 # a copy of the object.
-                return args[0].copy()
+                result = args[0].copy()
+                if fullcopy:
+                    result.derivation = args[0].derivation
+                return result
 
             # args[0] is either an unsaturated function, a term, or a string
             # that needs parsed.
