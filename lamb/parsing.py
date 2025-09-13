@@ -702,7 +702,7 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
                     if (left_type := term_ast.get("type", default=None)) is None:
                         left_type = right_side.type
                     if left_type != right_side.type:
-                        right_side = lTypedExpr.ensure_typed_expr(right_side, typ=left_type)
+                        right_side = TypedExpr.ensure_typed_expr(right_side, typ=left_type)
                     term = TypedExpr.term_factory(term_ast.name,
                                                             typ=right_side.type)
                     # NOTE side-effect here
