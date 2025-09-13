@@ -16,7 +16,8 @@ basic_testcases = [
     "||is amb[*]|| = L x_e : L y_e : x <=> y",
     "||is amb[*]|| = L x_n : L y_n : x <=> y",
     "||is amb[0]|| = L f_<e,t> : L x_e : f(x)",
-    "||Kyle|| = K_e"
+    "||Kyle|| = K_e",
+    "test5_<Y,X> = L x_Z: x"
     ]
 
 class LangParsingTest(unittest.TestCase):
@@ -33,11 +34,12 @@ class LangParsingTest(unittest.TestCase):
         logger.setLevel(logging.WARNING)
         parsing.parse("\n".join(basic_testcases), state=state)
         logger.setLevel(logging.INFO)
-        self.assertEqual(len(state), 6)
+        self.assertEqual(len(state), 7)
         self.assertEqual(state["test1"].content, meta.te("L x_e : P_<e,t>(x)"))
         self.assertEqual(state["test2"].content, meta.te("L f_<e,t> : L x_e : f(x)"))
         self.assertEqual(state["test3"].content, meta.te("f_<X,Y>"))        
         self.assertEqual(state["test4"], meta.te("g_<e,t>"))
+        self.assertEqual(state["test5"], meta.te("λ x_X: x_X")) # not the point, but this is sensitive to polymorphic resolution order
 
 def has_ipython_repr(o):
     # test for the existence of one of the relevant IPython reprs. This doesn't

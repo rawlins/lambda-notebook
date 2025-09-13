@@ -3,6 +3,7 @@ import sys, re, traceback, collections, enum
 from lamb.parsing import find_pattern_locations, consume_pattern, consume_whitespace
 from lamb.parsing import consume_char, ParseError, struc_strip, flatten_paren_struc
 from lamb.parsing import Parselet, REParselet, Label, Optional, Precondition, term_re
+from lamb.parsing import ast_transforms, ASTNode
 
 
 def parsing_ts():
@@ -36,38 +37,6 @@ def find_term_locations(s, i=0):
     return result
 
 
-def parse_term(s, i=0, return_obj=True, assignment=None):
-    """Parse position `i` in `s` as a term expression.  A term expression
-    is some alphanumeric sequence followed optionally by an underscore and
-    a type.  If a type is not specified locally, but is present in 
-    `assignment`, use that.  If a type is specified and is present in
-    `assignment`, check type compatibility immediately."""
-
-    term_name, next = consume_pattern(s, i, full_term_re, return_match=True)
-
-    if not term_name:
-        if return_obj:
-            return (None, i)
-        else:
-            return (None, None, i)
-
-    if term_name.group(2):
-        # try to parse a type
-        # if there is a _, will force an attempt
-        typ, end = parsing_ts().type_parser_recursive(s, next)
-    else:
-        typ = None
-        end = next
-
-    if return_obj:
-        from lamb.meta import TypedExpr
-        term = TypedExpr.term_factory(term_name.group(1), typ=typ,
-                                assignment=assignment, preparsed=True)
-        return (term, end)
-    else:
-        return (term_name.group(1), typ, end)
-
-
 def parse_type_wrapper(s, i=0):
     # wrapper to avoid circular import issues
     return parsing_ts().type_parser_recursive(s, i=i)
@@ -80,6 +49,59 @@ term_parser = (Label('term')
                + REParselet(term_re, ast_label='name')
                + Optional(Precondition(REParselet('_', consume=True)) + type_parser,
                          fully=False))
+
+
+class TermNode(ASTNode):
+    def __init__(self, name, type=None, s=None, i=None):
+        super().__init__("term", s=s, i=i)
+        self.map['name'] = name
+        self.map['type'] = type
+
+    def instantiate(self, typ=None, assignment=None):
+        # note `typ` used here for consistency with metalanguage code
+        from lamb.meta import TypedExpr
+        if typ is None:
+            typ = self.type
+        return TypedExpr.term_factory(self.name, typ=typ,
+                                    preparsed=True, assignment=assignment)
+
+    @classmethod
+    def from_ast(cls, a):
+        match a:
+            case ASTNode("term", name=name) as n:
+                return TermNode(name, type=n.get("type", default=None))
+            case _:
+                return None
+
+
+ast_transforms['term'] = TermNode
+
+
+def parse_term(s, i=0, return_obj=True, assignment=None):
+    """Parse position `i` in `s` as a term expression.  A term expression
+    is some alphanumeric sequence followed optionally by an underscore and
+    a type.  If a type is not specified locally, but is present in 
+    `assignment`, use that.  If a type is specified and is present in
+    `assignment`, check type compatibility immediately."""
+    try:
+        ast, new_i = term_parser.parse(s, i=i)
+        match ast:
+            case TermNode(name=name, type=type):
+                if return_obj:
+                    return ast.instantiate(assignment=assignment), new_i
+                else:
+                    return name, type, new_i
+            case _:
+                pass
+    except ParseError:
+        pass
+
+    # failure case:
+    if return_obj:
+        return (None, i)
+    else:
+        return (None, None, i)
+
 
 
 def try_parse_term_sequence(s, lower_bound=1, upper_bound=None,

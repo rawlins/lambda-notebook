@@ -242,7 +242,26 @@ class ASTNode(object):
         return self.values[i]
 
     def __repr__(self):
-        return f"({self.label}: {', '.join(repr(v) for v in self.values)})"
+        if not self.values and self.map:
+            # if `values` is empty, try printing the map, to handle subclasses
+            # that don't use `values`
+            return f"({self.label}: {repr(self.map)})"
+        else:
+            return f"({self.label}: {', '.join(repr(v) for v in self.values)})"
+
+
+ast_transforms = {}
+
+
+def transform_ast(a):
+    if a.label in ast_transforms:
+        return ast_transforms[a.label].from_ast(a)
+    else:
+        return a
+
+
+def ast_node(*args, **kwargs):
+    return transform_ast(ASTNode(*args, **kwargs))
 
 
 class Parselet(object):
@@ -276,7 +295,7 @@ class Parselet(object):
         if not result:
             # interpret this as a consumer-only parse
             return (new_i,)
-        return ASTNode(self.ast_label, *result, s=s, i=i), new_i
+        return ast_node(self.ast_label, *result, s=s, i=i), new_i
 
     def __call__(self, s, i):
         return self.parse(s, i)
@@ -366,7 +385,7 @@ class REParselet(Parselet):
             result = m.groups()
             if not result:
                 result = (m.group(),)
-            return ASTNode(self.ast_label, *result, s=s, i=i), m.end() + i
+            return ast_node(self.ast_label, *result, s=s, i=i), m.end() + i
         else:
             self.error(s, i)
 
@@ -406,7 +425,7 @@ class SeqParselet(Parselet):
             # don't add extra AST nodes for unlabeled sequences
             return result[0], cur
         else:
-            return ASTNode(self.ast_label, *result, s=s, i=i), cur
+            return ast_node(self.ast_label, *result, s=s, i=i), cur
 
 
 class DisjunctiveParselet(Parselet):
@@ -425,7 +444,7 @@ class DisjunctiveParselet(Parselet):
                 if not result:
                     # interpret this as a succesful consumer-only parse
                     return (new_i,)
-                return ASTNode(self.ast_label, *result, s=s, i=i), new_i
+                return ast_node(self.ast_label, *result, s=s, i=i), new_i
         self.error(s, i)
 
 
@@ -663,6 +682,8 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
         # avoid circular import issues
         assign_parser = build_assign_parser()
 
+    from lamb.meta.parser import TermNode, valid_op_symbol
+
     if env is None:
         env = {}
     var_env = vars_only(env)
@@ -697,14 +718,14 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
                     return ({}, env)
 
             match ast[0]:
-                case ASTNode("var_assign", term=term_ast):
-                    from lamb.meta import TypedExpr
-                    if (left_type := term_ast.get("type", default=None)) is None:
+                case ASTNode("var_assign", term=TermNode(type=left_type) as t):
+                    # if left_type is specified it, unify with right_side's
+                    # type, and use that for the resulting term
+                    if left_type is None:
                         left_type = right_side.type
                     if left_type != right_side.type:
-                        right_side = TypedExpr.ensure_typed_expr(right_side, typ=left_type)
-                    term = TypedExpr.term_factory(term_ast.name,
-                                                            typ=right_side.type)
+                        right_side = right_side.ensure_typed_expr(right_side, typ=left_type)
+                    term = t.instantiate(typ=right_side.type)
                     # NOTE side-effect here
                     env[term.op] = right_side
                     return ({term.op : right_side}, env)
@@ -730,7 +751,6 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
                     return {lex_name: env[lex_name]}, env
                 case ASTNode("op_assign", operator=op_symbol, arity=op_arity) as n:
                     from lamb.meta.core import op_from_te, registry
-                    from lamb.meta.parser import valid_op_symbol
                     if not valid_op_symbol(op_symbol):
                         err_ast = n.map['operator']
                         raise ParseError(f"Invalid operator symbol `{op_symbol}`", s=err_ast.s, i=err_ast.i)
