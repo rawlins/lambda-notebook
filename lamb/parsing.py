@@ -253,7 +253,12 @@ class ASTNode(object):
 ast_transforms = {}
 
 
-def transform_ast(a):
+def transform_ast(a, label=None):
+    # side effects if `label` is set!
+    if label is False:
+        a.label = None
+    elif label is not None:
+        a.label = label
     if a.label in ast_transforms:
         return ast_transforms[a.label].from_ast(a)
     else:
@@ -265,10 +270,14 @@ def ast_node(*args, **kwargs):
 
 
 class Parselet(object):
-    def __init__(self, parser, ast_label=None, error=None):
+    def __init__(self, parser, ast_label=None, error=None, skip_trivial=False):
         self.parser = parser
         self.ast_label = ast_label
         self.error_msg = error
+        self.skip_trivial = skip_trivial
+
+    def copy_args(self):
+        return dict(ast_label=self.ast_label, error=self.error_msg, skip_trivial=self.skip_trivial)
 
     def default_error(self, s, i):
         return f"Failed to parse {self.ast_label}"
@@ -295,41 +304,79 @@ class Parselet(object):
         if not result:
             # interpret this as a consumer-only parse
             return (new_i,)
+        if self.skip_trivial and len(result) == 1 and isinstance(result[0], ASTNode):
+            return result[0], new_i
         return ast_node(self.ast_label, *result, s=s, i=i), new_i
 
-    def __call__(self, s, i):
-        return self.parse(s, i)
+    def __call__(self, s, i=0):
+        return self.parse(s, i=i)
 
     def __or__(self, other):
-        if isinstance(self, DisjunctiveParselet):
-            # left association
-            self.parser.append(other)
-            return self
-        else:
-            return DisjunctiveParselet(self, other)
+        return DisjunctiveParselet(self, other)
 
     def __add__(self, other):
-        if isinstance(self, SeqParselet):
-            # left association
-            self.parser.append(other)
-            return self
-        else:
-            return SeqParselet(self, other, ast_label=self.ast_label)
+        return SeqParselet(self, other)
 
 
 class Label(Parselet):
     """Dummy Parselet that serves only to provide an AST label"""
-    def __init__(self, ast_label, parser=None):
+    def __init__(self, ast_label, parser=None, force_node=False):
+        self.force_node = force_node
         super().__init__(parser, ast_label=ast_label)
 
     def parse(self, s, i=0):
         if self.parser is not None:
-            result = self.parser.parse(s, i)
+            r = self.parser.parse(s, i)
         else:
-            result = super().parse(s, i=i)
-        if isinstance(result[0], ASTNode):
-            result[0].label = self.ast_label
-        return result
+            r = super().parse(s, i=i)
+
+        new_i = r[-1]
+        r = r[:-1]
+
+        force_node = self.force_node or (len(r) == 1 and isinstance(r[0], ASTNode) and r[0].label is not None)
+        if force_node:
+            # this will force an AST node even for a consumer-only parse
+            return ast_node(self.ast_label, *r, s=s, i=i), new_i
+        else:
+            # otherwise, relabel an existing node with a None label
+            assert(len(r) <= 1)
+            if len(r) == 1:
+                # cannot relabel with None! Use `False` to get this effect...
+                return transform_ast(r[0], label=self.ast_label), new_i
+            else:
+                # consumer-only parse
+                return (new_i,)
+
+    def __or__(self, other):
+        # convenience, but using this is probably not best practice as it
+        # is semantically confusing.
+        if self.parser is not None:
+            return Label(self.ast_label, parser=self.parser | other, force_node=self.force_node)
+        else:
+            return Label(self.ast_label, parser=other, force_node=self.force_node)
+
+    def __add__(self, other):
+        if self.parser is not None:
+            return Label(self.ast_label, parser=self.parser + other, force_node=self.force_node)
+        else:
+            return Label(self.ast_label, parser=other, force_node=self.force_node)
+
+
+class Collapse(Parselet):
+    """Dummy Parselet that prevents extraneous trivial ast nodes"""
+    def __init__(self, parser=None, none_only=True):
+        self.none_only = none_only
+        super().__init__(parser)
+
+    def parse(self, s, i=0):
+        if self.parser is not None:
+            r = self.parser.parse(s, i)
+        else:
+            r = super().parse(s, i=i)
+        if len(r) == 2 and isinstance(r[0], ASTNode) and len(r[0]) == 1:
+            if not self.none_only or r[0].label is None:
+                return r[0][0], r[-1]
+        return r
 
 
 class Optional(Parselet):
@@ -366,15 +413,16 @@ class Precondition(Parselet):
 
 class REParselet(Parselet):
     def __init__(self, regex, consume=None, ast_label=None, flags=0, **kwargs):
-        if consume is None:
-            consume = not bool(ast_label)
         self.raw_regex = regex
-        self.consume = consume
         regex = re.compile(regex, flags=flags)
+        # by default: consume if there is no label and no capturing groups
+        if consume is None:
+            consume = not bool(ast_label) and not regex.groups
+        self.consume = consume
         super().__init__(regex, ast_label=ast_label, **kwargs)
 
     def default_error(self, s, i):
-        return f"Failed to match pattern for {self.ast_label}"
+        return f"Failed to match pattern for `{self.ast_label}`"
 
     def parse(self, s, i=0):
         m = self.parser.match(s[i:])
@@ -407,25 +455,104 @@ def Whitespace(plus=False):
         return REParselet(r'\s*', consume=True)
 
 
+def seq_result(parser, accum, cur, s, i, force_node=False):
+    if not accum:
+        # interpret this as a succesful consumer-only parse
+        return (cur,)
+    elif not force_node and len(accum) == 1 and not parser.ast_label and isinstance(accum[0], ASTNode):
+        # don't add extra AST nodes for unlabeled sequences
+        return accum[0], cur
+    else:
+        return ast_node(parser.ast_label, *accum, s=s, i=i), cur
+
 class SeqParselet(Parselet):
     def __init__(self, *parsers, **kwargs):
         super().__init__(list(parsers), **kwargs)
 
+
     def parse(self, s, i=0):
-        result = []
+        accum = []
         cur = i
         for p in self.parser:
             r = p.parse(s, cur)
             cur = r[-1]
-            result.extend(r[0:-1])
-        if not result:
-            # interpret this as a succesful consumer-only parse
-            return (cur,)
-        elif len(result) == 1 and not self.ast_label and isinstance(result[0], ASTNode):
-            # don't add extra AST nodes for unlabeled sequences
-            return result[0], cur
-        else:
-            return ast_node(self.ast_label, *result, s=s, i=i), cur
+            accum.extend(r[0:-1])
+
+        return seq_result(self, accum, cur, s, i)
+
+    def copy(self):
+        return SeqParselet(*self.parser, **self.copy_args())
+
+    def __add__(self, other):
+        r = self.copy()
+        r.parser.append(other) # left association
+        return r
+
+
+class Repeat(Parselet):
+    def __init__(self, parser, allow_empty=True, force_node=False, **kwargs):
+        self.allow_empty = allow_empty
+        self.force_node = force_node
+        super().__init__(parser, **kwargs)
+
+    def parse(self, s, i=0):
+        accum = []
+        cur = i
+        found_any = False
+        while cur < len(s):
+            try:
+                r = self.parser.parse(s, cur)
+                found_any = True
+                cur = r[-1]
+                accum.extend(r[0:-1])
+            except ParseError as e:
+                break
+        if not self.allow_empty and not found_any:
+            raise ParseError(f"Failed to match any instances of `{self.ast_label}`", s=s, i=i)
+        return seq_result(self, accum, cur, s, i, force_node=self.force_node)
+
+
+class Join(Parselet):
+    # basically equivalent to elem + Repeat(join + elem), but it produces a
+    # flat ast (and has some more bells and whistles)
+    def __init__(self, join, elem, allow_empty=True, allow_final=False, **kwargs):
+        self.join = join
+        self.elem = elem
+        self.allow_empty = allow_empty
+        self.allow_final = allow_final
+        super().__init__([join, elem], **kwargs)
+
+    def parse(self, s, i=0):
+        accum = []
+        cur = i
+        found_any = False
+        join_last = False
+        while cur < len(s):
+            try:
+                r = self.elem.parse(s, cur)
+                cur = r[-1]
+                accum.extend(r[0:-1])
+                found_any = True
+                join_last = False
+
+                r = self.join.parse(s, cur)
+                cur = r[-1]
+                accum.extend(r[0:-1])
+                join_last = True
+
+            except ParseError as e:
+                if not found_any and not self.allow_empty:
+                    raise e
+                break
+        if not found_any and not self.allow_empty:
+            raise ParseError(f"Failed to match any instances of `{self.ast_label}`", s=s, i=i)
+        if join_last and not self.allow_final:
+            if isinstance(self.join, Parselet) and self.join.ast_label is not None:
+                join_name = f"`{self.join.ast_label}`"
+            else:
+                join_name = "join"
+            raise ParseError(f"Parsing sequence `{self.ast_label}` ended in invalid final {join_name}", s=s, i=i)
+        return seq_result(self, accum, cur, s, i)
 
 
 class DisjunctiveParselet(Parselet):
@@ -434,6 +561,9 @@ class DisjunctiveParselet(Parselet):
 
     def default_error(self, s, i):
         return f"Failed to find disjunct in `{self.ast_label}`"
+
+    def copy(self):
+        return DisjunctiveParselet(*self.parser, **self.copy_args())
 
     def parse(self, s, i=0):
         for p in self.parser:
@@ -444,8 +574,64 @@ class DisjunctiveParselet(Parselet):
                 if not result:
                     # interpret this as a succesful consumer-only parse
                     return (new_i,)
-                return ast_node(self.ast_label, *result, s=s, i=i), new_i
+                # only label if either we don't have an ASTNode, or this parser
+                # explicitly provides a label.
+                if self.ast_label is None and len(result) == 1 and isinstance(result[0], ASTNode):
+                    return result[0], new_i
+                else:
+                    return ast_node(self.ast_label, *result, s=s, i=i), new_i
         self.error(s, i)
+
+    def __or__(self, other):
+        r = self.copy()
+        r.parser.append(other) # left association
+        return r
+
+
+def fail_precondition(s, i=0):
+    raise ParseError("Failed precondition", s=s, i=i, met_preconditions=False)
+
+
+class LeftRecursive(Parselet):
+    # parse a left-recursive rule of the form:
+    # S -> prefix + parsers[0]
+    # S -> prefix + parsers[1]
+    # ...
+    # S -> prefix + parsers[n]
+    # S -> prefix
+    def __init__(self, prefix, *parsers, **kwargs):
+        parsers = list(parsers)
+        # # ensure that the final disjunct is a dummy parser so that we can
+        # # gracefully fall back to the terminal-only case
+        # parsers.append(Parselet(fail_precondition))
+        parser = prefix + Repeat(DisjunctiveParselet(*parsers), force_node=True)
+        super().__init__(parser, **kwargs)
+
+    def ast_group_left(self, a):
+        # refactor a `prefix + Repeat(Disjunctive(*parsers))` ast into a left-recursive one
+        if len(a) <= 1:
+            # case (a) or ()
+            return a
+
+        # otherwise, it will look like: (a0, (None: a1,...,an)) where a0 matches
+        # prefix and a1,...an match something in the parser disjunction
+        accum = a[0]
+        for i in range(len(a[1])):
+            accum = ast_node(a[1][i].label, accum, *a[1][i].values, s=a[1][i].s, i=a[1][i].i)
+        return accum
+
+    def parse(self, s, i=0):
+        r = self.parser.parse(s, i=i)
+        new_i = r[-1]
+        r = r[:-1]
+        assert(len(r) <= 1) # should be untriggerable?
+        if not r:
+            return (new_i,)
+        else:
+            r = self.ast_group_left(r[0])
+            if self.ast_label is not None:
+                r = ast_node(self.ast_label, r, s=s, i=i)
+            return r, new_i
 
 
 def vars_only(env):

@@ -31,21 +31,27 @@ from lamb.meta.meta import compiled, exec
 #
 ###############
 
-def default_metalanguage():
+def default_metalanguage(force=False):
     registry.clear()
-    # generic equivalence needs to be first, as it has an extremely general
-    # viability check that several specialized equivalence operators will
-    # override. The class appears early enough that the type signature needs
-    # to be specified here.
-    registry.add_operator(core.BinaryGenericEqExpr, tp("X"), tp("X"))
-    registry.add_binding_op(LFun)
-    registry.add_operator(core.ChainFun, tp("<X,Y>"), tp("<X,Y>"))
-    registry.add_operator(core.Partial, tp("X"), tp("t"))
-    registry.add_operator(core.Body, tp("X"))
-    registry.add_operator(core.Condition, tp("X"))
-    # TODO: core.MapFun
-    for m in [typeref, boolean, number, sets, quantifiers]:
-        m.setup_operators()
+    try:
+        # generic equivalence needs to be first, as it has an extremely general
+        # viability check that several specialized equivalence operators will
+        # override. The class appears early enough that the type signature needs
+        # to be specified here.
+        registry.add_operator(core.BinaryGenericEqExpr, tp("X"), tp("X"))
+        registry.add_binding_op(LFun)
+        registry.add_operator(core.ChainFun, tp("<X,Y>"), tp("<X,Y>"))
+        registry.add_operator(core.Partial, tp("X"), tp("t"))
+        registry.add_operator(core.Body, tp("X"))
+        registry.add_operator(core.Condition, tp("X"))
+        # TODO: core.MapFun
+        for m in [typeref, boolean, number, sets, quantifiers]:
+            m.setup_operators()
+    except Exception as e:
+        if force:
+            raise e
+        print("Failed to load metalanguage! Starting without one...")
+        core.reset() # if the type system is broken, this could still fail
 
 
 def reset():

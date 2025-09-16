@@ -54,7 +54,10 @@ def global_init():
                   sets.ConditionSet,
                   sets.ListedSet]
 
-global_init()
+try:
+    global_init()
+except:
+    print("meta.test failed to load")
 
 
 def repr_parse(e):
