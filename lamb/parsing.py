@@ -83,10 +83,14 @@ class ParseError(Exception):
         # marker
         if allow_note:
             self._try_add_note()
-        if classname:
-            m = f"{self.__class__.__name__}: {self.msg}"
+        if self.met_preconditions:
+            pre = ""
         else:
-            m = self.msg
+            pre = " (precondition)"
+        if classname:
+            m = f"{self.__class__.__name__}: {self.msg}{pre}"
+        else:
+            m = f"{self.msg}{pre}"
         aux = self._aux_str()
         if self.s is None:
             return m + aux
@@ -208,7 +212,7 @@ class ASTNode(object):
     __match_args__ = ("label", "values")
     def __init__(self, label, *values, s=None, i=None):
         self.label = label
-        self.values = values
+        self.values = list(values)
         self.map = {v.label: v for v in values if isinstance(v, ASTNode) and v.label is not None}
         self.s = s
         self.i = i
@@ -225,6 +229,14 @@ class ASTNode(object):
             raise ParseError(error, s=self.s, i=self.i)
         else:
             return default
+
+    def left_append(self, node):
+        # assumption: `node` comes from a substring that is linearly to the left
+        # of self, and we should use node's s/i values
+        return ast_node(self.label, *([node] + self.values), s=node.s, i=node.i)
+
+    def right_append(self, node):
+        return ast_node(self.label, *(self.values + [node]), s=self.s, i=self.i)
 
     def __getattr__(self, name):
         if name in self.map:
@@ -279,17 +291,23 @@ class Parselet(object):
     def copy_args(self):
         return dict(ast_label=self.ast_label, error=self.error_msg, skip_trivial=self.skip_trivial)
 
-    def default_error(self, s, i):
-        return f"Failed to parse {self.ast_label}"
+    def rule_name(self):
+        if self.ast_label is None:
+            return "anonymous rule"
+        else:
+            return f"rule `{self.ast_label}`"
 
-    def error(self, s, i, error=None):
+    def default_error(self, s, i):
+        return f"Failed to parse {self.rule_name()}"
+
+    def error(self, s, i, error=None, met_preconditions=True):
         if error:
             e = error
         elif self.error_msg:
             e = self.error_msg
         else:
             e = self.default_error(s, i)
-        raise ParseError(e, s=s, i=i)
+        raise ParseError(e, s=s, i=i, met_preconditions=met_preconditions)
 
     def parse(self, s, i=0):
         if self.parser is None:
@@ -312,10 +330,13 @@ class Parselet(object):
         return self.parse(s, i=i)
 
     def __or__(self, other):
-        return DisjunctiveParselet(self, other)
+        return Disjunctive(self, other)
 
     def __add__(self, other):
-        return SeqParselet(self, other)
+        return Sequence(self, other)
+
+    def __matmul__(self, other):
+        return LateDisjunctive(self, other)
 
 
 class Label(Parselet):
@@ -399,6 +420,7 @@ class Optional(Parselet):
 
 class Precondition(Parselet):
     def __init__(self, parser, ast_label=None, **kwargs):
+        # ast_label is unused in parsing
         if ast_label is None:
             ast_label = parser.ast_label
         super().__init__(parser, ast_label=ast_label, **kwargs)
@@ -422,7 +444,7 @@ class REParselet(Parselet):
         super().__init__(regex, ast_label=ast_label, **kwargs)
 
     def default_error(self, s, i):
-        return f"Failed to match pattern for `{self.ast_label}`"
+        return f"Failed to match pattern for {self.rule_name()} `{self.raw_regex}`"
 
     def parse(self, s, i=0):
         m = self.parser.match(s[i:])
@@ -455,17 +477,23 @@ def Whitespace(plus=False):
         return REParselet(r'\s*', consume=True)
 
 
-def seq_result(parser, accum, cur, s, i, force_node=False):
-    if not accum:
+def seq_result(parser, accum, cur, s, i):
+    label_single = getattr(parser, 'label_single', None)
+    force_node = getattr(parser, 'force_node', False)
+    if label_single and len(accum) <= 1:
+        label = label_single
+    else:
+        label = parser.ast_label
+    if not force_node and not accum:
         # interpret this as a succesful consumer-only parse
         return (cur,)
-    elif not force_node and len(accum) == 1 and not parser.ast_label and isinstance(accum[0], ASTNode):
-        # don't add extra AST nodes for unlabeled sequences
+    elif not force_node and len(accum) == 1 and not label and isinstance(accum[0], ASTNode):
+        # don't add extra AST nodes for unlabeled sequences unless forced
         return accum[0], cur
     else:
-        return ast_node(parser.ast_label, *accum, s=s, i=i), cur
+        return ast_node(label, *accum, s=s, i=i), cur
 
-class SeqParselet(Parselet):
+class Sequence(Parselet):
     def __init__(self, *parsers, **kwargs):
         super().__init__(list(parsers), **kwargs)
 
@@ -481,7 +509,7 @@ class SeqParselet(Parselet):
         return seq_result(self, accum, cur, s, i)
 
     def copy(self):
-        return SeqParselet(*self.parser, **self.copy_args())
+        return Sequence(*self.parser, **self.copy_args())
 
     def __add__(self, other):
         r = self.copy()
@@ -509,17 +537,19 @@ class Repeat(Parselet):
                 break
         if not self.allow_empty and not found_any:
             raise ParseError(f"Failed to match any instances of `{self.ast_label}`", s=s, i=i)
-        return seq_result(self, accum, cur, s, i, force_node=self.force_node)
+        return seq_result(self, accum, cur, s, i)
 
 
 class Join(Parselet):
     # basically equivalent to elem + Repeat(join + elem), but it produces a
     # flat ast (and has some more bells and whistles)
-    def __init__(self, join, elem, allow_empty=True, allow_final=False, **kwargs):
+    def __init__(self, join, elem, allow_empty=True, allow_final=False, label_single=None, force_node=False, **kwargs):
         self.join = join
         self.elem = elem
         self.allow_empty = allow_empty
         self.allow_final = allow_final
+        self.label_single = label_single
+        self.force_node = force_node
         super().__init__([join, elem], **kwargs)
 
     def parse(self, s, i=0):
@@ -555,15 +585,15 @@ class Join(Parselet):
         return seq_result(self, accum, cur, s, i)
 
 
-class DisjunctiveParselet(Parselet):
+class Disjunctive(Parselet):
     def __init__(self, *parsers, **kwargs):
         super().__init__(list(parsers), **kwargs)
 
     def default_error(self, s, i):
-        return f"Failed to find disjunct in `{self.ast_label}`"
+        return f"Failed to find disjunct for {self.rule_name()}"
 
     def copy(self):
-        return DisjunctiveParselet(*self.parser, **self.copy_args())
+        return Disjunctive(*self.parser, **self.copy_args())
 
     def parse(self, s, i=0):
         for p in self.parser:
@@ -580,7 +610,10 @@ class DisjunctiveParselet(Parselet):
                     return result[0], new_i
                 else:
                     return ast_node(self.ast_label, *result, s=s, i=i), new_i
-        self.error(s, i)
+        # if we get to here, all parsers raised with met_preconditions=False.
+        # send that same flag upwards in case this is part of another
+        # Disjunctive
+        self.error(s, i, met_preconditions=False)
 
     def __or__(self, other):
         r = self.copy()
@@ -588,23 +621,84 @@ class DisjunctiveParselet(Parselet):
         return r
 
 
-def fail_precondition(s, i=0):
-    raise ParseError("Failed precondition", s=s, i=i, met_preconditions=False)
+class LateDisjunctive(Parselet):
+    # Disjunctive rules with shared prefix, where disambiguation comes late. I.e.
+    # S -> prefix parser_1
+    # S -> prefix parser_2
+    # ...
+    # S -> prefix parser_n
+    # as usual, parsers must disambiguate and handle preconditions. The prefix
+    # is automatically treated as a precondition.
+    def __init__(self, prefix, *parsers, **kwargs):
+        # wrapping this in a Precondition is a bit heavy-handed, but it is
+        # guaranteed to do what we want
+        if not isinstance(prefix, Precondition):
+            prefix = Precondition(prefix)
+        self.prefix = prefix
+        # n.b. prefix is not stored in `self.parser`
+        super().__init__(list(parsers), **kwargs)
+
+    def default_error(self, s, i):
+        return f"Failed to find late disjunct for {self.rule_name()}"
+
+    def copy(self):
+        return LateDisjunctive(self.prefix, *self.parser, **self.copy_args())
+
+    def parse(self, s, i=0):
+        try:
+            result = self.prefix.parse(s, i=i)
+        except ParseError as e:
+            # errors from within prefix can be arbitrarily unrelated, so
+            # repackage...
+            raise ParseError(f"Failed to match prefix for {self.rule_name()}",
+                e=e, s=s, i=i, met_preconditions=e.met_preconditions)
+        new_i = result[-1]
+        accum = list(result[:-1])
+        for p in self.parser:
+            with try_parse():
+                disj_result = p.parse(s, i=new_i)
+                new_i = disj_result[-1]
+
+                if len(disj_result) == 2 and len(accum) == 1:
+                    # insert the prefix AST node under result[0]'s label
+                    accum = [disj_result[0].left_append(accum[0])]
+                    # subaccum = accum[0] + disj_result[0].values
+                    # accum = [ast_node(disj_result[0].label, *subaccum, s=accum[0].s, i=accum[0].i)]
+                else:
+                    # either prefix or result is empty (or: other corner case?)
+                    accum.extend(disj_result[:-1])
+                if not accum:
+                    # interpret this as a succesful consumer-only parse
+                    return (new_i,)
+                # same labeling logic as Disjunctive at this point
+                if self.ast_label is None and len(accum) == 1 and isinstance(accum[0], ASTNode):
+                    return accum[0], new_i
+                else:
+                    return ast_node(self.ast_label, *accum, s=s, i=i), new_i
+        # if we get to here, all parsers raised with met_preconditions=False.
+        # send that same flag upwards in case this is part of another
+        # Disjunctive
+        # n.b. an empty self.parser errors...
+        self.error(s, i, met_preconditions=False)
+
+    def __matmul__(self, other):
+        r = self.copy()
+        r.parser.append(other)
+        return r
 
 
 class LeftRecursive(Parselet):
     # parse a left-recursive rule of the form:
-    # S -> prefix + parsers[0]
-    # S -> prefix + parsers[1]
+    # S -> S + parsers[0]
+    # S -> S + parsers[1]
     # ...
-    # S -> prefix + parsers[n]
+    # S -> S + parsers[n]
     # S -> prefix
     def __init__(self, prefix, *parsers, **kwargs):
         parsers = list(parsers)
         # # ensure that the final disjunct is a dummy parser so that we can
         # # gracefully fall back to the terminal-only case
-        # parsers.append(Parselet(fail_precondition))
-        parser = prefix + Repeat(DisjunctiveParselet(*parsers), force_node=True)
+        parser = prefix + Repeat(Disjunctive(*parsers), force_node=True)
         super().__init__(parser, **kwargs)
 
     def ast_group_left(self, a):
