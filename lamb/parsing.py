@@ -230,13 +230,27 @@ class ASTNode(object):
         else:
             return default
 
-    def left_append(self, node):
+    def left_extend(self, node):
         # assumption: `node` comes from a substring that is linearly to the left
         # of self, and we should use node's s/i values
-        return ast_node(self.label, *([node] + self.values), s=node.s, i=node.i)
+        return ast_node(self.label, *(node.values + self.values), s=node.s, i=node.i)
 
-    def right_append(self, node):
-        return ast_node(self.label, *(self.values + [node]), s=self.s, i=self.i)
+    def right_extend(self, node):
+        return ast_node(self.label, *(self.values + node.values), s=self.s, i=self.i)
+
+    def left_attach(self, node):
+        # assumption: `node` comes from a substring that is linearly to the left
+        # of self, and we should use node's s/i values
+        if node.label is None:
+            return self.left_extend(node)
+        else:
+            return ast_node(self.label, *([node] + self.values), s=node.s, i=node.i)
+
+    def right_attach(self, node):
+        if node.label is None:
+            return self.right_extend(node)
+        else:
+            return ast_node(self.label, *(self.values + [node]), s=node.s, i=node.i)
 
     def __getattr__(self, name):
         if name in self.map:
@@ -287,6 +301,33 @@ def ast_node(*args, **kwargs):
 
 # a parse state is a tuple (n, i) where `n` is None or an ASTNode instance, and
 # `i` is the current position in the string being parsed
+
+
+def seq_result(parser, accum, cur, s, i):
+    label_single = getattr(parser, 'label_single', None)
+    force_node = getattr(parser, 'force_node', False)
+    if label_single and len(accum) <= 1:
+        label = label_single
+    else:
+        label = parser.ast_label
+    if not force_node and not accum:
+        # interpret this as a succesful consumer-only parse
+        return None, cur
+    elif not force_node and not label and len(accum) == 1 and isinstance(accum[0], ASTNode):
+        # don't add extra AST nodes for unlabeled sequences unless forced
+        return accum[0], cur
+    else:
+        return ast_node(label, *accum, s=s, i=i), cur
+
+
+def seq_extend(accum, n):
+    if n:
+        if n.label is None:
+            # This will wipe out an unlabeled node with no values
+            accum.extend(n.values)
+        else:
+            accum.append(n)
+
 
 class Parselet(object):
     def __init__(self, parser, ast_label=None, error=None, skip_trivial=False):
@@ -366,7 +407,10 @@ class Label(Parselet):
 
         if self.force_node or (n and n.label is not None):
             # this case will force a new AST node even for a consumer-only parse
-            return ast_node(self.ast_label, n, s=s, i=i), new_i
+            if n:
+                return ast_node(self.ast_label, n, s=s, i=i), new_i
+            else:
+                return ast_node(self.ast_label, s=s, i=i), new_i
         else:
             # otherwise, relabel an existing node with a None label
             if n:
@@ -376,19 +420,11 @@ class Label(Parselet):
                 # consumer-only parse
                 return None, new_i
 
-    def __or__(self, other):
-        # convenience, but using this is probably not best practice as it
-        # is semantically confusing.
-        if self.parser is not None:
-            return Label(self.ast_label, parser=self.parser | other, force_node=self.force_node)
-        else:
-            return Label(self.ast_label, parser=other, force_node=self.force_node)
-
     def __add__(self, other):
         if self.parser is not None:
             return Label(self.ast_label, parser=self.parser + other, force_node=self.force_node)
         else:
-            return Label(self.ast_label, parser=other, force_node=self.force_node)
+            return Label(self.ast_label, parser=Sequence(other), force_node=self.force_node)
 
 
 class Collapse(Parselet):
@@ -478,7 +514,16 @@ class Keyword(REParselet):
         # `kw` is intended to be alphanumeric here
         # end token check: only match if we do not continue matching alphanum
         # characters next (XX op version of this?)
-        regex = rf'{kw}(?![a-zA-Z0-9])'
+        regex = rf'{kw}(?![\w])'
+        super().__init__(regex, **kwargs)
+
+
+class Token(REParselet):
+    def __init__(self, re, alphanum=False, **kwargs):
+        if alphanum:
+            regex = rf'\s*{re}(?![\w])\s*'
+        else:
+            regex = rf'\s*{re}\s*'
         super().__init__(regex, **kwargs)
 
 
@@ -490,22 +535,6 @@ def Whitespace(plus=False):
         return REParselet(r'\s*', consume=True)
 
 
-def seq_result(parser, accum, cur, s, i):
-    label_single = getattr(parser, 'label_single', None)
-    force_node = getattr(parser, 'force_node', False)
-    if label_single and len(accum) <= 1:
-        label = label_single
-    else:
-        label = parser.ast_label
-    if not force_node and not accum:
-        # interpret this as a succesful consumer-only parse
-        return None, cur
-    elif not force_node and not label and len(accum) == 1 and isinstance(accum[0], ASTNode):
-        # don't add extra AST nodes for unlabeled sequences unless forced
-        return accum[0], cur
-    else:
-        return ast_node(label, *accum, s=s, i=i), cur
-
 class Sequence(Parselet):
     def __init__(self, *parsers, **kwargs):
         super().__init__(list(parsers), **kwargs)
@@ -515,8 +544,7 @@ class Sequence(Parselet):
         cur = i
         for p in self.parser:
             n, cur = p.parse(s, cur)
-            if n:
-                accum.append(n)
+            seq_extend(accum, n)
 
         return seq_result(self, accum, cur, s, i)
 
@@ -530,9 +558,10 @@ class Sequence(Parselet):
 
 
 class Repeat(Parselet):
-    def __init__(self, parser, allow_empty=True, force_node=False, **kwargs):
+    def __init__(self, parser, allow_empty=True, force_node=False, check_pre=False, **kwargs):
         self.allow_empty = allow_empty
         self.force_node = force_node
+        self.check_pre = check_pre
         super().__init__(parser, **kwargs)
 
     def parse(self, s, i=0):
@@ -543,9 +572,10 @@ class Repeat(Parselet):
             try:
                 n, cur = self.parser.parse(s, cur)
                 found_any = True
-                if n:
-                    accum.append(n)
+                seq_extend(accum, n)
             except ParseError as e:
+                if self.check_pre and e.met_preconditions:
+                    raise e
                 break
         if not self.allow_empty and not found_any:
             raise ParseError(f"Failed to match any instances of `{self.ast_label}`", s=s, i=i)
@@ -555,11 +585,14 @@ class Repeat(Parselet):
 class Join(Parselet):
     # basically equivalent to elem + Repeat(join + elem), but it produces a
     # flat ast (and has some more bells and whistles)
-    def __init__(self, join, elem, allow_empty=True, allow_final=False, label_single=None, force_node=False, **kwargs):
+    def __init__(self, join, elem,
+                allow_empty=True, allow_final=False, initial_join=False,
+                label_single=None, force_node=False, **kwargs):
         self.join = join
         self.elem = elem
         self.allow_empty = allow_empty
         self.allow_final = allow_final
+        self.initial_join = initial_join
         self.label_single = label_single
         self.force_node = force_node
         super().__init__([join, elem], **kwargs)
@@ -569,17 +602,29 @@ class Join(Parselet):
         cur = i
         found_any = False
         join_last = False
+        if self.initial_join:
+            # if this is set, we are expecting the string to *start* with the
+            # join.
+            try:
+                n, cur = self.join.parse(s, cur)
+                seq_extend(accum, n)
+                join_last = True
+            except ParseError as e:
+                if not self.allow_empty:
+                    raise e
+                else:
+                    # nothing parsed, treat it as an allowed empty sequence
+                    return seq_result(self, accum, cur, s, i)
+
         while cur < len(s):
             try:
                 n, cur = self.elem.parse(s, cur)
-                if n:
-                    accum.append(n)
+                seq_extend(accum, n)
                 found_any = True
                 join_last = False
 
                 n, cur = self.join.parse(s, cur)
-                if n:
-                    accum.append(n)
+                seq_extend(accum, n)
                 join_last = True
 
             except ParseError as e:
@@ -589,7 +634,7 @@ class Join(Parselet):
         if not found_any and not self.allow_empty:
             raise ParseError(f"Failed to match any instances of `{self.ast_label}`", s=s, i=i)
         if join_last and not self.allow_final:
-            if isinstance(self.join, Parselet) and self.join.ast_label is not None:
+            if self.join.ast_label is not None:
                 join_name = f"`{self.join.ast_label}`"
             else:
                 join_name = "join"
@@ -668,7 +713,8 @@ class LateDisjunctive(Parselet):
 
                 if prefix_n and disj_n:
                     # insert the prefix AST node under the disjunction result
-                    result = disj_n.left_append(prefix_n)
+                    # if prefix_n has no label, this will merge sequences
+                    result = disj_n.left_attach(prefix_n)
                 elif disj_n:
                     # prefix was consumer-only
                     result = disj_n
@@ -707,31 +753,31 @@ class LeftRecursive(Parselet):
         parsers = list(parsers)
         # # ensure that the final disjunct is a dummy parser so that we can
         # # gracefully fall back to the terminal-only case
-        parser = prefix + Repeat(Disjunctive(*parsers), force_node=True)
+        self.prefix = prefix
+        # parser = prefix + Repeat(Disjunctive(*parsers), force_node=True)
+        parser = Repeat(Disjunctive(*parsers), check_pre=True)
         super().__init__(parser, **kwargs)
 
     def ast_group_left(self, a):
-        # refactor a `prefix + Repeat(Disjunctive(*parsers))` ast into a left-recursive one
         if len(a) <= 1:
-            # case (a) or ()
             return a
+        ast = a[0]
+        for i in range(1, len(a)):
+            ast = ast_node(a[i].label, ast, *a[i].values, s=a[i].s, i=a[i].i)
+        return [ast]
 
-        # otherwise, it will look like: (a0, (None: a1,...,an)) where a0 matches
-        # prefix and a1,...an match something in the parser disjunction
-        accum = a[0]
-        for i in range(len(a[1])):
-            accum = ast_node(a[1][i].label, accum, *a[1][i].values, s=a[1][i].s, i=a[1][i].i)
-        return accum
 
     def parse(self, s, i=0):
-        n, new_i = self.parser.parse(s, i=i)
-        if not n:
-            return None, new_i
+        cur = i
+        accum = []
+        prefix_n, cur = self.prefix.parse(s, i=cur)
+        seq_extend(accum, prefix_n)
+        n, cur = self.parser.parse(s, i=cur)
+        seq_extend(accum, n)
+        if not accum:
+            return None, cur
         else:
-            n = self.ast_group_left(n)
-            if self.ast_label is not None:
-                n = ast_node(self.ast_label, n, s=s, i=i)
-            return n, new_i
+            return seq_result(self, self.ast_group_left(accum), cur, s, i)
 
 
 def vars_only(env):
