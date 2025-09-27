@@ -279,6 +279,26 @@ class ASTNode(object):
         else:
             return f"({self.label}: {', '.join(repr(v) for v in self.values)})"
 
+    def to_tree(self):
+        def _as_tree(x, label=None):
+            if isinstance(x, ASTNode):
+                # assume that `x` provides the label also
+                return x.to_tree()
+            elif label is not None:
+                return Tree(label, [repr(x)])
+            else:
+                return repr(x) # leaf node
+
+        if not self.values and self.map:
+            children = [_as_tree(self.map[k], label=k) for k in self.map]
+        else:
+            children = [_as_tree(v) for v in self.values]
+        if isinstance(self.label, str):
+            label = self.label
+        else:
+            label = repr(self.label)
+        return Tree(label, children)
+
 
 ast_transforms = {}
 
@@ -395,7 +415,7 @@ class Parselet(object):
 
 class Label(Parselet):
     """Dummy Parselet that serves only to provide an AST label"""
-    def __init__(self, ast_label, parser=None, force_node=False):
+    def __init__(self, ast_label, parser=None, force_node=True):
         self.force_node = force_node
         super().__init__(parser, ast_label=ast_label)
 
@@ -405,23 +425,23 @@ class Label(Parselet):
         else:
             n, new_i = super().parse(s, i=i)
 
-        if self.force_node or (n and n.label is not None):
-            # this case will force a new AST node even for a consumer-only parse
-            if n:
-                return ast_node(self.ast_label, n, s=s, i=i), new_i
-            else:
+        if not n:
+            if self.force_node:
                 return ast_node(self.ast_label, s=s, i=i), new_i
-        else:
-            # otherwise, relabel an existing node with a None label
-            if n:
-                # cannot relabel with None! Use `False` to get this effect...
-                return transform_ast(n, label=self.ast_label), new_i
             else:
                 # consumer-only parse
                 return None, new_i
+        else:
+            if n.label is None:
+                # relabel an existing None-labeled node
+                return transform_ast(n, label=self.ast_label), new_i
+            else:
+                return ast_node(self.ast_label, n, s=s, i=i), new_i
 
     def __add__(self, other):
         if self.parser is not None:
+            # Note: some potentially counterintuitive behavior if self.parser
+            # is also a Label.
             return Label(self.ast_label, parser=self.parser + other, force_node=self.force_node)
         else:
             return Label(self.ast_label, parser=Sequence(other), force_node=self.force_node)
