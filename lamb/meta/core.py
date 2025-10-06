@@ -782,8 +782,8 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
         raise ValueError(f"Operator wrapping requires a subclass of SyncatOpExpr (got: {repr(superclass)})")
 
     if not isinstance(e.type, types.FunType): # XX polymorphic e.type
-        raise TypeError(
-                f"Operator wrapping does not support 0-ary operators (called on `operator {op_name} = {repr(e)}`)")
+        raise parsing.ParseError(
+                f"Operator wrapping does not support 0-ary operators (tried to set `{op_name}` to non-function `{repr(e)}`)")
 
     if op_arity is None:
         if isinstance(e.type.left, types.TupleType):
@@ -801,8 +801,8 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
 
     # ternary operator support?
     if op_arity == 0 or op_arity > 2:
-        raise TypeError(
-                f"Operator wrapping does not support {op_arity}-ary operators (called on `operator {op_name} = {repr(e)}`)")
+        raise parsing.ParseError(
+                f"Operator wrapping does not support {op_arity}-ary operators (called on `operator {op_name}({op_arity}) = {repr(e)}`)")
 
     # store `e` with fresh type vars. XX it would be better if this were
     # handled by application, but it currently isn't (at least, not very well)
@@ -817,7 +817,8 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
         rettype = e.type.right
     else:
         if not isinstance(e.type.right, types.FunType):
-            raise TypeError(f"A 2-place operator requires an inner argument (called on `operator {op_name} = {repr(e)}`)")
+            raise parsing.ParseError(
+                f"A 2-place operator requires an inner argument (called on `operator {op_name}({op_arity}) = {repr(e)}`)")
         # assumption: 2 place curried function
         signature = (e.type.left, e.type.right.left)
         rettype = e.type.right.right
