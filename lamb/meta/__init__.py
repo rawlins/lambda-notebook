@@ -64,33 +64,3 @@ default_metalanguage()
 # this needs to happen after the metalanguage is set up
 from lamb.meta import test
 
-
-# TODO, remove these tests? Right now they are a reload sanity check...
-# everything here has an approximate analog in meta/test.py
-def test_setup():
-    ident = te("L x_e : x")
-    y = TypedTerm("y", type_e)
-    ia = ident(y)
-    ib = LFun(y, ia)
-    P = TypedTerm("P", FunType(type_e, type_t))
-    Q = TypedTerm("Q", FunType(type_e, type_t))
-    x = TypedTerm("x", type_e)
-    t = P(x)
-    t2 = Q(x)
-    body = t & t | t
-    p = TypedTerm("p", type_t)
-    testf = LFun(x, body)
-
-    pmw_test1 = LFun(TypedTerm('p', typ=type_t),
-                    LFun(TypedTerm('x', typ=type_e), t & p))
-    pmw_test1b = LFun(TypedTerm('x', type_e), t & t2)
-    # test: when a free variable in a function scopes under an operator, do not
-    # bind the variable on application
-    assert pmw_test1.apply(t2) != pmw_test1b
-
-    # Different version of the same test: direct variable substitution
-    test2 = TypedExpr.factory("L y_e : L x_e : y_e")
-    test2b = TypedExpr.factory("L x_e : x_e")
-    assert test2.apply(x) != test2b
-
-test_setup()
