@@ -969,7 +969,7 @@ def op_expr_factory(op, *args, **kwargs):
     return registry.expr_factory(op, *args, **kwargs)
 
 
-def subassignment(assignment, **kwargs):
+def subassignment(assignment, _dict=None, **kwargs):
     from .meta import Assignment
     if assignment is None:
         r = {}
@@ -979,7 +979,9 @@ def subassignment(assignment, **kwargs):
     else:
         # including Model
         r = collections.ChainMap({}, assignment)
-    r.update(**kwargs)
+    if _dict:
+        r.update(_dict)
+    r.update(kwargs)
     return r
 
 
