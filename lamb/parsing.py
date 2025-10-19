@@ -1,10 +1,18 @@
-import sys, re, traceback, collections, enum
+import sys, re, traceback, collections, enum, typing, dataclasses
 from contextlib import contextmanager
+from dataclasses import dataclass, field, fields
+
+from typing import Optional
 
 # imported by meta
 from lamb import utils
 from lamb.utils import * # TODO: remove
 from lamb.display import assignment_repr
+
+try:
+    EnumClass = enum.StrEnum
+except:
+    EnumClass = enum.Enum
 
 Tree = utils.get_tree_class()
 
@@ -208,35 +216,67 @@ def consume_whitespace(s, i, plus=False, error=None):
     return i
 
 
-class ASTNode(object):
-    __match_args__ = ("label", "values")
-    def __init__(self, label, *values, s=None, i=None):
-        self.label = label
-        self.values = list(values)
-        self.map = {v.label: v for v in values if isinstance(v, ASTNode) and v.label is not None}
-        self.s = s
-        self.i = i
+@dataclass
+class ASTNode:
+    label: Optional[str | type] = field(default=None, kw_only=True)
+    children: list[object] = field(default_factory=list, kw_only=True) # should be list[ASTNode], but that fails to parse
+    s: Optional[str] = field(default=None, kw_only=True)
+    i: Optional[int] = field(default=None, kw_only=True)
+    __match_args__ = ("label", "children")
 
-    def get(self, x, default=None, error=None):
+    _no_parse = {'label', 'children', 's', 'i'}
+
+    def __post_init__(self):
+        if (l := getattr(self, 'class_label', None)):
+            self.label = l
+        self.map = {v.label: v for v in self.children if isinstance(v, ASTNode) and v.label is not None}
+        self._sub_fields = tuple(f for f in fields(self) if f.name not in self._no_parse)
+
+    def finalize(self):
+        if isinstance(self.label, type):
+            return self.label.from_ast(self)
+        else:
+            return self
+
+    def label_name(self):
+        if self.label is None:
+            return "anonymous parse unit"
+        else:
+            return f"`self.label`"
+
+    def get(self, x, default=None, error=None, force_raw=False):
         if x in self.map:
             r = self.map[x]
-            if isinstance(r, ASTNode) and len(r.values) == 1 and not isinstance(r.values[0], ASTNode):
-                return r.values[0]
+            if isinstance(r, ASTNode) and r.__class__ != ASTNode:
+                # proper subclass: assume it is already parsed.
+                return r
+            elif (not force_raw and isinstance(r, ASTNode)
+                    and len(r.children) == 1
+                    and not isinstance(r.children[0], ASTNode)):
+                # unparsed non-branching node with a value: return that value
+                return r.children[0]
+            elif not force_raw and isinstance(r, ASTNode) and len(r.children) == 0:
+                # no children at all: return None
+                # XX is this correct?
+                return None
             else:
                 return r
 
         if error:
+            if error is True:
+                error = f"Missing field `{x}` in {self.label_name()}"
             raise ParseError(error, s=self.s, i=self.i)
         else:
             return default
 
+
     def left_extend(self, node):
         # assumption: `node` comes from a substring that is linearly to the left
         # of self, and we should use node's s/i values
-        return ast_node(self.label, *(node.values + self.values), s=node.s, i=node.i)
+        return ASTNode(label=self.label, children=(node.children + self.children), s=node.s, i=node.i)
 
     def right_extend(self, node):
-        return ast_node(self.label, *(self.values + node.values), s=self.s, i=self.i)
+        return ASTNode(label=self.label, children=(self.children + node.children), s=self.s, i=self.i)
 
     def left_attach(self, node):
         # assumption: `node` comes from a substring that is linearly to the left
@@ -244,40 +284,38 @@ class ASTNode(object):
         if node.label is None:
             return self.left_extend(node)
         else:
-            return ast_node(self.label, *([node] + self.values), s=node.s, i=node.i)
+            return ASTNode(label=self.label, children=([node] + self.children), s=node.s, i=node.i)
 
     def right_attach(self, node):
         if node.label is None:
             return self.right_extend(node)
         else:
-            return ast_node(self.label, *(self.values + [node]), s=node.s, i=node.i)
-
-    def __getattr__(self, name):
-        if name in self.map:
-            return self.get(name)
-        else:
-            raise AttributeError(f"Unknown field `{name}` for ASTNode `{self.label}`")
+            return ASTNode(label=self.label, children=(self.children + [node]), s=node.s, i=node.i)
 
     def __contains__(self, x):
         return x in self.map
 
     def __len__(self):
-        return len(self.values)
+        return len(self.children)
 
     def __bool__(self):
         # override default behavior based on length
         return True
 
     def __getitem__(self, i):
-        return self.values[i]
+        return self.children[i]
+
+    def _to_field_map(self):
+        return {f.name: getattr(self, f.name) for f in self._sub_fields}
 
     def __repr__(self):
-        if not self.values and self.map:
-            # if `values` is empty, try printing the map, to handle subclasses
-            # that don't use `values`
-            return f"({self.label}: {repr(self.map)})"
+        if not self.children:
+            # if `children` is empty, try printing the fields, to handle subclasses
+            # that don't use `children`
+            return f"({self.label}: {repr(self._to_field_map())})"
+            # return f"({self.label}: {repr(self.map)})"
         else:
-            return f"({self.label}: {', '.join(repr(v) for v in self.values)})"
+            return f"({self.label}: {', '.join(repr(v) for v in self.children)})"
 
     def to_tree(self):
         def _as_tree(x, label=None):
@@ -289,34 +327,98 @@ class ASTNode(object):
             else:
                 return repr(x) # leaf node
 
-        if not self.values and self.map:
-            children = [_as_tree(self.map[k], label=k) for k in self.map]
-        else:
-            children = [_as_tree(v) for v in self.values]
+        m = self._to_field_map()
+        children = [_as_tree(m[k], label=k) for k in m]
+        children = children + [_as_tree(v) for v in self.children]
         if isinstance(self.label, str):
             label = self.label
+        elif isinstance(self.label, type):
+            label = self.label.__name__
         else:
             label = repr(self.label)
         return Tree(label, children)
 
+    def instantiate(self, **kwargs):
+        if len(self.children) == 1 and isinstance(self.children[0], ASTNode):
+            return self.children[0].instantiate(**kwargs)
 
-ast_transforms = {}
+        # if this shows up, it's a parser bug
+        raise NotImplementedError(f"Don't know how to instantiate generic ASTNode: {repr(self)}")
+
+    @classmethod
+    def map_from_ast(cls, a, allow_remainder=False, s=None, i=None):
+        if a is None:
+            return cls(s=s, i=i) # may error
+
+        # currently these params are unused except for the None case, but
+        # do this to be robust
+        if s is None:
+            s = a.s
+        if i is None:
+            i = a.i
+        def a_get(f):
+            # use defaults as a proxy for Optional
+            if f.default is not dataclasses.MISSING:
+                return a.get(f.name, default=f.default)
+            elif f.default_factory is not dataclasses.MISSING:
+                return a.get(f.name, default=f.default_factory())
+            else:
+                return a.get(f.name, error=True)
+        # if a node has multiple children with a label in `fields`, this will
+        # consume only the first. Probably not what you want!
+        m = {f.name: a_get(f) for f in fields(cls) if f.name not in cls._no_parse}
+        if len(m) < len(a.children):
+            if allow_remainder:
+                # consume the remainder into `children`
+                return cls.seq_from_ast(a, ast_constraint=None, **m)
+            else:
+                missing = [c.label for c in a.children if c.label not in fields]
+                # XX error is confusing for unlabeled / repeated children
+                raise ParseError(f"Internal parser error: parsing to `{cls}` failed to consume fields: `{', '.join(missing)}`", s=s, i=i)
+        return cls(s=s, i=i, **m)
+
+    @classmethod
+    def seq_from_ast(cls, a, ast_constraint=None, s=None, i=None, **fields):
+        if a is None:
+            return cls(s=s, i=i, **fields)
+        if s is None:
+            s = a.s
+        if i is None:
+            i = a.i
+        children = [c for c in a.children if c.label not in fields]
+        if len(children) + len(fields) < len(a.children):
+            # something is designed wrong. For example, this would be triggered
+            # by trying to parse an chained op expression to a class with a
+            # field name `op`, because map parsing would consume only the first
+            # instance of `op`.
+            raise ParseError(f"Internal parser error: `{cls}` has a field name for a repeated AST child label", s=s, i=i)
+        if ast_constraint:
+            for x in children:
+                if not isinstance(x, ast_constraint):
+                    if isinstance(x, ASTNode):
+                        s = x.s
+                        i = x.i
+                    raise ParseError(f"Failed to match `{ast_constraint.class_label}` in `{a.label}`",
+                        s=s, i=i)
+        return cls(children=children, s=s, i=i, **fields)
+
+    @classmethod
+    def from_ast(cls, a, s=None, i=None):
+        # default is the most flexible parsing option: any fields in a subclass
+        # are parsed, and the remainder is inserted into `children`.
+        return cls.map_from_ast(a, allow_remainder=True, s=s, i=i)
 
 
-def transform_ast(a, label=None):
-    # side effects if `label` is set!
-    if label is False:
-        a.label = None
-    elif label is not None:
-        a.label = label
-    if a.label in ast_transforms:
-        return ast_transforms[a.label].from_ast(a)
-    else:
-        return a
-
-
-def ast_node(*args, **kwargs):
-    return transform_ast(ASTNode(*args, **kwargs))
+# convenience decorator for ASTNode subclasses
+def astclass(label, *, repr=False, **kwargs):
+    """Convenience decorator for ASTNode subclasses. Sets the class's label,
+    enforces `@dataclass`, and defaults `repr` to False (so that the ASTNode
+    repr is inherited rather than overridden by dataclass)."""
+    def inner(_cls):
+        r = dataclass(_cls, repr=repr, **kwargs)
+        r.class_label = label
+        return r
+    return inner
 
 
 # a parse state is a tuple (n, i) where `n` is None or an ASTNode instance, and
@@ -324,9 +426,9 @@ def ast_node(*args, **kwargs):
 
 
 def seq_result(parser, accum, cur, s, i):
-    label_single = getattr(parser, 'label_single', None)
+    label_single = getattr(parser, 'label_single', False)
     force_node = getattr(parser, 'force_node', False)
-    if label_single and len(accum) <= 1:
+    if label_single is not False and len(accum) <= 1:
         label = label_single
     else:
         label = parser.ast_label
@@ -337,21 +439,26 @@ def seq_result(parser, accum, cur, s, i):
         # don't add extra AST nodes for unlabeled sequences unless forced
         return accum[0], cur
     else:
-        return ast_node(label, *accum, s=s, i=i), cur
+        return ASTNode(label=label, children=accum, s=s, i=i), cur
 
 
 def seq_extend(accum, n):
     if n:
         if n.label is None:
             # This will wipe out an unlabeled node with no values
-            accum.extend(n.values)
+            accum.extend(n.children)
         else:
             accum.append(n)
 
 
 class Parselet(object):
+    parser = None
     def __init__(self, parser, ast_label=None, error=None, skip_trivial=False):
-        self.parser = parser
+        if parser:
+            # only override class-level field if something non-trivial is
+            # provided. This is primarily to support the subclassing behavior
+            # of `Unit`.
+            self.parser = parser
         self.ast_label = ast_label
         self.error_msg = error
         self.skip_trivial = skip_trivial
@@ -398,7 +505,7 @@ class Parselet(object):
             return None, new_i
         if self.skip_trivial and len(result) == 1 and isinstance(result[0], ASTNode):
             return result[0], new_i
-        return ast_node(self.ast_label, *result, s=s, i=i), new_i
+        return ASTNode(label=self.ast_label, children=result, s=s, i=i), new_i
 
     def __call__(self, s, i=0):
         return self.parse(s, i=i)
@@ -413,10 +520,54 @@ class Parselet(object):
         return LateDisjunctive(self, other)
 
 
+class Unit(Parselet):
+    def __init__(self, parser=None):
+        if parser is not None and self.parser_builder:
+            raise ParseError("Internal parser error: `Unit` parser builder subclass has doubly-supplied parser on construction")
+        elif self.parser is not None:
+            if parser is not None:
+                # subclasses will typically not bother with __init__, so validate
+                # this case manually
+                raise ParseError("Internal parser error: doubly-supplied parser for `Unit` subclass")
+            # try parser defined as a class attribute.
+            parser = self.parser
+        super().__init__(parser)
+
+    @classmethod
+    @property
+    def parser_builder(cls):
+        return bool(getattr(cls, 'build_parser', False))
+
+    @classmethod
+    def memoize_parser(cls):
+        # memoize the parser as a class-level attribute
+        cls.parser = cls.build_parser()
+
+    def parse(self, s, i=0):
+        if self.parser is None and self.parser_builder:
+            # if a subclass defines `build_parser`, call it and memoize the
+            # resulting parser at this point. This allows a parser to be
+            # instantiated at the module level without worrying about circular
+            # import issues.
+            self.memoize_parser()
+        if self.parser is None:
+            raise ParseError("Internal parser error: Unit is missing parser", s=s, i=i)
+        n, i = self.parser.parse(s, i)
+        if n is not None:
+            n = n.finalize()
+        return n, i
+
+
 class Label(Parselet):
     """Dummy Parselet that serves only to provide an AST label"""
-    def __init__(self, ast_label, parser=None, force_node=True):
+    def __init__(self, ast_label, parser=None, force_node=True, defer=False):
         self.force_node = force_node
+        self.defer = defer
+        if not self.defer and isinstance(ast_label, type) and issubclass(ast_label, ASTNode):
+            self.label_class = ast_label
+            ast_label = self.label_class.class_label
+        else:
+            self.label_class = None
         super().__init__(parser, ast_label=ast_label)
 
     def parse(self, s, i=0):
@@ -427,42 +578,42 @@ class Label(Parselet):
 
         if not n:
             if self.force_node:
-                return ast_node(self.ast_label, s=s, i=i), new_i
+                if self.label_class:
+                    # `from_ast` will need to handle this case. By default:
+                    # call label_class's constructor with no arguments.
+                    return self.label_class.from_ast(None, s=s, i=i), new_i
+                else:
+                    return ASTNode(label=self.ast_label, s=s, i=i), new_i
             else:
                 # consumer-only parse
                 return None, new_i
         else:
             if n.label is None:
                 # relabel an existing None-labeled node
-                return transform_ast(n, label=self.ast_label), new_i
+                if self.label_class:
+                    n = self.label_class.from_ast(n)
+                else:
+                    # relabel as a side effect
+                    n.label = self.ast_label
+                return n, new_i
             else:
-                return ast_node(self.ast_label, n, s=s, i=i), new_i
+                # `n` is already labeled, add a new parent
+                n = ASTNode(label=self.ast_label, children=[n], s=s, i=i)
+                if self.label_class:
+                    n = self.label_class.from_ast(n)
+                return n, new_i
 
     def __add__(self, other):
+        if self.label_class:
+            l = self.label_class
+        else:
+            l = self.ast_label
         if self.parser is not None:
             # Note: some potentially counterintuitive behavior if self.parser
             # is also a Label.
-            return Label(self.ast_label, parser=self.parser + other, force_node=self.force_node)
+            return Label(l, parser=self.parser + other, force_node=self.force_node, defer=self.defer)
         else:
-            return Label(self.ast_label, parser=Sequence(other), force_node=self.force_node)
-
-
-class Collapse(Parselet):
-    """Dummy Parselet that prevents extraneous trivial ast nodes"""
-    def __init__(self, parser=None, none_only=True):
-        self.none_only = none_only
-        super().__init__(parser)
-
-    def parse(self, s, i=0):
-        if self.parser is not None:
-            n, new_i = self.parser.parse(s, i)
-        else:
-            n, new_i = super().parse(s, i=i)
-
-        if n and len(n) == 1:
-            if not self.none_only or n.label is None:
-                n = n[0]
-        return n, new_i
+            return Label(l, parser=Sequence(other), force_node=self.force_node, defer=self.defer)
 
 
 class Optional(Parselet):
@@ -524,7 +675,7 @@ class REParselet(Parselet):
                 # use entire match
                 result = (m.group(),)
             # XX should this use seq_result?
-            return ast_node(self.ast_label, *result, s=s, i=i), new_i
+            return ASTNode(label=self.ast_label, children=result, s=s, i=i), new_i
         else:
             self.error(s, i)
 
@@ -556,7 +707,8 @@ def Whitespace(plus=False):
 
 
 class Sequence(Parselet):
-    def __init__(self, *parsers, **kwargs):
+    def __init__(self, *parsers, force_node=True, **kwargs):
+        self.force_node = force_node
         super().__init__(list(parsers), **kwargs)
 
     def parse(self, s, i=0):
@@ -578,7 +730,7 @@ class Sequence(Parselet):
 
 
 class Repeat(Parselet):
-    def __init__(self, parser, allow_empty=True, force_node=False, check_pre=False, **kwargs):
+    def __init__(self, parser, allow_empty=True, force_node=True, check_pre=False, **kwargs):
         self.allow_empty = allow_empty
         self.force_node = force_node
         self.check_pre = check_pre
@@ -607,7 +759,7 @@ class Join(Parselet):
     # flat ast (and has some more bells and whistles)
     def __init__(self, join, elem,
                 allow_empty=True, allow_final=False, initial_join=False,
-                label_single=None, force_node=False, **kwargs):
+                label_single=False, force_node=True, **kwargs):
         self.join = join
         self.elem = elem
         self.allow_empty = allow_empty
@@ -650,6 +802,10 @@ class Join(Parselet):
             except ParseError as e:
                 if not found_any and not self.allow_empty:
                     raise e
+                if join_last and e.met_preconditions:
+                    # we failed while already committed to elem
+                    # XX is this too aggressive?
+                    raise e
                 break
         if not found_any and not self.allow_empty:
             raise ParseError(f"Failed to match any instances of `{self.ast_label}`", s=s, i=i)
@@ -684,7 +840,7 @@ class Disjunctive(Parselet):
                 if self.ast_label is None:
                     return n, new_i
                 else:
-                    return ast_node(self.ast_label, n, s=s, i=i), new_i
+                    return ASTNode(label=self.ast_label, children=[n], s=s, i=i), new_i
         # if we get to here, all parsers raised with met_preconditions=False.
         # send that same flag upwards in case this is part of another
         # Disjunctive
@@ -747,9 +903,9 @@ class LateDisjunctive(Parselet):
                     return None, new_i
                 # same labeling logic as Disjunctive at this point
                 elif self.ast_label is None:
-                    return result, new_i
+                    return result.finalize(), new_i
                 else:
-                    return ast_node(self.ast_label, result, s=s, i=i), new_i
+                    return ASTNode(label=self.ast_label, children=[result.finalize()], s=s, i=i), new_i
         # if we get to here, all parsers raised with met_preconditions=False.
         # send that same flag upwards in case this is part of another
         # Disjunctive
@@ -769,12 +925,12 @@ class LeftRecursive(Parselet):
     # ...
     # S -> S + parsers[n]
     # S -> prefix
-    def __init__(self, prefix, *parsers, **kwargs):
+    def __init__(self, prefix, *parsers, force_node=True, **kwargs):
         parsers = list(parsers)
         # # ensure that the final disjunct is a dummy parser so that we can
         # # gracefully fall back to the terminal-only case
         self.prefix = prefix
-        # parser = prefix + Repeat(Disjunctive(*parsers), force_node=True)
+        self.force_node = force_node
         parser = Repeat(Disjunctive(*parsers), check_pre=True)
         super().__init__(parser, **kwargs)
 
@@ -783,7 +939,7 @@ class LeftRecursive(Parselet):
             return a
         ast = a[0]
         for i in range(1, len(a)):
-            ast = ast_node(a[i].label, ast, *a[i].values, s=a[i].s, i=a[i].i)
+            ast = ASTNode(label=a[i].label, children=[ast] + a[i].children, s=a[i].s, i=a[i].i).finalize()
         return [ast]
 
 
@@ -842,6 +998,7 @@ errors_raise = False
 
 # generalized context manager for displaying lnb errors in a sensible way. Tries
 # to display them, and if not, falls back on logging.
+# note that recursive use of this with `errors_raise` will result in extra messaging
 @contextmanager
 def error_manager(summary=None):
     from lamb.types import TypeParseError, TypeMismatch
@@ -859,7 +1016,8 @@ def error_manager(summary=None):
                 TypeMismatch,
                 ParseError,
                 DomainError) as e:
-            display(e)
+            if display:
+                display(e)
             if errors_raise or not display:
                 raise e
     except Exception as e:
@@ -961,53 +1119,152 @@ def apply_rs_transform(right_side, transform, transforms=None):
     return right_side
 
 
+class Statement(EnumClass):
+    ASSIGNMENT = "assignment"
+    VAR_ASSIGN = "var_assign"
+    LEX_ASSIGN = "lex_assign"
+    OP_ASSIGN = "op_assign"
+
+
+class Attr(EnumClass):
+    OP = "op"
+    ARITY = "arity"
+    NAME = "name"
+    INDEX = "index"
+    REMAINDER = "expr" # placeholder while expr parsing is not implemented
+    TRANSFORM = "transform"
+
+
 # overmatches relative to valid term names
 term_re = r'_?[a-zA-Z0-9]+'
 op_re = r'[!@%^&*~<>|\\/\-=+]+'
 term_or_op_re = fr'({term_re}|{op_re})'
 
 
-def build_assign_parser():
-    eq_parser = (Whitespace()
-                 + REParselet(r'=(?:<([a-zA-Z0-9_]*)>)?',
-                      ast_label='transform',
-                      error="Missing `=` in assignment")
-                 + Whitespace())
+@astclass(None)
+class AssignmentAST(ASTNode):
+    expr: str # eventually, ASTNode
+    transform: typing.Optional[str] = field(default=None, kw_only=True)
 
-    op_assign_parser = (Label('op_assign')
-         + Precondition(Keyword('operator', error="Missing `operator` prefix"))
-         + Whitespace()
-         + REParselet(term_or_op_re, ast_label='operator')
-         + Whitespace()
-         + REParselet(r'(?:\((\d+)\))?', ast_label='arity')
-         + eq_parser
-         + REParselet(r'.*', ast_label='remainder'))
-
-    lex_assign_parser = (
-        Label("lex_assign")
-        + Precondition(REParselet(r'\|\|', error="Missing interpretation brackets"))
-        + REParselet(r'[a-zA-Z _]+[a-zA-Z0-9 _]*', ast_label='name')
-        + REParselet(r'(?:\[(-?[0-9]+|\*)\])?\|\|', ast_label='index', error='error in lexical entry name')
-        + eq_parser
-        + REParselet(r'.*', ast_label='remainder'))
-
-    from lamb.meta.parser import term_parser
-    var_assign_parser = (
-        Label("var_assign")
-        + term_parser
-        + eq_parser
-        + REParselet(r'.*', ast_label='remainder'))
-
-    assign_parser = Label('assignment', op_assign_parser
-                                        | lex_assign_parser
-                                        | var_assign_parser)
-    return assign_parser
+    def eval_right_side(self, var_env, transforms):
+        right_side = parse_right(self.left_desc(), self.expr, var_env, constants=True)
+        if right_side is not None:
+            right_side = apply_rs_transform(right_side, self.transform, transforms=transforms)
+        return right_side
 
 
-assign_parser = None
+@astclass(Statement.VAR_ASSIGN)
+class VarAssignAST(AssignmentAST):
+    term: ASTNode # really, TermNode
+
+    def left_desc(self):
+        return self.term.name
+
+    def instantiate(self, var_env, transforms):
+        right_side = self.eval_right_side(var_env, transforms)
+        if right_side is None:
+            return None, None
+        # if left_type is specified it, unify with right_side's
+        # type, and use that for the resulting term
+        left_type = self.term.type
+        if left_type is None:
+            left_type = right_side.type
+        if left_type != right_side.type:
+            right_side = right_side.ensure_typed_expr(right_side, typ=left_type)
+        term = self.term.instantiate(typ=right_side.type)
+        return term.op, right_side
+
+
+@astclass(Statement.LEX_ASSIGN)
+class LexAssignAST(AssignmentAST):
+    name: str
+    index: typing.Optional[str] = None
+
+    def left_desc(self):
+        return f"||{self.name}||"
+
+    def get_index(self, env, ambiguity):
+        if not self.index or self.index == "*":
+            if (self.name in env and (ambiguity or self.index == "*")):
+                return True
+            else:
+                return None # replace existing item or add a new one
+        else:
+            return int(self.index)
+
+    def instantiate(self, var_env, transforms):
+        from lamb.lang import Item
+
+        right_side = self.eval_right_side(var_env, transforms)
+        if right_side is None:
+            return None
+
+        lex_name = self.name.replace(" ", "_")
+        if lex_name != self.name:
+            logger().info(f"Exporting item `||{self.name}||` to python variable `{lex_name}`.")
+            self.name = lex_name # side effect
+        return Item(lex_name, right_side)
+
+
+@astclass(Statement.OP_ASSIGN)
+class OpAssignAST(AssignmentAST):
+    op: str
+    index: typing.Optional[str] = None
+    arity: typing.Optional[str] = None
+
+    def left_desc(self):
+        return f"operator {self.op}"
+
+    def instantiate(self, var_env, transforms):
+        raise NotImplementedError()
+
+
+class AssignmentParser(Unit):
+    @classmethod
+    def build_parser(cls):
+        # build cls.parser on first instantiation, to avoid circular import
+        # issues. After first instantiation, this is memoized.
+        from lamb.meta.parser import term_parser
+
+        eq_parser = (Whitespace()
+                     + REParselet(r'=(?:<([a-zA-Z0-9_]*)>)?',
+                          ast_label=Attr.TRANSFORM,
+                          error="Missing `=` in assignment")
+                     + Whitespace())
+
+        op_assign_parser = (Label(OpAssignAST)
+             + Precondition(Keyword('operator', error="Missing `operator` prefix"))
+             + Whitespace()
+             + REParselet(term_or_op_re, ast_label=Attr.OP)
+             + Whitespace()
+             + REParselet(r'(?:\((\d+)\))?', ast_label=Attr.ARITY)
+             + eq_parser
+             + REParselet(r'.*', ast_label=Attr.REMAINDER))
+
+        lex_assign_parser = (
+            Label(LexAssignAST)
+            + Precondition(REParselet(r'\|\|', error="Missing interpretation brackets"))
+            + REParselet(r'[a-zA-Z _]+[a-zA-Z0-9 _]*', ast_label=Attr.NAME)
+            + REParselet(r'(?:\[(-?[0-9]+|\*)\])?\|\|', ast_label=Attr.INDEX, error='error in lexical entry name')
+            + eq_parser
+            + REParselet(r'.*', ast_label=Attr.REMAINDER))
+
+        var_assign_parser = (
+            Label(VarAssignAST)
+            + term_parser
+            + eq_parser
+            + REParselet(r'.*', ast_label=Attr.REMAINDER))
+
+        return Label(Statement.ASSIGNMENT, op_assign_parser
+                                                    | lex_assign_parser
+                                                    | var_assign_parser)
+
+
+assign_parser = AssignmentParser()
 
 
 def insert_item(item, index, env):
+    # TODO: should this be a Lexicon member function?
     from lamb.lang import Items
     lex_name = item.name
     if index is not None:
@@ -1029,100 +1286,73 @@ def insert_item(item, index, env):
 
 
 def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
-    global assign_parser
-    if assign_parser is None:
-        # avoid circular import issues
-        assign_parser = build_assign_parser()
-
     from lamb.meta.parser import TermNode, valid_op_symbol
 
     if env is None:
         env = {}
     var_env = vars_only(env)
-    with error_manager():
-        ast, _ = assign_parser.parse(s, i=i)
-        # collect left_s name first for error messaging
+    raw_ast, _ = assign_parser.parse(s, i=i)
+    match raw_ast:
+        case ASTNode(Statement.ASSIGNMENT, [VarAssignAST() | OpAssignAST()]):
+            pass
+        case ASTNode(Statement.ASSIGNMENT, [LexAssignAST()]):
+            from lamb.lang import get_system
+            a_ctl = get_system().assign_controller
+            default = a_ctl.default()
+            var_env = default.new_child(var_env)
+        case ASTNode(Statement.ASSIGNMENT):
+            raise ParseError(f"Unknown assignment type `{ast.children}`", s=s, i=i)
+        case _:
+            raise ParseError(f"Unknown statement type `{ast.label}`", s=s, i=i)
+
+    ast = raw_ast[0]
+    left_desc = ast.left_desc()
+    with parse_error_wrap(f"Assignment to `{left_desc}` failed"):
         match ast:
-            case ASTNode("assignment", [ASTNode("var_assign")]):
-                left_desc = ast[0].term.name
-            case ASTNode("assignment", [ASTNode("lex_assign")]):
-                from lamb.lang import get_system
-                left_desc = f"||{ast[0].name}||"
-                a_ctl = get_system().assign_controller
-                default = a_ctl.default()
-                var_env = default.new_child(var_env)
-            case ASTNode("assignment", [ASTNode("op_assign")]):
-                left_desc = f"operator {ast[0].operator}"
-            case ASTNode("assignment"):
-                raise ParseError(f"Unknown assignment type `{ast.values}`", s=s, i=i)
+            case VarAssignAST():
+                term_name, right_side = ast.instantiate(var_env, transforms)
+                if term_name is None:
+                    return ({}, env)
+                else:
+                    # # NOTE side-effect here
+                    env[term_name] = right_side
+                    return ({term_name : right_side}, env)
+            case LexAssignAST():
+                item = ast.instantiate(var_env, transforms)
+                if item is None:
+                    return {}, env
+                try:
+                    insert_item(item, ast.get_index(env, ambiguity), env)
+                except IndexError:
+                    raise ParseError(f"Invalid index `{ast.index}` in assignment to lexical entry `{left_desc}`", s=ast.s, i=ast.i)
+                return {item.name: env[item.name]}, env
+            case OpAssignAST(op=op_symbol, arity=arity):
+                from lamb.meta.core import op_from_te, registry
+
+                right_side = ast.eval_right_side(var_env, transforms)
+                if right_side is None:
+                    return {}, env
+
+                if not valid_op_symbol(op_symbol):
+                    err_ast = raw_ast[0].map[Attr.OP]
+                    raise ParseError(f"Invalid operator symbol `{op_symbol}`", s=err_ast.s, i=err_ast.i)
+                if arity is not None:
+                    arity = int(arity)
+                op_cls = op_from_te(op_symbol, right_side, arity=arity)
+                registry.add_operator(op_cls)
+                op = registry.get_operators(cls=op_cls)[0]
+                try:
+                    # operators aren't stored in the env, so attempt to display them
+                    # now (TODO: sequencing will be wrong)
+                    from IPython.display import display
+                    display(op)
+                except ImportError:
+                    pass
+
+                # XX maybe store new operators as global state somehow, for easier access?
+                return ({}, env)
             case _:
-                raise ParseError(f"Unknown statement type `{ast.label}`", s=s, i=i)
-
-        with parse_error_wrap(f"Assignment to `{left_desc}` failed"):
-            match ast[0]:
-                case ASTNode(transform=t, remainder=x):
-                    right_side = parse_right(left_desc, x, var_env, constants=True)
-                    if right_side is None:
-                        return ({}, env)
-                    right_side = apply_rs_transform(right_side, t, transforms=transforms)
-                case _:
-                    # should be unreachable, `remainder` matches ''.
-                    return ({}, env)
-
-            match ast[0]:
-                case ASTNode("var_assign", term=TermNode(type=left_type) as t):
-                    # if left_type is specified it, unify with right_side's
-                    # type, and use that for the resulting term
-                    if left_type is None:
-                        left_type = right_side.type
-                    if left_type != right_side.type:
-                        right_side = right_side.ensure_typed_expr(right_side, typ=left_type)
-                    term = t.instantiate(typ=right_side.type)
-                    # NOTE side-effect here
-                    env[term.op] = right_side
-                    return ({term.op : right_side}, env)
-
-                case ASTNode("lex_assign", name=name, index=index_str) as n:
-                    from lamb.lang import Item
-                    lex_name = name.replace(" ", "_")
-                    if lex_name != name:
-                        logger().info(f"Exporting item `||{name}||` to python variable `{lex_name}`.")
-                    item = Item(lex_name, right_side)
-                    if not index_str or index_str == "*":
-                        if (lex_name in env and (ambiguity or index_str == "*")):
-                            index = True
-                        else:
-                            index = None # replace existing item or add a new one
-                    else:
-                        index = int(index_str)
-                    try:
-                        insert_item(item, index, env)
-                    except IndexError:
-                        index_ast = n.map['index']
-                        raise ParseError(f"Invalid index `{index}` in assignment to lexical entry `{left_desc}`", s=index_ast.s, i=index_ast.i)
-                    return {lex_name: env[lex_name]}, env
-                case ASTNode("op_assign", operator=op_symbol, arity=op_arity) as n:
-                    from lamb.meta.core import op_from_te, registry
-                    if not valid_op_symbol(op_symbol):
-                        err_ast = n.map['operator']
-                        raise ParseError(f"Invalid operator symbol `{op_symbol}`", s=err_ast.s, i=err_ast.i)
-                    if op_arity:
-                        op_arity = int(op_arity)
-
-                    left_desc = f"operator {ast[0].operator}"
-                    op_cls = op_from_te(op_symbol, right_side, arity=op_arity)
-                    registry.add_operator(op_cls)
-                    op = registry.get_operators(cls=op_cls)[0]
-                    try:
-                        # operators aren't stored in the env, so attempt to display them
-                        # now (TODO: sequencing will be wrong)
-                        from IPython.display import display
-                        display(op)
-                    except ImportError:
-                        pass
-                
-                    # XX maybe store new operators as global state somehow, for easier access?
-                    return ({}, env)
+                raise ParseError(f"Unknown assignment type: {raw_ast}", s=raw_ast.s, i=raw_ast.i)
     return ({}, env)
 
 

@@ -1,10 +1,13 @@
-import sys, re, traceback, collections, enum
+import sys, re, traceback, collections, enum, typing, dataclasses
+
+from dataclasses import dataclass, field
+
 
 from lamb.parsing import find_pattern_locations, consume_pattern, consume_whitespace
 from lamb.parsing import consume_char, ParseError, struc_strip, flatten_paren_struc
 from lamb.parsing import Parselet, REParselet, Label, Optional, Precondition, term_re
-from lamb.parsing import ast_transforms, ASTNode
-
+from lamb.parsing import ASTNode, Unit, astclass
+from lamb.types import TypeConstructor
 
 def parsing_ts():
     from lamb.meta import get_type_system
@@ -37,25 +40,10 @@ def find_term_locations(s, i=0):
     return result
 
 
-def parse_type_wrapper(s, i=0):
-    # wrapper to avoid circular import issues
-    return parsing_ts().type_parser_recursive(s, i=i)
-
-
-type_parser = Parselet(parse_type_wrapper, ast_label="type")
-
-
-term_parser = (Label('term')
-               + REParselet(term_re, ast_label='name')
-               + Optional(Precondition(REParselet('_', consume=True)) + type_parser,
-                         fully=False))
-
-
+@astclass('term')
 class TermNode(ASTNode):
-    def __init__(self, name, type=None, s=None, i=None):
-        super().__init__("term", s=s, i=i)
-        self.map['name'] = name
-        self.map['type'] = type
+    name: str
+    type: typing.Optional[TypeConstructor] = None
 
     def instantiate(self, typ=None, assignment=None):
         # note `typ` used here for consistency with metalanguage code
@@ -65,16 +53,25 @@ class TermNode(ASTNode):
         return TypedExpr.term_factory(self.name, typ=typ,
                                     preparsed=True, assignment=assignment)
 
-    @classmethod
-    def from_ast(cls, a):
-        match a:
-            case ASTNode("term", name=name) as n:
-                return TermNode(name, type=n.get("type", default=None))
-            case _:
-                return None
+
+def parse_type_wrapper(s, i=0):
+    # wrapper to avoid circular import issues
+    return parsing_ts().type_parser_recursive(s, i=i)
 
 
-ast_transforms['term'] = TermNode
+class TypeParser(Unit):
+    parser = Parselet(parse_type_wrapper, ast_label="type")
+
+
+class TermParser(Unit):
+    parser = (Label(TermNode)
+               + REParselet(term_re, ast_label='name')
+               + Optional(Precondition(REParselet('_', consume=True)) + TypeParser(),
+                         fully=False))
+
+
+type_parser = TypeParser()
+term_parser = TermParser()
 
 
 def parse_term(s, i=0, return_obj=True, assignment=None):
