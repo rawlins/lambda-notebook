@@ -1593,7 +1593,7 @@ def struc_strip(struc):
 
 def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
     from lamb.meta.parser import term_symbols_re
-    # XX type_sys param vs parsing_ts()
+    # XX type_sys param vs get_type_system()
     accum = ""
     seq = list()
     if initial_accum is not None:

@@ -9,8 +9,6 @@ from lamb.utils import ensuremath, dbg_print, Namespace
 
 from lamb.types import TypeMismatch, BasicType, FunType, TupleType, is_type_var
 # meta.ply and meta.parsing are the only meta modules imported by core
-from .parser import find_term_locations, parse_term, try_parse_term_sequence
-from .parser import base_term_re, try_parse_typed_term
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
 from .ply import simplify_all, symbol_is_var_symbol, alphanorm_key
 from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
@@ -535,7 +533,6 @@ class OperatorRegistry(object):
         self.custom_transforms = {}
         self.ordering = {}
         self.exported = set()
-        self._term_re = re.compile(base_term_re)
 
     def add_operator(self, _cls, *targs, shadow_warning=True):
         if not targs and (sig := getattr(_cls, 'arg_signature', None)) is not None:
@@ -581,7 +578,8 @@ class OperatorRegistry(object):
                     self.ordering[symbol][o2][desc] = None
                 else:
                     self.ordering[symbol][o2][desc] = -self.ordering[symbol][desc][o2]
-            if self._term_re.match(symbol):
+            from .parser import valid_text_op_symbol
+            if valid_text_op_symbol(symbol):
                 if not symbol in self.exported and TypedExpr.has_local(symbol):
                     logger.warning(
                         f"Operator `{desc.name}/{desc.arg_signature}` shadows existing parsing local for `{symbol}`")
@@ -830,7 +828,8 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
         _secondary_names = set()
 
     # note: validation happens elsewhere
-    is_py_op = not re.match(base_term_re, kwargs['canonical_name'])
+    from .parser import valid_text_op_symbol
+    is_py_op = not valid_text_op_symbol(kwargs['canonical_name'])
 
     class WrappedOp(superclass):
         arity = op_arity
@@ -1929,6 +1928,7 @@ class TypedExpr(object):
 
         This is an expanded version of the original regex approach; one reason
         to move away from that is that this will truely parse the types."""
+        from .parser import find_term_locations, parse_term
         terms = find_term_locations(s, i)
         if ignore is None:
             ignore = set()
@@ -2008,6 +2008,7 @@ class TypedExpr(object):
             if isinstance(s, str) and not preparsed:
                 # in principle, if typ is supplied, could try parsing and
                 # confirm the type?
+                from .parser import try_parse_typed_term
                 v, parsed_typ = try_parse_typed_term(s,
                                             assignment=assignment)
                 if typ is not None and parsed_typ is not None:
@@ -5282,6 +5283,7 @@ class BindingOp(TypedExpr):
         """
 
         global registry
+        from .parser import try_parse_term_sequence
 
         if len(struc) == 0 or not isinstance(struc[0], str):
             return None

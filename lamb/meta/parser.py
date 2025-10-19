@@ -2,16 +2,14 @@ import sys, re, traceback, collections, enum, typing, dataclasses
 
 from dataclasses import dataclass, field
 
-
 from lamb.parsing import find_pattern_locations, consume_pattern, consume_whitespace
 from lamb.parsing import consume_char, ParseError, struc_strip, flatten_paren_struc
 from lamb.parsing import Parselet, REParselet, Label, Optional, Precondition, term_re
 from lamb.parsing import ASTNode, Unit, astclass
 from lamb.types import TypeConstructor
 
-def parsing_ts():
-    from lamb.meta import get_type_system
-    return get_type_system()
+from lamb.meta.core import get_type_system
+from lamb.meta.core import is_op_symbol, TypedExpr
 
 
 term_symbols_re = r'[a-zA-Z0-9]'
@@ -19,10 +17,15 @@ base_term_re = fr'{term_symbols_re}+'
 full_term_re = fr'(_?{base_term_re})(_)?'
 match_term_re = fr'{base_term_re}$'
 
+text_op_re = r'([^\W\d]\w*)'
+
+
+def valid_text_op_symbol(s):
+    return re.fullmatch(text_op_re, s) is not None
+
 
 def valid_op_symbol(s):
-    from lamb.meta.core import is_op_symbol
-    return is_op_symbol(s) or re.match(match_term_re, s) is not None
+    return is_op_symbol(s) or valid_text_op_symbol(s)
 
 
 def find_term_locations(s, i=0):
@@ -47,20 +50,15 @@ class TermNode(ASTNode):
 
     def instantiate(self, typ=None, assignment=None):
         # note `typ` used here for consistency with metalanguage code
-        from lamb.meta import TypedExpr
         if typ is None:
             typ = self.type
         return TypedExpr.term_factory(self.name, typ=typ,
                                     preparsed=True, assignment=assignment)
 
 
-def parse_type_wrapper(s, i=0):
-    # wrapper to avoid circular import issues
-    return parsing_ts().type_parser_recursive(s, i=i)
-
-
 class TypeParser(Unit):
-    parser = Parselet(parse_type_wrapper, ast_label="type")
+    # parser = Parselet(parse_type_wrapper, ast_label="type")
+    parser = Parselet(get_type_system().type_parser_recursive, ast_label="type")
 
 
 class TermParser(Unit):
