@@ -529,8 +529,8 @@ class Unit(Parselet):
                 # subclasses will typically not bother with __init__, so validate
                 # this case manually
                 raise ParseError("Internal parser error: doubly-supplied parser for `Unit` subclass")
-            # try parser defined as a class attribute.
-            parser = self.parser
+            # leave parser defined as a class attribute, by passing None to
+            # superclass
         super().__init__(parser)
 
     @classmethod
@@ -543,7 +543,7 @@ class Unit(Parselet):
         # memoize the parser as a class-level attribute
         cls.parser = cls.build_parser()
 
-    def parse(self, s, i=0):
+    def get_parser(self):
         if self.parser is None and self.parser_builder:
             # if a subclass defines `build_parser`, call it and memoize the
             # resulting parser at this point. This allows a parser to be
@@ -552,7 +552,10 @@ class Unit(Parselet):
             self.memoize_parser()
         if self.parser is None:
             raise ParseError("Internal parser error: Unit is missing parser", s=s, i=i)
-        n, i = self.parser.parse(s, i)
+        return self.parser
+
+    def parse(self, s, i=0):
+        n, i = self.get_parser().parse(s, i)
         if n is not None:
             n = n.finalize()
         return n, i
@@ -805,6 +808,7 @@ class Join(Parselet):
                 if join_last and e.met_preconditions:
                     # we failed while already committed to elem
                     # XX is this too aggressive?
+                    print(e)
                     raise e
                 break
         if not found_any and not self.allow_empty:

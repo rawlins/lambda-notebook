@@ -17,6 +17,7 @@ base_term_re = fr'{term_symbols_re}+'
 full_term_re = fr'(_?{base_term_re})(_)?'
 match_term_re = fr'{base_term_re}$'
 
+# text operator symbols cannot start with a non-alpha char
 text_op_re = r'([^\W\d]\w*)'
 
 

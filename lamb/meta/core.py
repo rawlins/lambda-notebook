@@ -2125,6 +2125,7 @@ class TypedExpr(object):
 
         # the only kind of operator-expression generated after this point is
         # an ApplicationExpr.
+        # TODO: error messaging when this fails to parse
         op = cls.ensure_typed_expr(op)
         return cls._construct_appl(op, *remainder, assignment=assignment)
 
