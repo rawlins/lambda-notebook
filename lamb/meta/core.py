@@ -522,7 +522,27 @@ class OperatorRegistry(object):
             return self.check_types_viable(*[a.type for a in args])
 
     def __init__(self):
+        self.op_listeners = []
+        self.bop_listeners = []
         self.clear()
+
+    def add_bop_listener(self, f, initial_run=False):
+        self.bop_listeners.append(f)
+        if initial_run:
+            f(self)
+
+    def add_op_listener(self, f, initial_run=False):
+        self.op_listeners.append(f)
+        if initial_run:
+            f(self)
+
+    def bop_change(self):
+        for f in self.bop_listeners:
+            f(self)
+
+    def op_change(self):
+        for f in self.op_listeners:
+            f(self)
 
     def clear(self):
         self.ops = {}
@@ -533,6 +553,8 @@ class OperatorRegistry(object):
         self.custom_transforms = {}
         self.ordering = {}
         self.exported = set()
+        self.op_change()
+        self.bop_change()
 
     def add_operator(self, _cls, *targs, shadow_warning=True):
         if not targs and (sig := getattr(_cls, 'arg_signature', None)) is not None:
@@ -589,6 +611,7 @@ class OperatorRegistry(object):
         if not desc.arity in self.arities:
             self.arities[desc.arity] = dict()
         self.arities[desc.arity][desc] = desc
+        self.op_change()
 
     def remove_operator(self, symbol, op):
         del self.ops[symbol][op]
@@ -602,6 +625,7 @@ class OperatorRegistry(object):
             if not any(op in self.ops[symbol] for symbol in self.ops):
                 # only delete from `arities` if no instances of op left
                 del self.arities[op.arity][op]
+        self.op_change()
 
     def get_operators(self, *types, symbol=None, arity=None, cls=None, exact=False):
         # this is currently basically a search function.
@@ -728,7 +752,7 @@ class OperatorRegistry(object):
         return self.apply_custom_transforms(result[0].cls, result[0].cls(*args, **kwargs))
 
     def add_binding_op(self, op):
-        """Register an operator to be parsed."""
+        """Register a binding operator to be parsed."""
         if op.canonical_name is None:
             self.unparsed_binding_ops.add(op)
         else:
@@ -743,9 +767,10 @@ class OperatorRegistry(object):
                 for alias in op.secondary_names:
                     self.canonicalize_binding_ops[alias] = op.canonical_name
         BindingOp.compile_ops_re()
+        self.bop_change()
 
     def remove_binding_op(self, op):
-        """Remove an operator from the parsing registry."""
+        """Remove a binding operator from the parsing registry."""
         for alias in self.binding_ops[op.canonical_name].secondary_names:
             del self.canonicalize_binding_ops[alias]
         if op.canonical_name is None:
@@ -753,6 +778,7 @@ class OperatorRegistry(object):
         else:
             del self.binding_ops[op.canonical_name]
         BindingOp.compile_ops_re()
+        self.bop_change()
 
     def _repr_pretty_(self, p, cycle):
         if cycle:
