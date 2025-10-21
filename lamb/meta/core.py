@@ -741,8 +741,12 @@ class OperatorRegistry(object):
                 result = self._find_closest(symbol, [o for o in matches if matches[o] == 1])
 
         if not result:
-            raise parsing.ParseError(
-                f"No viable {len(args)}-ary operator for symbol `{symbol}` and arguments `{repr(args)}`")
+            if len(args) == 1:
+                raise parsing.ParseError(
+                    f"No viable unary operator for symbol `{symbol}` and argument `{repr(args[0])}`")
+            else:
+                raise parsing.ParseError(
+                    f"No viable {len(args)}-ary operator for symbol `{symbol}` and arguments `{repr(args)}`")
         elif len(result) > 1:
             # this could be a lot more user-friendly, probably
             match_str = ", ".join(f"`{r.signature_str()}`" for r in result)
