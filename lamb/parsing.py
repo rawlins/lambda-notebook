@@ -44,6 +44,7 @@ class ParseError(Exception):
         # set to False to indicate that a try_parse function did not find
         # preconditions for what it is supposed to consume
         self.met_preconditions = met_preconditions
+        self.has_preconditions = None
         self.has_note = False
 
     def _try_add_note(self):
@@ -454,7 +455,7 @@ def seq_extend(accum, n):
 class Parselet(object):
     parser = None
     def __init__(self, parser, ast_label=None, error=None, skip_trivial=False):
-        if parser:
+        if parser is not None:
             # only override class-level field if something non-trivial is
             # provided. This is primarily to support the subclassing behavior
             # of `Unit`.
@@ -637,21 +638,6 @@ class Optional(Parselet):
                 return None, i
 
 
-class Precondition(Parselet):
-    def __init__(self, parser, ast_label=None, **kwargs):
-        # ast_label is unused in parsing
-        if ast_label is None:
-            ast_label = parser.ast_label
-        super().__init__(parser, ast_label=ast_label, **kwargs)
-
-    def parse(self, s, i=0):
-        try:
-            return self.parser.parse(s, i)
-        except ParseError as e:
-            e.met_preconditions = False
-            raise e
-
-
 class REParselet(Parselet):
     def __init__(self, regex, consume=None, ast_label=None, flags=0, **kwargs):
         self.raw_regex = regex
@@ -666,19 +652,24 @@ class REParselet(Parselet):
         return f"Failed to match pattern for {self.rule_name()} `{self.raw_regex}`"
 
     def parse(self, s, i=0):
-        m = self.parser.match(s[i:])
+        m = self.parser.match(s, i)
         if m:
-            new_i = m.end() + i
+            new_i = m.end()
             if self.consume:
                 # preempt any groups
                 return None, new_i
             # could do something with named groups
             result = m.groups()
-            if not result:
+            # set the `i` value based on the group beginning, not the whole
+            # match. (XX generalize to multiple groups)
+            ret_i = 0
+            if result and (test_i := m.start(1)) >= 0:
+                ret_i = test_i
+            elif not result:
                 # use entire match
                 result = (m.group(),)
             # XX should this use seq_result?
-            return ASTNode(label=self.ast_label, children=result, s=s, i=i), new_i
+            return ASTNode(label=self.ast_label, children=result, s=s, i=ret_i), new_i
         else:
             self.error(s, i)
 
@@ -730,6 +721,40 @@ class Sequence(Parselet):
         r = self.copy()
         r.parser.append(other) # left association
         return r
+
+
+class Precondition(Sequence):
+    def __init__(self, pre, main=None, ast_label=None, **kwargs):
+        # ast_label is unused in parsing
+        self.pre = pre
+        if main is None:
+            main = []
+        super().__init__(*main, ast_label=ast_label, **kwargs)
+
+    def parse(self, s, i=0):
+        accum = []
+        try:
+            n, cur = self.pre.parse(s, i)
+            seq_extend(accum, n)
+        except ParseError as e:
+            e.has_preconditions = True
+            e.met_preconditions = False
+            raise e
+
+        try:
+            # XX code dup with superclass
+            for p in self.parser:
+                n, cur = p.parse(s, cur)
+                seq_extend(accum, n)
+        except ParseError as e:
+            e.has_preconditions = True
+            raise e
+
+        return seq_result(self, accum, cur, s, i)
+
+    def copy(self):
+        return Precondition(self.pre, main=self.parser, **self.copy_args())
+
 
 
 class Repeat(Parselet):
@@ -805,10 +830,9 @@ class Join(Parselet):
             except ParseError as e:
                 if not found_any and not self.allow_empty:
                     raise e
-                if join_last and e.met_preconditions:
+                if join_last and e.has_preconditions and e.met_preconditions:
                     # we failed while already committed to elem
                     # XX is this too aggressive?
-                    print(e)
                     raise e
                 break
         if not found_any and not self.allow_empty:
