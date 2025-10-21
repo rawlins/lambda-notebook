@@ -2903,6 +2903,12 @@ class TypeMismatch(Exception):
                     return "%s/%s" % (i, t.latex_str())
                 else:
                     return "`%s`/%s" % (i, repr(t))
+        elif isinstance(i, type):
+            if latex:
+                return f"{i.__name__}"
+            else:
+                return f"`{i.__name__}`"
+
         else:
             # XX this will fail if this error path is triggered during package
             # loading
