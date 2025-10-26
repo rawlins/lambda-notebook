@@ -197,6 +197,20 @@ def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True):
                                         _globals=_globals, fullcopy=fullcopy))
     if let and isinstance(result, TypedExpr):
         result = let_wrapper(result)
+    if isinstance(s, str):
+        if _globals:
+            if assignment is None:
+                assignment = {}
+            assignment = collections.ChainMap(assignment, _globals)
+        try:
+            r2 = TypedExpr.new_parse(s, assignment=assignment) # XX _globals, fullcopy?
+        except Exception as e:
+            raise parsing.ParseError(f"New parser failure on `{s}`", e=e)
+
+        if let and isinstance(r2, TypedExpr):
+            r2 = let_wrapper(r2)
+            if result != r2:
+                raise parsing.ParseError(f"New parser equality failure on `{s}`: `{repr(result)}` vs. `{repr(r2)}`")
     return result
 
 
@@ -600,8 +614,8 @@ class OperatorRegistry(object):
                     self.ordering[symbol][o2][desc] = None
                 else:
                     self.ordering[symbol][o2][desc] = -self.ordering[symbol][desc][o2]
-            from .parser import valid_text_op_symbol
-            if valid_text_op_symbol(symbol):
+            from .parser import valid_text_op
+            if valid_text_op(symbol):
                 if not symbol in self.exported and TypedExpr.has_local(symbol):
                     logger.warning(
                         f"Operator `{desc.name}/{desc.arg_signature}` shadows existing parsing local for `{symbol}`")
@@ -858,8 +872,8 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
         _secondary_names = set()
 
     # note: validation happens elsewhere
-    from .parser import valid_text_op_symbol
-    is_py_op = not valid_text_op_symbol(kwargs['canonical_name'])
+    from .parser import valid_text_op
+    is_py_op = not valid_text_op(kwargs['canonical_name'])
 
     class WrappedOp(superclass):
         arity = op_arity
@@ -1802,6 +1816,20 @@ class TypedExpr(object):
                 # convert AttributeError from TypedExprFacade.__getattr__ into a ParseError
                 raise parsing.ParseError(str(e), s=s) from e
 
+    @classmethod
+    def new_parse(cls, s, assignment=None, locals=None):
+        if assignment is None:
+            assignment = {}
+        if locals is None:
+            locals = {}
+        # locals.update(cls._parsing_locals)
+        # XX is locals actually used, and if so, how
+        assignment.update(locals)
+        with parsing.parse_error_wrap("Failed to parse expression", s=s, wrap_all=False):
+            from .parser import expr_parser
+            return expr_parser.parse(s)[0].instantiate(assignment=assignment)
+
+
     _parsing_locals = dict()
 
     @classmethod
@@ -2191,7 +2219,7 @@ class TypedExpr(object):
                 if c is not None:
                     return c
                 # XX improve error messaging here?
-                raise NotImplementedError # did you run a notebook with reload_lamb() out of order?
+                raise NotImplementedError(f"TypedExpr.factory called on unhandled type `{type(s)}`") # did you run a notebook with reload_lamb() out of order?
         else:
             # Argument length > 1.  
             # This code path is for constructing complex TypedExprs where
@@ -5696,6 +5724,10 @@ class MapFun(TypedExpr):
     def __init__(self, *args, typ=None, copying=False, **kwargs):
         if copying and typ is None:
             raise ValueError("Bug: MapFun copying requires `typ` to be specified")
+        # TODO: handle arbitrary sets?
+        from .sets import ListedSet
+        if len(args) == 1 and isinstance(args[0], ListedSet):
+            args = list(args[0].args)
         if not copying:
             # *args is a sequence of tuples. Note that this does not check TupleType,
             # but requires a Tuple.
@@ -5704,7 +5736,7 @@ class MapFun(TypedExpr):
                 if (is_te(a) and not isinstance(a, Tuple)
                                 or not is_te(a) and not isinstance(a, collections.abc.Sequence)
                                 or len(a) != 2):
-                    raise TypeError(f"MapFun requires a sequences of pairs (received non-pair `{repr(a)}`)")
+                    raise TypeError(f"MapFun requires a sequence of pairs (received non-pair of type `{type(a)}`: `{repr(a)}`)")
 
             # normalize into python lists so we can work in place
             args = [[a[0], a[1]] for a in args]

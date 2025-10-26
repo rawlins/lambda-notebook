@@ -984,11 +984,10 @@ class LeftRecursive(Parselet):
             return seq_result(self, self.ast_group_left(accum), cur, s, i)
 
 
-def vars_only(env):
-    """Ensure that env is a 'pure' variable assignment -- exclude anything but
+def te_only(env):
+    """Ensure that env is a 'pure' expression assignment -- exclude anything but
     TypedExprs."""
-    env2 = {key: env[key] for key in env.keys() if is_te(env[key])}
-    return env2
+    return {key: env[key] for key in env if is_te(env[key])}
 
 
 # wrap other exception types in ParseError with designated parameters
@@ -1081,7 +1080,7 @@ def parse_te(line, env=None, use_env=False):
 
     if env is None or not use_env:
         env = dict()
-    var_env = vars_only(env)
+    var_env = te_only(env)
     final_r = None
     with error_manager("Parsing of typed expression failed with exception:"):
         result = te(line, assignment=var_env)
@@ -1318,7 +1317,7 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
 
     if env is None:
         env = {}
-    var_env = vars_only(env)
+    var_env = te_only(env)
     raw_ast, _ = assign_parser.parse(s, i=i)
     match raw_ast:
         case ASTNode(Statement.ASSIGNMENT, [VarAssignAST() | OpAssignAST()]):
