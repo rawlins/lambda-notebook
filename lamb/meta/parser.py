@@ -15,7 +15,7 @@ from lamb.parsing import LeftRecursive, Repeat, LateDisjunctive
 from lamb.types import TypeConstructor
 
 from lamb.meta.core import get_type_system, registry, subassignment
-from lamb.meta.core import is_op_symbol, TypedExpr, Tuple
+from lamb.meta.core import is_op_symbol, TypedExpr, Tuple, MapFun
 
 
 class Expr(EnumClass):
@@ -125,7 +125,7 @@ class MapAST(ASTNode):
             raise ParseError(f"AST error: odd-length AST for map", s=self.s, i=self.i)
         if len(self.children) == 0:
             # TODO: remove hardcoding for this case
-            return lamb.meta.core.MapFun()
+            return MapFun()
         return TypedExpr.factory(
             {self.children[i].instantiate(**kwargs):self.children[i+1].instantiate(**kwargs)
                          for i in range(0, len(self.children), 2)},
@@ -255,16 +255,20 @@ class ApplyAST(ASTNode):
         left = None
         if left_name:
             # XX remove somehow
-            if is_local:
-                # legacy case: locals that are not operator symbols
-                # XX probably this currently shadows the next branch
-                return TypedExpr._parsing_locals[left_name](rhs)
-            elif is_op_symbol(left_name):
+            if is_op_symbol(left_name):
                 if self.children[0].type is not None:
                     raise ParseError(
                         f"Syntax error: operators cannot receive type annotations (operator `{self.children[0].name}`)",
                         s=self.children[0].s, i=self.children[0].i)
                 left = left_name
+            elif is_local:
+                # legacy case: locals that are not operator symbols
+                # XX probably this currently shadows the next branch
+                if self.children[0].type is not None:
+                    raise ParseError(
+                        f"Syntax error: operators cannot receive type annotations (operator function `{self.children[0].name}`)",
+                        s=self.children[0].s, i=self.children[0].i)
+                return TypedExpr._parsing_locals[left_name](rhs)
 
         if left is None:
             left = self.children[0].instantiate(**kwargs)
@@ -546,7 +550,7 @@ class ExprParser(Unit):
                  + (Label(ExprSeq)
                      + Join(REParselet(r"\s*,\s*"), cls.subexpr,
                         allow_empty=True, allow_final=True, force_node=True))
-                 + Token(r'\)', error="Missing closing `)` for function arguments")))
+                 + Token(r'\)', error="Missing closing `)` for function argument list")))
         )
 
         # factor -> SymbolOp+ primary

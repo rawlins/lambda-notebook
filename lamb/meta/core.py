@@ -728,7 +728,7 @@ class OperatorRegistry(object):
 
         matches = [o for o in self.ops[symbol].keys() if o.arity == len(args)]
         if not len(matches):
-            raise parsing.ParseError(f"No {len(args)}-ary operator for `{symbol}`")
+            raise parsing.ParseError(f"Unknown {len(args)}-ary operator for symbol `{symbol}`")
 
         matches = {o: o.check_viable(*args) for o in matches}
 
