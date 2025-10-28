@@ -607,8 +607,17 @@ class TypeConstructor(object):
                 if i >= len(s) or s[i] == close:
                     break
                 # this message could probably be more intelligent
-                i = parsing.consume_char(s, i, sep, f"Extraneous character after subexpression `{m}` while parsing `{cls.__name__}`")
-            i = parsing.consume_char(s, i, close, f"Unmatched `{open}` while parsing `{cls.__name__}`")
+                new_i = parsing.consume_char(s, i, sep)
+                if new_i is None:
+                    raise TypeParseError(
+                        f"Extraneous character after subexpression `{m}` while parsing `{cls.__name__}`",
+                        s=s, i=i)
+                i = new_i
+
+            new_i = parsing.consume_char(s, i, close)
+            if new_i is None:
+                raise TypeParseError(f"Unmatched `{open}` while parsing `{cls.__name__}`", s=s, i=i)
+            i = new_i
             if cls.arity is not None and len(signature) != cls.arity:
                 raise TypeParseError(
                     f"Type constructor `{cls.__name__}` requires {cls.arity} arguments (received {len(signature)})",

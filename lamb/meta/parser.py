@@ -11,8 +11,8 @@ from lamb.parsing import find_pattern_locations, consume_pattern, consume_whites
 from lamb.parsing import consume_char, ParseError, struc_strip, flatten_paren_struc
 from lamb.parsing import Parselet, REParselet, Label, Optional, Precondition, term_re
 from lamb.parsing import ASTNode, Unit, Token, Sequence, astclass, Whitespace, Join
-from lamb.parsing import LeftRecursive, Repeat, LateDisjunctive
-from lamb.types import TypeConstructor
+from lamb.parsing import LeftRecursive, Repeat, LateDisjunctive, parse_error_wrap
+from lamb.types import TypeConstructor, TypeParseError
 
 from lamb.meta.core import get_type_system, registry, subassignment
 from lamb.meta.core import is_op_symbol, TypedExpr, Tuple, MapFun
@@ -235,44 +235,20 @@ class DotAST(ASTNode):
 @astclass(label=Expr.APPLY)
 class ApplyAST(ASTNode):
     def instantiate(self, **kwargs):
-        if isinstance(self.children[0], TermNode):
-            left_name = self.children[0].name
-        else:
-            left_name = None
-        is_local = left_name and self.children[0].name in TypedExpr._parsing_locals
-
         if len(self.children[1]) == 0:
-            if is_local:
-                rhs = []
-            else:
-                # 0-ary functions have the type signature <(), whatever>
-                # TODO: the logic here is filling in a gap in current _construct_appl
-                rhs = [Tuple()]
+            rhs = []
         else:
             rhs = self.children[1].instantiate(**kwargs)
 
-        from lamb.meta.core import is_op_symbol
-        left = None
-        if left_name:
-            # XX remove somehow
-            if is_op_symbol(left_name):
-                if self.children[0].type is not None:
-                    raise ParseError(
-                        f"Syntax error: operators cannot receive type annotations (operator `{self.children[0].name}`)",
-                        s=self.children[0].s, i=self.children[0].i)
-                left = left_name
-            elif is_local:
-                # legacy case: locals that are not operator symbols
-                # XX probably this currently shadows the next branch
-                if self.children[0].type is not None:
-                    raise ParseError(
-                        f"Syntax error: operators cannot receive type annotations (operator function `{self.children[0].name}`)",
-                        s=self.children[0].s, i=self.children[0].i)
-                return TypedExpr._parsing_locals[left_name](rhs)
+        if isinstance(self.children[0], TermNode) and self.children[0].is_operator():
+            return self.children[0].instantiate_as_operator(*rhs, **kwargs)
 
-        if left is None:
-            left = self.children[0].instantiate(**kwargs)
-        return TypedExpr.factory(left, *rhs, **kwargs)
+        if len(rhs) == 0:
+            # 0-ary functions have the type signature <(), whatever>
+            # TODO: the logic here is filling in a gap in current _construct_appl
+            rhs = [Tuple()]
+
+        return TypedExpr.factory(self.children[0].instantiate(**kwargs), *rhs, **kwargs)
 
 
 @astclass(label=Expr.INDEX)
@@ -342,7 +318,9 @@ class BindingAST(ASTNode):
         from lamb.meta.core import tenorm
         kwargs = dict(assignment=factory_kwargs.get('assignment', {}))
         if self.classprop('allow_restrictor') and self.restrictor is not None:
-            kwargs['restrictor'] = tenorm(self.restrictor.instantiate(**factory_kwargs))
+            with parse_error_wrap("Error when trying to instantiate binding expression restrictor",
+                        s=self.restrictor.s, i=self.restrictor.i):
+                kwargs['restrictor'] = self.restrictor.instantiate(**factory_kwargs)
         return kwargs
 
     def instantiate(self, assignment=None, **kwargs):
@@ -364,7 +342,9 @@ class BindingAST(ASTNode):
             # constructor should take a single variable
             var_arg = var_arg[0]
 
-        body = tenorm(self.expr.instantiate(assignment=inst_assignment, **kwargs))
+        with parse_error_wrap("Error when trying to instantiate binding expression body",
+                    s=self.expr.s, i=self.expr.i):
+            body = self.expr.instantiate(assignment=inst_assignment, **kwargs)
 
         return self.op_class(var_arg, body, **self.get_opclass_kwargs(assignment=assignment, **kwargs))
 
@@ -379,7 +359,7 @@ full_term_re = fr'(_?{base_term_re})(_)?'
 match_term_re = fr'{base_term_re}$'
 
 # text operator symbols cannot start with a non-alpha char
-text_op_re = r'([^\W\d]\w*)'
+text_op_re = r'([^\W\d][^\W_]*)'
 symbol_op_symbols_re = r'[!@%^&*~<>|\\/\-=+]'
 symbol_op_re = fr'({symbol_op_symbols_re}+)'
 
@@ -417,10 +397,34 @@ class TermNode(ASTNode):
     name: str
     type: typing.Optional[TypeConstructor] = None
 
+    def is_operator(self):
+        return is_op_symbol(self.name) or self.name in TypedExpr._parsing_locals
+
+    def instantiate_as_operator(self, *args, **kwargs):
+        if self.type is not None and self.is_operator(): # if the latter is true, force the internal error below
+            raise ParseError(
+                f"Operators cannot receive type annotations (operator `{self.name}`)",
+                s=self.s, i=self.i)
+
+        if is_op_symbol(self.name):
+            if len(args) == 0:
+                # XX verify this is correct, and probably fix this
+                args = [Tuple()]
+            return TypedExpr.factory(self.name, *args, **kwargs)
+        elif self.name in TypedExpr._parsing_locals:
+            return TypedExpr._parsing_locals[self.name](args)
+
+        raise ParseError("Internal parser error: term instantiated as operator", s=self.s, i=self.i)
+
     def instantiate(self, typ=None, assignment=None):
         # note `typ` used here for consistency with metalanguage code
         if typ is None:
             typ = self.type
+
+        if self.is_operator():
+            raise ParseError(
+                f"Stray operator name `{self.name}` in expression", s=self.s, i=self.i)
+
         return TypedExpr.term_factory(self.name, typ=typ,
                                     preparsed=True, assignment=assignment)
 
@@ -430,13 +434,29 @@ class TermNode(ASTNode):
 
 class TypeParser(Unit):
     parser = Parselet(get_type_system().type_parser_recursive, ast_label=Attr.TYPE)
+    name = "type"
 
 
 class TermParser(Unit):
     parser = (Label(TermNode)
-               + REParselet(term_re, ast_label='name')
-               + Optional(Precondition(REParselet('_', consume=True)) + TypeParser(),
+               + REParselet(term_re, ast_label=Attr.NAME)
+               + Optional(Precondition(REParselet('_')) + TypeParser(),
                          fully=False))
+    name = "term"
+
+    def __init__(self, error="Expected a valid term"):
+        super().__init__()
+        self.error_msg = error
+
+    def parse(self, s, i=0):
+        try:
+            return super().parse(s, i=i)
+        except TypeParseError as e:
+            raise e
+        except ParseError as e:
+            self.error(s=s, i=i)
+
+
 
 # Binding operator parsing is packaged as a class to better encapsulate update
 # behavior on changes to the list of binding operators. Basically, binding operator
@@ -448,6 +468,7 @@ class TermParser(Unit):
 # XX error messaging on typos in operator names?
 class BindingParser(Unit):
     subexpr = Unit()
+    name = "binding"
 
     @classmethod
     def update_bops(cls, reg):
@@ -476,6 +497,7 @@ registry.add_bop_listener(BindingParser.update_bops, initial_run=True)
 
 class ExprParser(Unit):
     subexpr = Unit()
+    name = "expr"
 
     @classmethod
     def build_parser(cls):
@@ -499,10 +521,15 @@ class ExprParser(Unit):
                               @ (Label(TupleAST, defer=True)
                                  + Precondition(REParselet(r',\s*'))
                                      + Join(Token(r','), cls.subexpr, allow_empty=True, allow_final=True)
-                                     + Token(r'\)', error="Missing closing `)` for tuple"))
-                              @ Token(r'\)', error="Missing closing `)`"))
-                          | Label(TupleAST) + Precondition(REParselet(r'\(\s*')) + REParselet(r'\)', consume=True, error="Missing closing `)`")
+                                     + Token(r'\)', error="Expected closing `)` for tuple"))
+                              @ Token(r'\)', error="Expected closing `)` for group"))
+                          | (Label(TupleAST)
+                                + Precondition(REParselet(r'\(\s*'))
+                                + REParselet(r'\)',
+                                            consume=True, error="Expected closing `)` for tuple"))
                          )
+        group_or_tuple.name = "()-rule"
+        cls.group_or_tuple = group_or_tuple
 
         # set -> "{" subexpr "}"
         # set -> "{" subexpr ",".subexpr "}"
@@ -513,28 +540,30 @@ class ExprParser(Unit):
         # use "," and ":" to disambiguate between set and map. empty set, empty map, singleton set handled as a special cases.
         # note that unlike python, `{}` gives the empty set and `{:}` gives the empty map. 
         set_or_map = (((REParselet(r'{\s*') + cls.subexpr + Whitespace())
-                            @ (Label(SetAST, defer=True) + Precondition(REParselet(r'}', error="Missing closing `}` for set")))
+                            @ (Label(SetAST, defer=True) + Precondition(REParselet(r'}', error="Expected closing `}` for set")))
                             @ (Label(SetAST, defer=True)
                                + Precondition(REParselet(r',\s*'))
                                    + Join(Token(r','), cls.subexpr, allow_empty=True, allow_final=True)
-                                   + Token(r'}', error="Missing closing `}` for set"))
+                                   + Token(r'}', error="Expected closing `}` for set"))
                             @ (Label(MapAST, defer=True)
                                + Precondition(REParselet(r':\s*'))
                                    + cls.subexpr
                                    + Join(Token(r','),
                                           cls.subexpr + Token(r':') + cls.subexpr,
                                           allow_empty=True, allow_final=True, initial_join=True)
-                                   + Token(r'}', error="Missing closing `}` for map")))
+                                   + Token(r'}', error="Expected closing `}` for map")))
                        | (Label(MapAST) + Precondition(REParselet(r'{\s*:\s*'))
-                                            + REParselet(r'}', consume=True, error="Missing closing `}` for map"))
+                                            + REParselet(r'}', consume=True, error="Expected closing `}` for map"))
                        | (Label(SetAST) + Precondition(REParselet(r'{\s*'))
-                                            + REParselet(r'}', consume=True, error="Missing closing `}` for set"))
+                                            + REParselet(r'}', consume=True, error="Expected closing `}` for set"))
                       )
+        set_or_map.name = "{}-rule"
 
         # rule putting the pieces of `atom` together.
         atom = Unit(Unit(group_or_tuple)
                     | Unit(set_or_map)
-                    | TermParser())
+                    | TermParser(error="Expected a valid expression"),
+                    name="atom")
 
         # left-recursive rule:
         # S -> atom "." text_op
@@ -550,7 +579,8 @@ class ExprParser(Unit):
                  + (Label(ExprSeq)
                      + Join(REParselet(r"\s*,\s*"), cls.subexpr,
                         allow_empty=True, allow_final=True, force_node=True))
-                 + Token(r'\)', error="Missing closing `)` for function argument list")))
+                 + Token(r'\)', error="Expected closing `)` for function argument list"))),
+            name="primary"
         )
 
         # factor -> SymbolOp+ primary
@@ -563,6 +593,8 @@ class ExprParser(Unit):
                           + primary)
                   | primary)
 
+        factor.name = "factor"
+
         # opexpr -> SymbolOp.factor
         # (in the case of no operators, this amounts to opexpr -> factor, unlabeled)
         # note a difference from python: because symbol ops are very flexible,
@@ -572,8 +604,8 @@ class ExprParser(Unit):
         # messaging
         opexpr = Unit(Join(Token(fr'({symbol_op_re})', ast_label=Attr.OP), factor,
                         ast_label=OpExprAST,
-                        label_single=None, # 
-                        allow_empty=False))
+                        label_single=None, # without at least one op, defer label to factor
+                        empty_error="Missing expression"))
 
         # expr -> binding
         # expr -> opexpr
@@ -582,6 +614,7 @@ class ExprParser(Unit):
         # complete the recursion
         BindingParser.subexpr.parser = parser
         cls.subexpr.parser = parser
+        parser._repr_pretty_ = cls._repr_pretty_
         return parser
 
 

@@ -193,24 +193,43 @@ def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True):
     # XX incorporate lexicon namespace into this function somehow?
     if _globals is None:
         _globals = global_namespace()
-    result = tenorm(TypedExpr.factory(s, assignment=assignment,
-                                        _globals=_globals, fullcopy=fullcopy))
-    if let and isinstance(result, TypedExpr):
-        result = let_wrapper(result)
+
     if isinstance(s, str):
         if _globals:
             if assignment is None:
                 assignment = {}
             assignment = collections.ChainMap(assignment, _globals)
-        try:
-            r2 = TypedExpr.new_parse(s, assignment=assignment) # XX _globals, fullcopy?
-        except Exception as e:
-            raise parsing.ParseError(f"New parser failure on `{s}`", e=e)
+        result = TypedExpr.new_parse(s, assignment=assignment)
+    else:
+        result = tenorm(TypedExpr.factory(s, assignment=assignment,
+                                        _globals=_globals, fullcopy=fullcopy))
+    if let and isinstance(result, TypedExpr):
+        result = let_wrapper(result)
+    r2 = oldte(s, let=let, assignment=assignment, _globals=_globals, fullcopy=fullcopy)
+    if let and result != r2:
+        raise parsing.ParseError(f"New parser equality failure on `{s}`: `{repr(result)}` vs. `{repr(r2)}`")
+    elif not let:
+        # polymorphic cases are guaranteed to fail here without a let wrapper
+        rl = let_wrapper(result)
+        r2l = let_wrapper(r2)
+        if rl != r2l:
+            raise parsing.ParseError(f"New parser equality failure on `{s}`: `{repr(rl)}` vs. `{repr(r2l)}`")
 
-        if let and isinstance(r2, TypedExpr):
-            r2 = let_wrapper(r2)
-            if result != r2:
-                raise parsing.ParseError(f"New parser equality failure on `{s}`: `{repr(result)}` vs. `{repr(r2)}`")
+    return result
+
+
+def oldte(s, *, let=True, assignment=None, _globals=None, fullcopy=True):
+    """Public interface for constructing `TypedExpr` objects; `s` may be a
+    string, in which case it will be parsed."""
+
+    # XX incorporate lexicon namespace into this function somehow?
+    if _globals is None:
+        _globals = global_namespace()
+
+    result = tenorm(TypedExpr.factory(s, assignment=assignment,
+                                        _globals=_globals, fullcopy=fullcopy))
+    if let and isinstance(result, TypedExpr):
+        result = let_wrapper(result)
     return result
 
 

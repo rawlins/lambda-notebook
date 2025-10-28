@@ -30,7 +30,7 @@ def is_te(x):
     return is_te(x)
 
 class ParseError(Exception):
-    def __init__(self, msg, s=None, i=None, met_preconditions=True, e=None):
+    def __init__(self, msg, s=None, i=None, met_preconditions=True, e=None, has_preconditions=None):
         self.s = s
         self.i = i
         if e:
@@ -44,13 +44,16 @@ class ParseError(Exception):
         # set to False to indicate that a try_parse function did not find
         # preconditions for what it is supposed to consume
         self.met_preconditions = met_preconditions
-        self.has_preconditions = None
+        self.has_preconditions = has_preconditions
         self.has_note = False
 
     def _try_add_note(self):
         if self.has_note or self.i is None:
             return
         try:
+            # when showing the error output in a regular stack trace, use
+            # the note mechanism to show the error string as a multilne
+            # string
             self.add_note(utils.error_pos_str(self.s, self.i, prefix="  ",
                                     plain=True, multiline=True))
             self.has_note = True
@@ -82,7 +85,10 @@ class ParseError(Exception):
                     newline = True
 
         if newline:
-            sep = plain and "\n" or "<br />&nbsp;&nbsp;&nbsp;&nbsp;"
+            # note: the \n here is because in some circumstances (unclear to
+            # me), markdown formatting immediately followed by html code is
+            # broken
+            sep = plain and "\n" or "\n<br />&nbsp;&nbsp;&nbsp;&nbsp;"
         else:
             sep = ": "
         return sep + e_str
@@ -109,6 +115,7 @@ class ParseError(Exception):
                     or 'object'))
             return f"{m}, in {s_desc} `{self.s}`{aux}"
         else:
+            m = f"{m}{aux}"
             if allow_note and self.has_note:
                 return m
             return utils.error_pos_str(self.s, self.i, prefix=m,
@@ -118,7 +125,8 @@ class ParseError(Exception):
         # used in stack trace. Therefore, we don't print the classname, and
         # don't try multiline stuff directly, because the context isn't fully
         # predictable. However, in python 3.11+, use the `add_note` mechanism
-        # to show multiline messaging.
+        # to show multiline messaging. (Note that the note is not part of
+        # the return value, but is added by side effect!)
         return self.tostring(classname=False, allow_note=True, multiline=False)
 
     def _repr_markdown_(self):
@@ -128,15 +136,15 @@ class ParseError(Exception):
         # note: the case that combines an aux string and an error position is
         # relatively untested
         if self.s is None:
-            m = self.msg
+            m = f"{self.msg}{aux}"
         elif self.i is None:
-            m = f"{self.msg}, in string `{self.s}`"
+            m = f"{self.msg}, in string `{self.s}`{aux}"
         else:
-            m = utils.error_pos_str(self.s, self.i, prefix=self.msg,
+            m = utils.error_pos_str(self.s, self.i, prefix=f"{self.msg}{aux}",
                                     plain=False, multiline=True)
         # it's convenient to use markdown here for backticks, but colab will
         # strip out the color. So, use both red and bold.
-        return f"<span style=\"color:red\">**{self.__class__.__name__}**</span>: {m}{aux}"
+        return f"<span style=\"color:red\">**{self.__class__.__name__}**</span>: {m}"
 
     def __repr__(self):
         return self.tostring(multiline=False)
@@ -146,13 +154,15 @@ class ParseError(Exception):
 
 
 @contextmanager
-def try_parse(suppress=False):
+def try_parse(suppress=False, has_preconditions=None):
     try:
         yield
     except ParseError as e:
         if suppress or not e.met_preconditions:
             return None
         else:
+            if has_preconditions is not None:
+                e.has_preconditions = has_preconditions
             raise e
 
 
@@ -243,7 +253,7 @@ class ASTNode:
         if self.label is None:
             return "anonymous parse unit"
         else:
-            return f"`self.label`"
+            return f"`{self.label}`"
 
     def get(self, x, default=None, error=None, force_raw=False):
         if x in self.map:
@@ -454,36 +464,69 @@ def seq_extend(accum, n):
 
 class Parselet(object):
     parser = None
-    def __init__(self, parser, ast_label=None, error=None, skip_trivial=False):
+    name = None
+    def __init__(self, parser, ast_label=None, error=None, skip_trivial=False, name=None):
         if parser is not None:
             # only override class-level field if something non-trivial is
             # provided. This is primarily to support the subclassing behavior
             # of `Unit`.
             self.parser = parser
         self.ast_label = ast_label
+        if name is not None:
+            self.name = name
         self.error_msg = error
         self.skip_trivial = skip_trivial
+
+    def _repr_pretty_before(self, p, cycle):
+        pass
+
+    def _repr_pretty_(self, p, cycle):
+        with p.group(2, f"{self.__class__.__name__}(", ")"):
+            # p.break_()
+            if self.name:
+                p.text(f"name=")
+                p.pretty(self.name)
+                p.text(",")
+                if not cycle:
+                    p.breakable(sep=" ")
+            if self.ast_label:
+                p.text(f"ast_label=")
+                p.pretty(self.ast_label)
+                p.text(",")
+                if not cycle:
+                    p.breakable(sep=" ")
+            if not self.name and not self.ast_label and not cycle:
+                p.breakable()
+            if cycle:
+                p.text(" ...")
+            else:
+                self._repr_pretty_before(p, cycle)
+                p.pretty(self.parser)
 
     def copy_args(self):
         return dict(ast_label=self.ast_label, error=self.error_msg, skip_trivial=self.skip_trivial)
 
     def rule_name(self):
-        if self.ast_label is None:
+        if self.name is not None:
+            return f"rule `{self.name}`"
+        elif self.ast_label is None:
             return "anonymous rule"
+        elif isinstance(self.ast_label, type):
+            return f"rule `{self.ast_label.__name__}`"
         else:
             return f"rule `{self.ast_label}`"
 
     def default_error(self, s, i):
         return f"Failed to parse {self.rule_name()}"
 
-    def error(self, s, i, error=None, met_preconditions=True):
+    def error(self, s, i, error=None, met_preconditions=True, has_preconditions=None):
         if error:
             e = error
         elif self.error_msg:
             e = self.error_msg
         else:
             e = self.default_error(s, i)
-        raise ParseError(e, s=s, i=i, met_preconditions=met_preconditions)
+        raise ParseError(e, s=s, i=i, met_preconditions=met_preconditions, has_preconditions=has_preconditions)
 
     def parse(self, s, i=0):
         # this code is more general than subclasses, because it allows for
@@ -522,7 +565,7 @@ class Parselet(object):
 
 
 class Unit(Parselet):
-    def __init__(self, parser=None):
+    def __init__(self, parser=None, **kwargs):
         if parser is not None and self.parser_builder:
             raise ParseError("Internal parser error: `Unit` parser builder subclass has doubly-supplied parser on construction")
         elif self.parser is not None:
@@ -532,7 +575,23 @@ class Unit(Parselet):
                 raise ParseError("Internal parser error: doubly-supplied parser for `Unit` subclass")
             # leave parser defined as a class attribute, by passing None to
             # superclass
-        super().__init__(parser)
+        super().__init__(parser, **kwargs)
+
+    def _repr_pretty_(self, p, cycle):
+        # explicitly break recursion at all Unit objects
+        if isinstance(self.parser, Parselet) and (self.parser.ast_label is not None or self.parser.name is not None):
+            p.text(f"{self.__class__.__name__}({self.parser.__class__.__name__}(")
+            if self.parser.name is not None:
+                p.text("name=")
+                p.pretty(self.parser.name)
+                p.text(", ")
+            if self.parser.ast_label is not None:
+                p.text("ast_label=")
+                p.pretty(self.parser.ast_label)
+                p.text(", ")
+            p.text("...))")
+        else:
+            p.text(f"{self.__class__.__name__}(...)")
 
     @classmethod
     @property
@@ -616,6 +675,8 @@ class Label(Parselet):
             # Note: some potentially counterintuitive behavior if self.parser
             # is also a Label.
             return Label(l, parser=self.parser + other, force_node=self.force_node, defer=self.defer)
+        elif isinstance(other, Sequence):
+            return Label(l, parser=other.copy(), force_node=self.force_node, defer=self.defer)
         else:
             return Label(l, parser=Sequence(other), force_node=self.force_node, defer=self.defer)
 
@@ -647,6 +708,12 @@ class REParselet(Parselet):
             consume = not bool(ast_label) and not regex.groups
         self.consume = consume
         super().__init__(regex, ast_label=ast_label, **kwargs)
+
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            super()._repr_pretty_(p, cycle)
+        else:
+            p.text(f"{self.__class__.__name__}('{self.raw_regex}')")
 
     def default_error(self, s, i):
         return f"Failed to match pattern for {self.rule_name()} `{self.raw_regex}`"
@@ -731,14 +798,24 @@ class Precondition(Sequence):
             main = []
         super().__init__(*main, ast_label=ast_label, **kwargs)
 
+    def _repr_pretty_before(self, p, cycle):
+        with p.group(2, "pre=(", ")"):
+            p.pretty(self.pre)
+        p.text(",")
+        p.breakable(sep=" ")
+
     def parse(self, s, i=0):
         accum = []
         try:
             n, cur = self.pre.parse(s, i)
             seq_extend(accum, n)
         except ParseError as e:
+            # let TypeParseErrors from embedded preconditions bubble up; this
+            # is mainly to improve error messaging. It does rely on type
+            # parsing being used in a fairly restricted set of circumstances...
+            if not e.has_preconditions:
+                e.met_preconditions = False
             e.has_preconditions = True
-            e.met_preconditions = False
             raise e
 
         try:
@@ -754,7 +831,6 @@ class Precondition(Sequence):
 
     def copy(self):
         return Precondition(self.pre, main=self.parser, **self.copy_args())
-
 
 
 class Repeat(Parselet):
@@ -787,10 +863,12 @@ class Join(Parselet):
     # flat ast (and has some more bells and whistles)
     def __init__(self, join, elem,
                 allow_empty=True, allow_final=False, initial_join=False,
-                label_single=False, force_node=True, **kwargs):
+                label_single=False, force_node=True, empty_error=None,
+                **kwargs):
         self.join = join
         self.elem = elem
-        self.allow_empty = allow_empty
+        self.allow_empty = allow_empty and not empty_error
+        self.empty_error = empty_error
         self.allow_final = allow_final
         self.initial_join = initial_join
         self.label_single = label_single
@@ -818,11 +896,14 @@ class Join(Parselet):
 
         while cur < len(s):
             try:
+                parsing_elem = True
                 n, cur = self.elem.parse(s, cur)
                 seq_extend(accum, n)
                 found_any = True
                 join_last = False
 
+                parsing_elem = False
+                join_cur = cur
                 n, cur = self.join.parse(s, cur)
                 seq_extend(accum, n)
                 join_last = True
@@ -830,19 +911,23 @@ class Join(Parselet):
             except ParseError as e:
                 if not found_any and not self.allow_empty:
                     raise e
-                if join_last and e.has_preconditions and e.met_preconditions:
+                if parsing_elem and e.has_preconditions and e.met_preconditions:
                     # we failed while already committed to elem
                     # XX is this too aggressive?
                     raise e
                 break
         if not found_any and not self.allow_empty:
-            raise ParseError(f"Failed to match any instances of `{self.ast_label}`", s=s, i=i)
+            if self.empty_error:
+                error_msg = self.empty_error
+            else:
+                error_msg = f"Failed to match any instances of `{self.ast_label}`"
+            raise ParseError(error_msg, s=s, i=i)
         if join_last and not self.allow_final:
             if self.join.ast_label is not None:
                 join_name = f"`{self.join.ast_label}`"
             else:
                 join_name = "join"
-            raise ParseError(f"Parsing sequence `{self.ast_label}` ended in invalid final {join_name}", s=s, i=i)
+            raise ParseError(f"Parsing sequence `{self.ast_label}` ended in invalid final {join_name}", s=s, i=join_cur)
         return seq_result(self, accum, cur, s, i)
 
 
@@ -897,6 +982,12 @@ class LateDisjunctive(Parselet):
         # n.b. prefix is not stored in `self.parser`
         super().__init__(list(parsers), **kwargs)
 
+    def _repr_pretty_before(self, p, cycle):
+        with p.group(2, "prefix=(", ")"):
+            p.pretty(self.prefix)
+        p.text(",")
+        p.breakable(sep=" ")
+
     def default_error(self, s, i):
         return f"Failed to find late disjunct for {self.rule_name()}"
 
@@ -904,15 +995,10 @@ class LateDisjunctive(Parselet):
         return LateDisjunctive(self.prefix, *self.parser, **self.copy_args())
 
     def parse(self, s, i=0):
-        try:
-            prefix_n, new_i = self.prefix.parse(s, i=i)
-        except ParseError as e:
-            # errors from within prefix can be arbitrarily unrelated, so
-            # repackage...
-            raise ParseError(f"Failed to match prefix for {self.rule_name()}",
-                e=e, s=s, i=i, met_preconditions=e.met_preconditions)
+        # XX sometimes exceptions from this call may appear somewhat unrelated
+        prefix_n, new_i = self.prefix.parse(s, i=i)
         for p in self.parser:
-            with try_parse():
+            with try_parse(has_preconditions=True):
                 disj_n, new_i = p.parse(s, i=new_i)
 
                 if prefix_n and disj_n:
@@ -961,6 +1047,12 @@ class LeftRecursive(Parselet):
         self.force_node = force_node
         parser = Repeat(Disjunctive(*parsers), check_pre=True)
         super().__init__(parser, **kwargs)
+
+    def _repr_pretty_before(self, p, cycle):
+        with p.group(2, "prefix=(", ")"):
+            p.pretty(self.prefix)
+        p.text(",")
+        p.breakable(sep=" ")
 
     def ast_group_left(self, a):
         if len(a) <= 1:
