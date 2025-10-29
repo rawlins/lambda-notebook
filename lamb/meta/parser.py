@@ -189,7 +189,7 @@ class OpExprAST(ASTNode):
                 from .core import builtin_op_aliases
                 if cur_op in builtin_op_aliases:
                     cur_op = builtin_op_aliases[cur_op]
-                result = OpExprAST(op=cur_op, children=[result, right], s=result.s, i=result.i)
+                result = OpExprAST(op=cur_op, children=[result, right], state=result.state)
                 result.op_i = op_i
             return result, cur
         result, _ = restructure(1, 1)
@@ -206,7 +206,7 @@ class FactorAST(OpExprAST):
         result = a.children[-1]
         for i in range(len(a.children) - 2, -1, -1):
             result = FactorAST(op=a.children[i][0], children=[result],
-                               s=a.children[i].s, i=a.children[i].i)
+                               state=a.children[i].state)
             result.op_i = a.children[i].i
         return result
 
@@ -449,13 +449,13 @@ class TermParser(Unit):
         super().__init__()
         self.error_msg = error
 
-    def parse(self, s, i=0):
+    def _parse(self, state):
         try:
-            return super().parse(s, i=i)
+            return super()._parse(state)
         except TypeParseError as e:
             raise e
         except ParseError as e:
-            self.error(s=s, i=i)
+            self.error(state)
 
 
 
@@ -604,8 +604,9 @@ class ExprParser(Unit):
         # messaging
         opexpr = Unit(Join(Token(fr'({symbol_op_re})', ast_label=Attr.OP), factor,
                         ast_label=OpExprAST,
+                        name="operator expression",
                         label_single=None, # without at least one op, defer label to factor
-                        empty_error="Missing expression"))
+                        empty_error="Expected a valid expression"))
 
         # expr -> binding
         # expr -> opexpr
@@ -641,13 +642,13 @@ def parse_term(s, i=0, return_obj=True, assignment=None):
     `assignment`, use that.  If a type is specified and is present in
     `assignment`, check type compatibility immediately."""
     try:
-        ast, new_i = term_parser.parse(s, i=i)
+        ast, state = term_parser.parse(s, i=i)
         match ast:
             case TermNode(name=name, type=type):
                 if return_obj:
-                    return ast.instantiate(assignment=assignment), new_i
+                    return ast.instantiate(assignment=assignment), state.i
                 else:
-                    return name, type, new_i
+                    return name, type, state.i
             case _:
                 pass
     except ParseError:
