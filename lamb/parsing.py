@@ -496,15 +496,16 @@ class Parselet(object):
                 if not cycle:
                     p.breakable(sep=" ")
             if not self.name and not self.ast_label and not cycle:
-                p.breakable()
+                p.breakable(sep="")
             if cycle:
                 p.text(" ...")
             else:
                 self._repr_pretty_before(p, cycle)
-                p.pretty(self.parser)
+                if self.parser is not None:
+                    p.pretty(self.parser)
 
     def copy_args(self):
-        return dict(ast_label=self.ast_label, error=self.error_msg, skip_trivial=self.skip_trivial)
+        return dict(ast_label=self.ast_label, name=self.name, error=self.error_msg, skip_trivial=self.skip_trivial)
 
     def rule_name(self):
         if self.name is not None:
@@ -621,6 +622,19 @@ class Unit(Parselet):
         return n, i
 
 
+class Failure(Parselet):
+    def __init__(self, error, met_preconditions=True, has_preconditions=None, **kwargs):
+        self.met_preconditions = met_preconditions
+        self.has_preconditions = has_preconditions
+        self.error = error
+        super().__init__(None)
+
+    def parse(self, s, i=0):
+        raise ParseError(self.error, s=s, i=i,
+            met_preconditions=self.met_preconditions,
+            has_preconditions=self.has_preconditions)
+
+
 class Label(Parselet):
     """Dummy Parselet that serves only to provide an AST label"""
     def __init__(self, ast_label, parser=None, force_node=True, defer=False):
@@ -632,6 +646,12 @@ class Label(Parselet):
         else:
             self.label_class = None
         super().__init__(parser, ast_label=ast_label)
+
+    def copy(self, defer=None):
+        if defer is None:
+            defer = self.defer
+        label = self.label_class or self.ast_label
+        return Label(label, parser=self.parser, force_node=self.force_node, defer=defer)
 
     def parse(self, s, i=0):
         if self.parser is not None:
@@ -973,14 +993,18 @@ class LateDisjunctive(Parselet):
     # S -> prefix parser_n
     # as usual, parsers must disambiguate and handle preconditions. The prefix
     # is automatically treated as a precondition.
-    def __init__(self, prefix, *parsers, **kwargs):
+    def __init__(self, prefix, *parsers, defer=False, **kwargs):
         # wrapping this in a Precondition is a bit heavy-handed, but it is
         # guaranteed to do what we want
         if not isinstance(prefix, Precondition):
             prefix = Precondition(prefix)
         self.prefix = prefix
+        self.defer = defer
+
+        # some code to handle labeling with stacked LateDisjunctives.
+        parsers = [x.copy(defer=True) if deferrable(x) else x for x in parsers]
         # n.b. prefix is not stored in `self.parser`
-        super().__init__(list(parsers), **kwargs)
+        super().__init__(parsers, **kwargs)
 
     def _repr_pretty_before(self, p, cycle):
         with p.group(2, "prefix=(", ")"):
@@ -991,8 +1015,10 @@ class LateDisjunctive(Parselet):
     def default_error(self, s, i):
         return f"Failed to find late disjunct for {self.rule_name()}"
 
-    def copy(self):
-        return LateDisjunctive(self.prefix, *self.parser, **self.copy_args())
+    def copy(self, defer=None):
+        if defer is None:
+            defer = self.defer
+        return LateDisjunctive(self.prefix, *self.parser, defer=defer, **self.copy_args())
 
     def parse(self, s, i=0):
         # XX sometimes exceptions from this call may appear somewhat unrelated
@@ -1012,14 +1038,16 @@ class LateDisjunctive(Parselet):
                     # either disjunct or everything was consumer-only
                     result = prefix_n
 
+                if result and not self.defer:
+                    result = result.finalize()
                 if not result:
                     # interpret this as a succesful consumer-only parse
                     return None, new_i
                 # same labeling logic as Disjunctive at this point
                 elif self.ast_label is None:
-                    return result.finalize(), new_i
+                    return result, new_i
                 else:
-                    return ASTNode(label=self.ast_label, children=[result.finalize()], s=s, i=i), new_i
+                    return ASTNode(label=self.ast_label, children=[result], s=s, i=i), new_i
         # if we get to here, all parsers raised with met_preconditions=False.
         # send that same flag upwards in case this is part of another
         # Disjunctive
@@ -1027,9 +1055,15 @@ class LateDisjunctive(Parselet):
         self.error(s, i, met_preconditions=False)
 
     def __matmul__(self, other):
+        if deferrable(other):
+            other = other.copy(defer=True)
         r = self.copy()
         r.parser.append(other)
         return r
+
+
+def deferrable(x):
+    return isinstance(x, LateDisjunctive) or isinstance(x, Label)
 
 
 class LeftRecursive(Parselet):
@@ -1045,6 +1079,7 @@ class LeftRecursive(Parselet):
         # # gracefully fall back to the terminal-only case
         self.prefix = prefix
         self.force_node = force_node
+        parsers = [x.copy(defer=True) if deferrable(x) else x for x in parsers]
         parser = Repeat(Disjunctive(*parsers), check_pre=True)
         super().__init__(parser, **kwargs)
 
@@ -1061,7 +1096,6 @@ class LeftRecursive(Parselet):
         for i in range(1, len(a)):
             ast = ASTNode(label=a[i].label, children=[ast] + a[i].children, s=a[i].s, i=a[i].i).finalize()
         return [ast]
-
 
     def parse(self, s, i=0):
         cur = i

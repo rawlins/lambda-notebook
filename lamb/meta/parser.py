@@ -12,6 +12,7 @@ from lamb.parsing import consume_char, ParseError, struc_strip, flatten_paren_st
 from lamb.parsing import Parselet, REParselet, Label, Optional, Precondition, term_re
 from lamb.parsing import ASTNode, Unit, Token, Sequence, astclass, Whitespace, Join
 from lamb.parsing import LeftRecursive, Repeat, LateDisjunctive, parse_error_wrap
+from lamb.parsing import Failure
 from lamb.types import TypeConstructor, TypeParseError
 
 from lamb.meta.core import get_type_system, registry, subassignment
@@ -512,51 +513,50 @@ class ExprParser(Unit):
         # prefix "(", and set/map via the prefix "{". Each of these uses late disambiguation.
 
 
+        # tuple -> "(" ")"
         # tuple -> "(" subexpr ",".subexpr ")"
         # group -> "(" subexpr ")"
-        # tuple -> "(" ")"
         #
-        # use a "," to disambiguate between group vs tuple. Empty tuple handled as a special case.
-        group_or_tuple = (((REParselet(r'\(\s*') + cls.subexpr + Whitespace()) # labeled via recursion
-                              @ (Label(TupleAST, defer=True)
-                                 + Precondition(REParselet(r',\s*'))
-                                     + Join(Token(r','), cls.subexpr, allow_empty=True, allow_final=True)
-                                     + Token(r'\)', error="Expected closing `)` for tuple"))
-                              @ Token(r'\)', error="Expected closing `)` for group"))
-                          | (Label(TupleAST)
-                                + Precondition(REParselet(r'\(\s*'))
-                                + REParselet(r'\)',
-                                            consume=True, error="Expected closing `)` for tuple"))
-                         )
+        # Anything beginning with an open paren is grouped here, using
+        # LateDisjunctive (`@`) rules to disambiguate after the paren and then
+        # the subexpression.
+        group_or_tuple = (REParselet(r'\(\s*')
+                    @ (Label(TupleAST) + Precondition(REParselet(r'\)')))
+                    @ ((cls.subexpr + Whitespace())
+                        @ (Label(TupleAST)
+                            + Precondition(REParselet(r',\s*'))
+                            + Join(Token(r','), cls.subexpr, allow_empty=True, allow_final=True)
+                            + Token(r'\)', error="Expected closing `)` for tuple"))
+                        @ Precondition(Token(r'\)'))) # group labeled via recursion
+                    @ Failure("Following opening `(`, expected `)`-terminated group or tuple "))
         group_or_tuple.name = "()-rule"
         cls.group_or_tuple = group_or_tuple
 
+        # set -> "{" "}"
+        # map -> "{" ":" "}"
         # set -> "{" subexpr "}"
         # set -> "{" subexpr ",".subexpr "}"
         # map -> "{" subexpr ":" subexpr ",".(subexpr ":" subexpr) "}"
-        # map -> "{" ":" "}"
-        # set -> "{" "}"
         #
-        # use "," and ":" to disambiguate between set and map. empty set, empty map, singleton set handled as a special cases.
+        # use late disjuncts to progressively disambiguate following an opening
+        # `{`.
         # note that unlike python, `{}` gives the empty set and `{:}` gives the empty map. 
-        set_or_map = (((REParselet(r'{\s*') + cls.subexpr + Whitespace())
-                            @ (Label(SetAST, defer=True) + Precondition(REParselet(r'}', error="Expected closing `}` for set")))
-                            @ (Label(SetAST, defer=True)
-                               + Precondition(REParselet(r',\s*'))
-                                   + Join(Token(r','), cls.subexpr, allow_empty=True, allow_final=True)
-                                   + Token(r'}', error="Expected closing `}` for set"))
-                            @ (Label(MapAST, defer=True)
-                               + Precondition(REParselet(r':\s*'))
-                                   + cls.subexpr
-                                   + Join(Token(r','),
-                                          cls.subexpr + Token(r':') + cls.subexpr,
-                                          allow_empty=True, allow_final=True, initial_join=True)
-                                   + Token(r'}', error="Expected closing `}` for map")))
-                       | (Label(MapAST) + Precondition(REParselet(r'{\s*:\s*'))
-                                            + REParselet(r'}', consume=True, error="Expected closing `}` for map"))
-                       | (Label(SetAST) + Precondition(REParselet(r'{\s*'))
-                                            + REParselet(r'}', consume=True, error="Expected closing `}` for set"))
-                      )
+        set_or_map = (REParselet(r'{\s*')
+                        @ (Label(SetAST) + Precondition(REParselet(r'}')))
+                        @ (Label(MapAST) + Precondition(REParselet(r':\s*}')))
+                        @ ((cls.subexpr + Whitespace())
+                            @ (Label(SetAST) + Precondition(REParselet(r'}')))
+                            @ (Label(SetAST) + Precondition(REParselet(r',\s*'))
+                                             + Join(Token(r','), cls.subexpr, allow_empty=True, allow_final=True)
+                                             + Token(r'}', error="Expected closing `}` for set"))
+                            @ (Label(MapAST) + Precondition(REParselet(r':\s*'))
+                                             + cls.subexpr
+                                             + Join(Token(r','),
+                                                    cls.subexpr + Token(r':') + cls.subexpr,
+                                                    allow_empty=True, allow_final=True, initial_join=True)
+                                             + Token(r'}', error="Expected closing `}` for map")))
+                        @ Failure("Following opening `{`, expected valid `}`-terminated set or map"))
+
         set_or_map.name = "{}-rule"
 
         # rule putting the pieces of `atom` together.
@@ -572,9 +572,9 @@ class ExprParser(Unit):
         # S -> atom
         primary = LeftRecursive(
             atom,
-            Label(DotAST, defer=True) + (Precondition(Token(r'\.')) + (Label(Attr.ATTR) + REParselet(text_op_re))),
-            Label(IndexAST, defer=True) + (Precondition(Token(r'\[')) + cls.subexpr + Token(r'\]')),
-            (Label(ApplyAST, force_node=True, defer=True)
+            Label(DotAST) + (Precondition(Token(r'\.')) + (Label(Attr.ATTR) + REParselet(text_op_re))),
+            Label(IndexAST) + (Precondition(Token(r'\[')) + cls.subexpr + Token(r'\]')),
+            (Label(ApplyAST, force_node=True)
              + (Precondition(Token(r'\('))
                  + (Label(ExprSeq)
                      + Join(REParselet(r"\s*,\s*"), cls.subexpr,
