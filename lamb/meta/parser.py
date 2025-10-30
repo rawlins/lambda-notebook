@@ -446,17 +446,14 @@ class TermParser(Unit):
     name = "term"
 
     def __init__(self, error="Expected a valid term"):
-        super().__init__()
-        self.error_msg = error
+        super().__init__(error=error)
 
     def _parse(self, state):
-        try:
-            return super()._parse(state)
-        except TypeParseError as e:
-            raise e
-        except ParseError as e:
-            self.error(state)
-
+        n, cur = super()._parse(state)
+        if cur.e and isinstance(cur.e, TypeParseError) and not isinstance(cur.e, TypeParseError):
+            # intercept and rewrite
+            return None, self.error(state)
+        return n, cur
 
 
 # Binding operator parsing is packaged as a class to better encapsulate update
@@ -558,6 +555,7 @@ class ExprParser(Unit):
                         @ Failure("Following opening `{`, expected valid `}`-terminated set or map"))
 
         set_or_map.name = "{}-rule"
+        cls.set_or_map = set_or_map
 
         # rule putting the pieces of `atom` together.
         atom = Unit(Unit(group_or_tuple)

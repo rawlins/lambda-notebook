@@ -230,10 +230,19 @@ def consume_whitespace(s, i, plus=False, error=None):
 @dataclass
 class ParseState:
     s: str
-    i: Optional[int] = 0
+    i: typing.Optional[int] = 0
+    e: typing.Optional[ParseError] = None
 
     def update(self, i):
         return dataclasses.replace(self, i=i)
+
+    def error(self, m_or_e, pos=None, **kwargs):
+        if pos is None:
+            pos = self
+        if isinstance(m_or_e, str):
+            m_or_e = ParseError(m_or_e, s=pos.s, i=pos.i, **kwargs)
+        # otherwise, pos and any kwargs are discarded
+        return dataclasses.replace(self, e=m_or_e)
 
 
 @dataclass
@@ -295,7 +304,6 @@ class ASTNode:
             raise ParseError(error, s=self.state.s, i=self.state.i)
         else:
             return default
-
 
     def left_extend(self, node):
         # assumption: `node` comes from a substring that is linearly to the left
@@ -531,17 +539,20 @@ class Parselet(object):
     def default_error(self, state):
         return f"Failed to parse {self.rule_name()}"
 
-    def error(self, state, error=None, met_preconditions=True, has_preconditions=None):
+    def error(self, state, error=None, **kwargs):
         if error:
             e = error
         elif self.error_msg:
             e = self.error_msg
         else:
             e = self.default_error(state)
-        raise ParseError(e, s=state.s, i=state.i, met_preconditions=met_preconditions, has_preconditions=has_preconditions)
+        return state.error(e, **kwargs)
 
     def parse(self, s, i=0):
-        return self._parse(ParseState(s=s, i=i))
+        n, state = self._parse(ParseState(s=s, i=i))
+        if state.e:
+            raise state.e
+        return n, state
 
     def _parse(self, state):
         # this code is more general than subclasses, because it allows for
@@ -552,26 +563,22 @@ class Parselet(object):
             return None, state
 
         if isinstance(self.parser, Parselet):
-            result = self.parser._parse(state)
+            n, cur = self.parser._parse(state)
         else:
-            result = self.parser(state.s, state.i)
-        if not isinstance(result, collections.abc.Sequence):
-            result = (result,)
-        if result[-1] is None:
-            # parser returned None, or returned None for position
-            # interpret this case as a failed parse
-            self.error(s, i)
-        new_state = result[-1]
-        if not isinstance(new_state, ParseState):
-            new_state = state.update(new_state)
-        result = [x for x in result[0:-1] if x is not None]
-        if not result:
-            # parser just returned a position
+            # assumption: a callable parser returns exactly one result n, with
+            # an index into the string it is called with
+            n, i = self.parser(state.s, state.i)
+            cur = state.update(i)
+
+        if cur.e:
+            return None, cur
+
+        if n is None:
             # interpret this case as a consumer-only parse
-            return None, new_state
-        if self.skip_trivial and len(result) == 1 and isinstance(result[0], ASTNode):
-            return result[0], new_state
-        return ASTNode(label=self.ast_label, children=result, state=state), new_state
+            return None, cur
+        elif self.skip_trivial and isinstance(n, ASTNode):
+            return n, cur
+        return ASTNode(label=self.ast_label, children=[n], state=state), cur
 
     def __call__(self, s, i=0):
         return self.parse(s, i=i)
@@ -637,10 +644,12 @@ class Unit(Parselet):
         return self.parser
 
     def _parse(self, state):
-        n, i = self.get_parser()._parse(state)
+        n, cur = self.get_parser()._parse(state)
+        if cur.e:
+            return None, cur
         if n is not None:
             n = n.finalize()
-        return n, i
+        return n, cur
 
 
 class Failure(Parselet):
@@ -651,9 +660,9 @@ class Failure(Parselet):
         super().__init__(None)
 
     def _parse(self, state):
-        raise ParseError(self.error, s=state.s, i=state.i,
-            met_preconditions=self.met_preconditions,
-            has_preconditions=self.has_preconditions)
+        return None, state.error(self.error,
+                                 met_preconditions=self.met_preconditions,
+                                 has_preconditions=self.has_preconditions)
 
 
 class Label(Parselet):
@@ -678,7 +687,13 @@ class Label(Parselet):
         if self.parser is None:
             n, cur = super()._parse(state)
         else:
-            n, cur = self.parser._parse(state)
+            try:
+                n, cur = self.parser._parse(state)
+            except ParseError as e:
+                # roll back parser state
+                cur = state.error(e)
+        if cur.e:
+            return None, cur
 
         if not n:
             if self.force_node:
@@ -730,14 +745,14 @@ class Optional(Parselet):
         super().__init__(parser, ast_label=ast_label, **kwargs)
 
     def _parse(self, state):
-        try:
-            return self.parser._parse(state)
-        except ParseError as e:
-            if not self.fully and e.met_preconditions:
-                raise e
+        n, cur = self.parser._parse(state)
+        if cur.e:
+            if not self.fully and cur.e.met_preconditions:
+                return None, cur
             else:
                 # null but succesful consumer-only parse
                 return None, state
+        return n, cur
 
 
 class REParselet(Parselet):
@@ -779,7 +794,7 @@ class REParselet(Parselet):
             # XX should this use seq_result?
             return ASTNode(label=self.ast_label, children=result, state=state), cur
         else:
-            self.error(state)
+            return None, self.error(state)
 
 
 class Keyword(REParselet):
@@ -818,6 +833,8 @@ class Sequence(Parselet):
         cur = state
         for p in self.parser:
             n, cur = p._parse(cur)
+            if cur.e:
+                return None, state.error(cur.e)
             seq_extend(accum, n)
 
         return seq_result(self, accum, cur, state)
@@ -847,26 +864,22 @@ class Precondition(Sequence):
 
     def _parse(self, state):
         accum = []
-        try:
-            n, cur = self.pre._parse(state)
-            seq_extend(accum, n)
-        except ParseError as e:
-            # let TypeParseErrors from embedded preconditions bubble up; this
-            # is mainly to improve error messaging. It does rely on type
-            # parsing being used in a fairly restricted set of circumstances...
-            if not e.has_preconditions:
-                e.met_preconditions = False
-            e.has_preconditions = True
-            raise e
+        n, cur = self.pre._parse(state)
+        if cur.e:
+            if not cur.e.has_preconditions:
+                cur.e.met_preconditions = False
+            cur.e.has_preconditions = True
+            return None, cur
+        seq_extend(accum, n)
 
-        try:
-            # XX code dup with superclass
-            for p in self.parser:
-                n, cur = p._parse(cur)
-                seq_extend(accum, n)
-        except ParseError as e:
-            e.has_preconditions = True
-            raise e
+        # XX code dup with superclass
+        for p in self.parser:
+            n, cur = p._parse(cur)
+            if cur.e:
+                cur.e.has_preconditions = True
+                return None, cur
+
+            seq_extend(accum, n)
 
         return seq_result(self, accum, cur, state)
 
@@ -886,16 +899,17 @@ class Repeat(Parselet):
         cur = state
         found_any = False
         while cur.i < len(cur.s):
-            try:
-                n, cur = self.parser._parse(cur)
-                found_any = True
-                seq_extend(accum, n)
-            except ParseError as e:
-                if self.check_pre and e.met_preconditions:
-                    raise e
+            n, cur = self.parser._parse(cur)
+            if cur.e:
+                if self.check_pre and cur.e.met_preconditions:
+                    return None, state.error(cur.e)
+                # otherwise, just stop looping
+                cur.e = None
                 break
+            found_any = True
+            seq_extend(accum, n)
         if not self.allow_empty and not found_any:
-            raise ParseError(f"Failed to match any instances of `{self.ast_label}`", s=state.s, i=state.i)
+            return None, state.error(f"Failed to match any instances of `{self.ast_label}`")
         return seq_result(self, accum, cur, state)
 
 
@@ -924,51 +938,59 @@ class Join(Parselet):
         if self.initial_join:
             # if this is set, we are expecting the string to *start* with the
             # join.
-            try:
-                n, cur = self.join._parse(cur)
-                seq_extend(accum, n)
-                join_last = True
-            except ParseError as e:
-                if not self.allow_empty:
-                    raise e
-                else:
+            n, cur = self.join._parse(cur)
+            if cur.e:
+                if self.allow_empty:
                     # nothing parsed, treat it as an allowed empty sequence
+                    cur.e = None
                     return seq_result(self, accum, cur, state)
+                else:
+                    return None, cur # pos should be still rewound
+            seq_extend(accum, n)
+            join_last = True
 
         while cur.i < len(cur.s):
-            try:
-                parsing_elem = True
-                n, cur = self.elem._parse(cur)
-                seq_extend(accum, n)
-                found_any = True
-                join_last = False
-
-                parsing_elem = False
-                join_cur = cur
-                n, cur = self.join._parse(cur)
-                seq_extend(accum, n)
-                join_last = True
-
-            except ParseError as e:
+            n, cur = self.elem._parse(cur)
+            if cur.e:
                 if not found_any and not self.allow_empty:
-                    raise e
-                if parsing_elem and e.has_preconditions and e.met_preconditions:
+                    # we have errored while parsing the first instance of
+                    # elem and do not allow empty matches; use the error from
+                    # cur rather than the generic empty error
+                    return None, state.error(cur.e)
+                if cur.e.has_preconditions and cur.e.met_preconditions:
                     # we failed while already committed to elem
-                    # XX is this too aggressive?
-                    raise e
+                    return None, state.error(cur.e)
+                # otherwise, stop looping
+                cur.e = None
                 break
+
+            seq_extend(accum, n)
+            found_any = True
+            join_last = False
+
+            join_cur = cur
+            n, cur = self.join._parse(cur)
+            if cur.e:
+                # roll back to cur and stop looping
+                cur.e = None
+                break
+            seq_extend(accum, n)
+            join_last = True
+
         if not found_any and not self.allow_empty:
             if self.empty_error:
                 error_msg = self.empty_error
             else:
                 error_msg = f"Failed to match any instances of `{self.ast_label}`"
-            raise ParseError(error_msg, s=state.s, i=state.i)
+            return None, state.error(error_msg)
         if join_last and not self.allow_final:
             if self.join.ast_label is not None:
                 join_name = f"`{self.join.ast_label}`"
             else:
                 join_name = "join"
-            raise ParseError(f"Parsing sequence {self.rule_name()} ended in invalid final {join_name}", s=join_cur.s, i=join_cur.i)
+            return None, state.error(
+                f"Parsing sequence {self.rule_name()} ended in invalid final {join_name}",
+                pos=join_cur)
         return seq_result(self, accum, cur, state)
 
 
@@ -984,21 +1006,24 @@ class Disjunctive(Parselet):
 
     def _parse(self, state):
         for p in self.parser:
-            with try_parse():
-                n, cur = p._parse(state)
-                if not n:
-                    # interpret this as a succesful consumer-only parse
+            n, cur = p._parse(state)
+            if cur.e:
+                if cur.e.met_preconditions:
                     return None, cur
-                # only label if either we don't have an ASTNode, or this parser
-                # explicitly provides a label.
-                if self.ast_label is None:
-                    return n, cur
-                else:
-                    return ASTNode(label=self.ast_label, children=[n], state=state), cur
+                # otherwise, try again with the next parser
+                continue
+            if not n:
+                # interpret this as a succesful consumer-only parse
+                return None, cur
+            # only label if this parser explicitly provides a label.
+            if self.ast_label is None:
+                return n, cur
+            else:
+                return ASTNode(label=self.ast_label, children=[n], state=state), cur
         # if we get to here, all parsers raised with met_preconditions=False.
         # send that same flag upwards in case this is part of another
         # Disjunctive
-        self.error(state, met_preconditions=False)
+        return None, self.error(state, met_preconditions=False)
 
     def __or__(self, other):
         r = self.copy()
@@ -1043,37 +1068,44 @@ class LateDisjunctive(Parselet):
 
     def _parse(self, state):
         # XX sometimes exceptions from this call may appear somewhat unrelated
-        prefix_n, cur = self.prefix._parse(state)
+        prefix_n, cur_prefix = self.prefix._parse(state)
+        if cur_prefix.e:
+            return None, cur_prefix
         for p in self.parser:
-            with try_parse(has_preconditions=True):
-                disj_n, cur = p._parse(cur)
+            disj_n, cur = p._parse(cur_prefix)
+            if cur.e:
+                if cur.e.met_preconditions:
+                    cur.e.has_preconditions = True
+                    return None, state.error(cur.e)
+                # otherwise, try again from cur_prefix with the next parser
+                continue
 
-                if prefix_n and disj_n:
-                    # insert the prefix AST node under the disjunction result
-                    # if prefix_n has no label, this will merge sequences
-                    result = disj_n.left_attach(prefix_n)
-                elif disj_n:
-                    # prefix was consumer-only
-                    result = disj_n
-                else:
-                    # either disjunct or everything was consumer-only
-                    result = prefix_n
+            if prefix_n and disj_n:
+                # insert the prefix AST node under the disjunction result
+                # if prefix_n has no label, this will merge sequences
+                result = disj_n.left_attach(prefix_n)
+            elif disj_n:
+                # prefix was consumer-only
+                result = disj_n
+            else:
+                # either disjunct or everything was consumer-only
+                result = prefix_n
 
-                if result and not self.defer:
-                    result = result.finalize()
-                if not result:
-                    # interpret this as a succesful consumer-only parse
-                    return None, cur
-                # same labeling logic as Disjunctive at this point
-                elif self.ast_label is None:
-                    return result, cur
-                else:
-                    return ASTNode(label=self.ast_label, children=[result], state=state), cur
+            if result and not self.defer:
+                result = result.finalize()
+            if not result:
+                # interpret this as a succesful consumer-only parse
+                return None, cur
+            # same labeling logic as Disjunctive at this point
+            elif self.ast_label is None:
+                return result, cur
+            else:
+                return ASTNode(label=self.ast_label, children=[result], state=state), cur
         # if we get to here, all parsers raised with met_preconditions=False.
         # send that same flag upwards in case this is part of another
         # Disjunctive
         # n.b. an empty self.parser errors...
-        self.error(state, met_preconditions=False)
+        return None, self.error(state, met_preconditions=False)
 
     def __matmul__(self, other):
         if deferrable(other):
@@ -1122,8 +1154,12 @@ class LeftRecursive(Parselet):
         cur = state
         accum = []
         prefix_n, cur = self.prefix._parse(cur)
+        if cur.e:
+            return None, cur
         seq_extend(accum, prefix_n)
         n, cur = self.parser._parse(cur)
+        if cur.e:
+            return None, state.error(cur.e)
         seq_extend(accum, n)
         if not accum:
             return None, cur
