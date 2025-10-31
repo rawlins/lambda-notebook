@@ -333,6 +333,10 @@ class ASTNode:
     def __len__(self):
         return len(self.children)
 
+    def null(self):
+        # the label check should filter out all subclass instances...
+        return self.label is None and len(self.children) == 0
+
     def __bool__(self):
         # override default behavior based on length
         return True
@@ -1080,16 +1084,13 @@ class LateDisjunctive(Parselet):
                 # otherwise, try again from cur_prefix with the next parser
                 continue
 
-            if prefix_n and disj_n:
-                # insert the prefix AST node under the disjunction result
-                # if prefix_n has no label, this will merge sequences
-                result = disj_n.left_attach(prefix_n)
-            elif disj_n:
-                # prefix was consumer-only
+            if not disj_n or disj_n.null():
+                result = prefix_n
+            elif not prefix_n or prefix_n.null():
                 result = disj_n
             else:
-                # either disjunct or everything was consumer-only
-                result = prefix_n
+                # both non-null
+                result = disj_n.left_attach(prefix_n)
 
             if result and not self.defer:
                 result = result.finalize()

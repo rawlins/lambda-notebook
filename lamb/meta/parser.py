@@ -562,6 +562,7 @@ class ExprParser(Unit):
                     | Unit(set_or_map)
                     | TermParser(error="Expected a valid expression"),
                     name="atom")
+        cls.atom = atom
 
         # left-recursive rule:
         # S -> atom "." text_op
@@ -580,6 +581,7 @@ class ExprParser(Unit):
                  + Token(r'\)', error="Expected closing `)` for function argument list"))),
             name="primary"
         )
+        cls.primary = primary
 
         # factor -> SymbolOp+ primary
         # factor -> primary
