@@ -186,9 +186,6 @@ class OpExprAST(ASTNode):
                 op_i = a.children[cur].i
                 right, cur = restructure(cur + 2, next_prec)
                 # TODO: remove
-                from .core import builtin_op_aliases
-                if cur_op in builtin_op_aliases:
-                    cur_op = builtin_op_aliases[cur_op]
                 result = OpExprAST(op=cur_op, children=[result, right], state=result.state)
                 result.op_i = op_i
             return result, cur
