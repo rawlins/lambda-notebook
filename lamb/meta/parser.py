@@ -568,7 +568,8 @@ class ExprParser(Unit):
         # S -> atom
         primary = LeftRecursive(
             atom,
-            Label(DotAST) + (Precondition(Token(r'\.')) + (Label(Attr.ATTR) + REParselet(text_op_re))),
+            Label(DotAST) + (Precondition(Token(r'\.'))
+                             + (Label(Attr.ATTR) + REParselet(text_op_re, name="postfix operator"))),
             Label(IndexAST) + (Precondition(Token(r'\[')) + cls.subexpr + Token(r'\]')),
             (Label(ApplyAST, force_node=True)
              + (Precondition(Token(r'\('))

@@ -775,8 +775,15 @@ class REParselet(Parselet):
         else:
             p.text(f"{self.__class__.__name__}('{self.raw_regex}')")
 
+    def rule_name(self):
+        base = super().rule_name()
+        if self.name:
+            return base
+        else:
+            return f'{base} `{self.raw_regex}`'
+
     def default_error(self, state):
-        return f"Failed to match pattern for {self.rule_name()} `{self.raw_regex}`"
+        return f"Failed to match pattern for {self.rule_name()}"
 
     def _parse(self, state):
         m = self.parser.match(state.s, state.i)
