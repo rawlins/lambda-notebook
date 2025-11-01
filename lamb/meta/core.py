@@ -199,7 +199,7 @@ def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True, validate=T
             if assignment is None:
                 assignment = {}
             assignment = collections.ChainMap(assignment, _globals)
-        result = TypedExpr.new_parse(s, assignment=assignment)
+        result = TypedExpr.parse(s, assignment=assignment)
     else:
         result = tenorm(TypedExpr.factory(s, assignment=assignment,
                                         _globals=_globals, fullcopy=fullcopy))
@@ -1808,7 +1808,7 @@ class TypedExpr(object):
         return f"subexpression {i}"
 
     @classmethod
-    def parse(cls, s, assignment=None, locals=None):
+    def old_parse(cls, s, assignment=None, locals=None):
         """Attempt to parse a string `s` into a TypedExpr
         `assignment`: a variable assignment to use when parsing.
         `locals`: a dict to use as the local variables when parsing.
@@ -1837,7 +1837,7 @@ class TypedExpr(object):
                 raise parsing.ParseError(str(e), s=s) from e
 
     @classmethod
-    def new_parse(cls, s, assignment=None, locals=None):
+    def parse(cls, s, assignment=None, locals=None):
         if assignment is None:
             assignment = {}
         if locals is None:
@@ -2233,7 +2233,8 @@ class TypedExpr(object):
             elif s in types.type_n.domain:
                 return from_python(s, types.type_n)
             elif isinstance(s, str):
-                return cls.parse(s, assignment)
+                # TODO: remove?
+                return cls.old_parse(s, assignment)
             else:
                 c = from_python_container(s)
                 if c is not None:

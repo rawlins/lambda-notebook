@@ -421,23 +421,89 @@ class MetaTest(unittest.TestCase):
 
 
     def test_parse(self):
-        # overall: compare parsed `TypedExpr`s with constructed `TypedExpr`s
-        # basic operator syntax
-        self.assertEqual(TypedExpr.factory(
+        # this function is a grab-bag of tests, but tries to hit most major
+        # parser elements to some degree. `repr_parse` tests are much more
+        # systematic, but can miss things, so it's good to make some of this
+        # more explicit.
+
+        # basic syntax
+        self.assertEqual(te(
             "(P_<e,t>(x_e) & P_<e,t>(x_e)) | P_<e,t>(x_e)"), self.body)
+        self.assertEqual(te("--2"), te("- - 2"))
+        self.assertEqual(te("--x_n"), te("- - x_n"))
+
+        # uncomment when old parser validation goes away
+        # self.assertEqual(te("{:}"), core.MapFun())
+        # self.assertEqual(te("{:}"), te("Fun()"))
+        self.assertEqual(te("{}"), sets.ListedSet())
+        self.assertEqual(te("()"), core.Tuple())
+
+        self.assertEqual(te("(a_e,b_e,)"), te("(a_e,b_e)"))
+        self.assertEqual(te("{a_e,}"), te("{a_e}"))
+        self.assertEqual(te("{a_e:b_e,}"), te("{a_e:b_e}"))
+        self.assertEqual(te("f_(e)[x_n]").type, type_e)
+        self.assertEqual(te("{1:_c1, 2:_c2}.Dom"), te("Dom({1:_c1, 2:_c2})"))
+        self.assertEqual(te("Type(x_<e,t>)"), te("x_<e,t>.Type"))
+
         # parenthesis reduction
-        self.assertEqual(TypedExpr.factory(
+        self.assertEqual(te(
             "((P_<e,t>(x_e) & P_<e,t>(x_e)) | (P_<e,t>(x_e)))"), self.body)
-        # parenthesis grouping
-        self.assertNotEqual(TypedExpr.factory(
+        # associativity / grouping
+        self.assertEqual(te("1 - 4 * -(3 ** 2) + 3"), te("(1 - (4 * -(3 ** 2))) + 3"))
+        self.assertEqual(te('x_n + y_n * z_n / a_n'), te('x_n + ((y_n * z_n) / a_n)'))
+        self.assertEqual(te("4 ** 3 ** 2 + 2 * 3"), te("(4 ** (3 ** 2)) + (2 * 3)")) # ** is right associative
+        self.assertEqual(te("p_t & ~q_t | r_t"), te("(p_t & ~q_t) | r_t"))
+        self.assertEqual(te("p_t | ~q_t & r_t"), te("p_t | (~q_t & r_t)"))
+        self.assertNotEqual(te(
             "P_<e,t>(x_e) & (P_<e,t>(x_e) | P_<e,t>(x_e))"), self.body)
         # variable binding syntax
-        self.assertEqual(TypedExpr.factory("L x_e : x_e"), self.ident)
-        self.assertRaises(parsing.ParseError, TypedExpr.factory, "L x_e : x_t")
+        self.assertEqual(te("L x_e : x_e"), self.ident)
+        self.assertEqual(te("L x_e : x_e"), te("L x_e : x"))
+        self.assertEqual(te("L x_t : x_t"), te("L x_t : x"))
+        self.assertEqual(te("L s_{e} : L p_t : Exists x_e << s: P_<e,t>(x) & p"),
+                         te("L s_{e} : L p_t : Exists x_e << s_{e}: P_<e,t>(x_e) & p_t"))
+        self.assertEqual(te("L s_X : L p_Y : Exists x_e << s: P_<Z,t>(x) & p"),
+                         te("L s_{e} : L p_t : Exists x_e << s_{e}: P_<e,t>(x_e) & p_t"))
+
+        self.assertRaises(parsing.ParseError, te, "")
+        # TypeParseErrors should bubble up in various contexts:
+        self.assertRaises(types.TypeParseError, te, "x_T")
+        self.assertRaises(types.TypeParseError, te, "(x_T)")
+        self.assertRaises(types.TypeParseError, te, "x_t => y_T")
+        self.assertRaises(parsing.ParseError, te, "x_n <=> y_n <=> z_n") # not valid in the metalanguage
+        # operator with type annotation:
+        self.assertRaises(parsing.ParseError, te, "Dom_<<e,t>,t>(x_<e,t>)")
+
+        self.assertRaises(parsing.ParseError, te, "(L x_n )")
+        self.assertRaises(parsing.ParseError, te, "L x_n")
+        self.assertRaises(parsing.ParseError, te, "L x_n :")
+        self.assertRaises(parsing.ParseError, te, "(L x_n :")
+        self.assertRaises(parsing.ParseError, te, "(L x_n :)")
+        self.assertRaises(parsing.ParseError, te, "(L 1 : p_t)")
+        self.assertRaises(parsing.ParseError, te, "(L K_e : P_<e,t>(K))")
+        self.assertRaises(parsing.ParseError, te, "p_t &")
+        self.assertRaises(parsing.ParseError, te, "(p_t &)")
+        self.assertRaises(parsing.ParseError, te, "p_t & q_n")
+        self.assertRaises(parsing.ParseError, te, "Dom")
+        self.assertRaises(parsing.ParseError, te, "2 + Dom")
+
+        # type errors in instantiation are TypeMismatch rather than ParseError:
+        self.assertRaises(types.TypeMismatch, te, "{p_t, q_n}")
+        self.assertRaises(types.TypeMismatch, te, "f_<e,t>(x_n)")
+        self.assertRaises(types.TypeMismatch, te, "(f_<e,t>(x_n))")
+        # however, TypeMismatch in a binding scope gets wrapped in a ParseError:
+        self.assertRaises(parsing.ParseError, te, "L x_e : x_t")
+        self.assertRaises(parsing.ParseError, te, "L x_e : x(y)")
+        self.assertRaises(parsing.ParseError, te, "L x_e : L y_<e,t> : L x_e : x(y)")
+
+        self.assertRaises(parsing.ParseError, te, "L : P(x)")
+        self.assertRaises(parsing.ParseError, te, "Exists x_e, y_e : P_<e,t>(x) & p_t")
+
+        # quick test of variable type conventions
         logger.setLevel(logging.WARNING)
         core.set_strict_type_parsing(False)
         try:
-            te("L x: L y: In(y)(x)")
+            self.assertEqual(te("L x: L y: In(y)(x)"), te("L x_e: L y_e: In_<e,<e,t>>(y)(x)"))
         finally:
             core.set_strict_type_parsing(True)
             logger.setLevel(logging.INFO)
@@ -658,12 +724,12 @@ class MetaTest(unittest.TestCase):
         self.assertNotEqual(pmw_test1.apply(self.t2), pmw_test1b)
 
         # Different version of the same test: direct variable substitution
-        test2 = TypedExpr.factory("L y_e : L x_e : y_e")
-        test2b = TypedExpr.factory("L x_e : x_e")
+        test2 = te("L y_e : L x_e : y_e")
+        test2b = te("L x_e : x_e")
         self.assertNotEqual(test2.apply(self.x), test2b)
 
         # test for accidental collisions from alpha conversions, added Apr 2015
-        test3 = TypedExpr.factory(
+        test3 = te(
             "(L xbar_<e,t> : L x_e : xbar(x))(L z_e : P_<(e,e,e),t>(x_e,z_e, x1_e))")
         test3 = test3.reduce_all()
         self.assertNotEqual(test3[1][1][0], test3[1][1][1])
