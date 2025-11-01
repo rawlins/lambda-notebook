@@ -450,7 +450,7 @@ class TermParser(Unit):
 
     def _parse(self, state):
         n, cur = super()._parse(state)
-        if cur.e and isinstance(cur.e, TypeParseError) and not isinstance(cur.e, TypeParseError):
+        if cur.e and isinstance(cur.e, ParseError) and not isinstance(cur.e, TypeParseError):
             # intercept and rewrite
             return None, self.error(state)
         return n, cur

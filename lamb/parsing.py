@@ -561,7 +561,6 @@ class Parselet(object):
     def _parse(self, state):
         # this code is more general than subclasses, because it allows for
         # wrapping a parsing function
-        # TODO: most of this isn't currently used in practice
         if self.parser is None:
             # noop succesful parse
             return None, state
@@ -571,7 +570,11 @@ class Parselet(object):
         else:
             # assumption: a callable parser returns exactly one result n, with
             # an index into the string it is called with
-            n, i = self.parser(state.s, state.i)
+            try:
+                n, i = self.parser(state.s, state.i)
+            except ParseError as e:
+                # abort and roll back parser state
+                return None, state.error(e)
             cur = state.update(i)
 
         if cur.e:
@@ -691,11 +694,8 @@ class Label(Parselet):
         if self.parser is None:
             n, cur = super()._parse(state)
         else:
-            try:
-                n, cur = self.parser._parse(state)
-            except ParseError as e:
-                # roll back parser state
-                cur = state.error(e)
+            n, cur = self.parser._parse(state)
+
         if cur.e:
             return None, cur
 
@@ -870,6 +870,10 @@ class Precondition(Sequence):
         accum = []
         n, cur = self.pre._parse(state)
         if cur.e:
+            # if a sub-parser has set `met_preconditions` explicitly, don't
+            # override that. This might be a bit aggressive for general use,
+            # but it is well tuned for the cases in the metalanguage parser.
+            # one prime example: TypeParseErrors that happen inside a group.
             if not cur.e.has_preconditions:
                 cur.e.met_preconditions = False
             cur.e.has_preconditions = True
@@ -880,8 +884,9 @@ class Precondition(Sequence):
         for p in self.parser:
             n, cur = p._parse(cur)
             if cur.e:
+                cur.e.met_preconditions = True
                 cur.e.has_preconditions = True
-                return None, cur
+                return None, state.error(cur.e)
 
             seq_extend(accum, n)
 
