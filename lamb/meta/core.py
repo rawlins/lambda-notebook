@@ -8,7 +8,7 @@ from lamb import types, parsing, utils
 from lamb.utils import ensuremath, dbg_print, Namespace
 
 from lamb.types import TypeMismatch, BasicType, FunType, TupleType, is_type_var
-# meta.ply and meta.parsing are the only meta modules imported by core
+# meta.ply is the only meta module imported by core
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
 from .ply import simplify_all, symbol_is_var_symbol, alphanorm_key
 from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
@@ -186,7 +186,7 @@ def tefnorm(e):
         return e
 
 
-def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True, validate=True):
+def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True):
     """Public interface for constructing `TypedExpr` objects; `s` may be a
     string, in which case it will be parsed."""
 
@@ -205,32 +205,7 @@ def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True, validate=T
                                         _globals=_globals, fullcopy=fullcopy))
     if let and isinstance(result, TypedExpr):
         result = let_wrapper(result)
-    if validate:
-        r2 = oldte(s, let=let, assignment=assignment, _globals=_globals, fullcopy=fullcopy)
-        if let and result != r2:
-            raise parsing.ParseError(f"New parser equality failure on `{s}`: `{repr(result)}` vs. `{repr(r2)}`")
-        elif not let:
-            # polymorphic cases are guaranteed to fail here without a let wrapper
-            rl = let_wrapper(result)
-            r2l = let_wrapper(r2)
-            if rl != r2l:
-                raise parsing.ParseError(f"New parser equality failure on `{s}`: `{repr(rl)}` vs. `{repr(r2l)}`")
 
-    return result
-
-
-def oldte(s, *, let=True, assignment=None, _globals=None, fullcopy=True):
-    """Public interface for constructing `TypedExpr` objects; `s` may be a
-    string, in which case it will be parsed."""
-
-    # XX incorporate lexicon namespace into this function somehow?
-    if _globals is None:
-        _globals = global_namespace()
-
-    result = tenorm(TypedExpr.factory(s, assignment=assignment,
-                                        _globals=_globals, fullcopy=fullcopy))
-    if let and isinstance(result, TypedExpr):
-        result = let_wrapper(result)
     return result
 
 
@@ -260,9 +235,22 @@ def is_equality(x):
 
 def term(s, typ=None, assignment=None, meta=False):
     """Convenience wrapper for building terms.
-    `s`: the term's name.
-    `typ`: the term's type, if specified."""
-    r = TypedTerm.term_factory(s, typ=typ, assignment=assignment)
+    `s`: the term's name, optionally followed by `_` and a type (as in normal metalanguage syntax)
+    `typ`: an optional programmatically specified type, which will be unified with any type on the term name."""
+    if isinstance(s, str):
+        from .parser import term_parser
+        n = term_parser.parse(s)[0]
+        if n.type is not None and typ is not None:
+            principal = get_type_system().unify(typ, n.type)
+            if principal is None:
+                raise TypeMismatch(typ, n.type,
+                    f"Term `{s}` instantiated with inconsistent types")
+            typ = principal
+        elif typ is None:
+            typ = n.type
+        s = n.name
+
+    r = TypedTerm.term_factory(s, typ=typ, assignment=assignment, preparsed=True)
     if meta:
         # return only if r is a valid MetaTerm
         if r is None and isinstance(s, TypedExpr) and not s.meta():
@@ -451,34 +439,12 @@ builtin_arities = {
     '>>': {2},
     '<<': {2}}
 
-# hacky operator aliases. These paper over some inadequacies of pure python
-# operators, but are far from a desireable / general solution...
-# it is not recommended for end users to mess with this at all
-# XX add unicode aliases?
-builtin_op_aliases = {
-    # do not reorder
-    '<=>': '%',
-    '==>': '>>', # remove?
-    '=>':  '>>', # note: cannot add '<=': '<<' for obvious reasons...
-    '<==': '<<', # remove?
-    '=/=': '^',
-    # note: these intentionally shadow standard python operators! It's not
-    # possible to use the standard data model overrides here, because
-    # TypedExpr objects must support python equality, and the metalanguage
-    # requires that these operators mean equivalence.
-    '!=':  '^',
-    '==':  '%'
-}
-
-def apply_op_aliases(to_eval):
-    for k in builtin_op_aliases:
-        to_eval = to_eval.replace(k, builtin_op_aliases[k])
-    return to_eval
 
 def _sig_to_tuple(typs):
     # replace None with ∀X
     generic = types.VariableType.any()
     return types.TupleType(*[generic if t is None else t for t in typs])
+
 
 class OperatorRegistry(object):
     class Operator(object):
@@ -804,7 +770,6 @@ class OperatorRegistry(object):
             if getattr(op, 'secondary_names', None):
                 for alias in op.secondary_names:
                     self.canonicalize_binding_ops[alias] = op.canonical_name
-        BindingOp.compile_ops_re()
         self.bop_change()
 
     def remove_binding_op(self, op):
@@ -815,7 +780,6 @@ class OperatorRegistry(object):
             self.unparsed_binding_ops.remove(op)
         else:
             del self.binding_ops[op.canonical_name]
-        BindingOp.compile_ops_re()
         self.bop_change()
 
     def _repr_pretty_(self, p, cycle):
@@ -1404,10 +1368,6 @@ def merge_tes(te1, te2, symmetric=True):
 ############### Core TypedExpr objects
 
 
-global _parser_assignment
-_parser_assignment = None
-
-
 def call_from_te_seq(f, seq, **kwargs):
     # this function allows a function to be directly called from standard
     # argument syntax in the metalanguage parser. seq is either a single
@@ -1808,35 +1768,6 @@ class TypedExpr(object):
         return f"subexpression {i}"
 
     @classmethod
-    def old_parse(cls, s, assignment=None, locals=None):
-        """Attempt to parse a string `s` into a TypedExpr
-        `assignment`: a variable assignment to use when parsing.
-        `locals`: a dict to use as the local variables when parsing.
-        """
-        # prevent reentrance from within an eval call
-        if _parser_assignment is not None:
-            # this can happen if a python string shows up in a metalanguage
-            # expression. This solution is pretty hacky...
-            raise parsing.ParseError("Invalid syntax", s=s)
-
-        if assignment is None:
-            assignment = dict()
-        ts = get_type_system()
-        (struc, i) = parsing.parse_paren_str(s, 0, ts)
-        # Intercept any ParseError and update `s` to ensure we don't show strings
-        # with replacements
-        # TODO: this is generally a bit too wide. It'd be better to do something
-        # like, show the biggest subexpression that has no replacements in which
-        # the error occurred.
-        with parsing.parse_error_wrap("Failed to parse expression", s=s, wrap_all=False):
-            try:
-                return tenorm(cls.try_parse_paren_struc_r(struc,
-                                        assignment=assignment, locals=locals))
-            except AttributeError as e:
-                # convert AttributeError from TypedExprFacade.__getattr__ into a ParseError
-                raise parsing.ParseError(str(e), s=s) from e
-
-    @classmethod
     def parse(cls, s, assignment=None, locals=None):
         if assignment is None:
             assignment = {}
@@ -1849,7 +1780,7 @@ class TypedExpr(object):
             from .parser import expr_parser
             return expr_parser.parse(s)[0].instantiate(assignment=assignment)
 
-
+    # XX shouldn't be on this object probably?
     _parsing_locals = dict()
 
     @classmethod
@@ -1873,174 +1804,11 @@ class TypedExpr(object):
         return l in cls._parsing_locals
 
     @classmethod
-    def try_parse_flattened(cls, s, assignment=None, locals=None):
-        """Attempt to parse a flat, simplified string into a TypedExpr. Binding
-        expressions should be already handled.
-        
-        assignment: a variable assignment to use when parsing.
-        locals: a dict to use as the local variables when parsing.
-
-        Do some regular expression magic to expand metalanguage terms into
-        constructor/factory calls,  and then call eval.
-
-        The gist of the magic (see expand_terms):
-          * replace some special cases with less reasonable operator names.
-            (This is originally based on AIMA logic.py)
-          * find things that look like term names, and surround them with calls
-            to the term factory function.
-
-        Certain special case results are wrapped in TypedExprs, e.g. sets and
-        tuples.
-        """
-        if locals is None:
-            locals = {}
-
-        if assignment is None:
-            assignment = {}
-
-        # handle an error case: if we try to parse this, it generates a
-        # SyntaxError. But if None is returned, the caller can provide a
-        # context-specific error.
-        if not s.strip():
-            return None
-
-        # Replace the alternative spellings of operators with canonical
-        # spellings
-        to_eval = apply_op_aliases(s)
-        lcopy = locals.copy()
-        lcopy.update(cls._parsing_locals)
-        pre_expansion = to_eval
-        to_eval = TypedExpr.expand_terms(to_eval, assignment=assignment,
-                                                            ignore=lcopy.keys())
-        lcopy.update({'assignment': assignment, 'type_e': types.type_e})
-
-        # cannot figure out a better way of doing this short of actually parsing
-        # TODO: reimplement as a real parser, don't rely on `eval`
-        global _parser_assignment
-        _parser_assignment = assignment # not remotely thread-safe or reentrance-safe
-        # Now eval the string.  (A security hole; do not use with an adversary.)
-        try:
-            result = eval(to_eval, dict(), lcopy)
-        except SyntaxError as e:
-            with parsing.parse_error_wrap("Binding expression parse error",
-                                            s=pre_expansion):
-                # try to induce some more informative error messages
-                # if re.match(BindingOp.init_op_regex, pre_expansion):
-                if BindingOp.init_op_match(pre_expansion):
-                    BindingOp.try_parse_header([pre_expansion])
-            # n.b. the msg here is probably just a placeholder, it should get
-            # overridden.
-            raise parsing.ParseError("Failed to parse expression", s=s, e=e)
-            # other exceptions just get raised directly -- what comes up in
-            # practice?
-        finally:
-            _parser_assignment = None
-
-        result = tenorm(result)
-
-        # XX is the container check needed here? code dup with factory
-        if (c := from_python_container(result)) is not None:
-            return c
-
-        return validate_te(result)
-
-    @classmethod
-    def try_parse_binding_struc(cls, s, assignment=None, locals=None,
-                                                            vprefix="ilnb"):
-        """Try to parse `s` as a binding operator expression.  Will return a
-        subclass of BindingOp, None, or raise a `parsing.ParseError`.
-
-        the variable on the exception `met_preconditions` is used to attempt to
-        figure out whether this was a plausible attempt at a binding operator
-        expression, so as to get the error message right."""
-        try:
-            return tefnorm(
-                BindingOp.try_parse_binding_struc_r(s,
-                        assignment=assignment, locals=locals, vprefix=vprefix))
-        except parsing.ParseError as e:
-            if not e.met_preconditions:
-                return None
-            else:
-                if not e.s:
-                    e.s = parsing.flatten_paren_struc(s)
-                    e.i = None # lost any context for this
-                raise e
-
-    @classmethod
-    def try_parse_paren_struc_r(cls, struc, assignment=None, locals=None,
-                                                            vprefix="ilnb"):
-        """Recursively try to parse a semi-AST with parenthetical structures
-        matched."""
-        expr = cls.try_parse_binding_struc(struc, assignment=assignment,
-                                                locals=locals, vprefix=vprefix)
-        if expr is not None:
-            return expr
-        # struc is not primarily a binding expression
-        s = ""
-        h = dict()
-        vnum = 1
-        for sub in struc:
-            if isinstance(sub, str):
-                s += sub 
-            else:
-                sub_expr = cls.try_parse_paren_struc_r(sub,
-                        assignment=assignment, locals=locals, vprefix=vprefix)
-                if sub_expr is None:
-                    # This might be unreachable: `()` parses as a 0-length
-                    # tuple.
-                    # probably could calculate `i`...
-                    raise parsing.ParseError(
-                        f"Empty subexpression {vnum}",
-                        s=f"`{parsing.flatten_paren_struc(struc)}`")
-                var = vprefix + str(vnum)
-                s += f"({var})"
-                vnum += 1
-                h[var] = sub_expr
-        return tefnorm(cls.try_parse_flattened(s, assignment=assignment, locals=h))
-
-
-    @classmethod
-    def expand_terms(cls, s, i=0, assignment=None, ignore=None):
-        """Treat terms as macros for term_factory calls.  Attempt to find all
-        term strings, and replace them with eval-able factory calls.
-
-        This is an expanded version of the original regex approach; one reason
-        to move away from that is that this will truely parse the types."""
-        from .parser import find_term_locations, parse_term
-        terms = find_term_locations(s, i)
-        if ignore is None:
-            ignore = set()
-        offset = 0
-        for t in terms:
-            if t.start() + offset < i:
-                # parsing has already consumed this candidate term, ignore.
-                # (E.g. an "e" in a type signature.)
-                continue
-            (name, typ, end) = parse_term(s, t.start() + offset,
-                                    return_obj=False, assignment=assignment)
-            if name is None:
-                logger.warning("Unparsed term '%s'" % t.group(0)) # TODO: more?
-                continue
-            elif name in ignore:
-                continue
-            # ugh this is sort of absurd
-            if typ is None:
-                replace = (f'__ptf("{name}", typ=None, assignment=assignment)')
-            else:
-                replace = (f'__ptf("{name}", typ="{repr(typ)}", assignment=assignment)')
-            s = s[0:t.start() + offset] + replace + s[end:]
-            i = t.start() + offset + len(replace)
-            len_original = end - (t.start() + offset)
-            offset += len(replace) - len_original
-        return s
-
-    @classmethod
     def term_factory(cls, s, typ=None, assignment=None, preparsed=False):
         """Attempt to construct a TypedTerm from argument s.
 
         If s is already a TypedTerm, return a copy of the term.
-        If s is a string, try to parse the string as a term name.  (see
-        try_parse_typed_term)
+        If s is a string, try to use the string as a term name (only).
         Otherwise, fail.
         """
         ts = get_type_system()
@@ -2084,23 +1852,15 @@ class TypedExpr(object):
             return MetaTerm(s, typ=typ)
         else:
             if isinstance(s, str) and not preparsed:
-                # in principle, if typ is supplied, could try parsing and
-                # confirm the type?
-                from .parser import try_parse_typed_term
-                v, parsed_typ = try_parse_typed_term(s,
-                                            assignment=assignment)
-                if typ is not None and parsed_typ is not None:
-                    principal = ts.unify(typ, parsed_typ)
-                    if principal is None:
-                        raise TypeMismatch(typ, parsed_typ,
-                            f"Term `{s}` instantiated with inconsistent types")
-                    typ = principal
-                elif parsed_typ is not None:
-                    typ = parsed_typ
-                # else: both are None, leave typ as None
-            else:
-                # this does not validate term name formatting!
-                v = s
+                # should anything else be done here? this code path is mostly
+                # for internal code...
+                from .parser import term_re
+                if not re.fullmatch(term_re, s):
+                    # shouldn't be reachable if everything is working correctly
+                    raise parsing.ParseError(f"Invalid term name in term_factory: {s}")
+
+            # this does not validate term name formatting!
+            v = s
 
         v = utils.num_or_str(v)
         if typ is not None:
@@ -2196,20 +1956,6 @@ class TypedExpr(object):
             (Happens in parser magic.)
           * multiple args: call the standard constructor.
         """
-        ### NOTE: do not edit this function lightly...
-        # XX remove this
-        global _parser_assignment
-        if assignment is None:
-            if _parser_assignment is None:
-                assignment = dict()
-            else:
-                assignment = _parser_assignment # not remotely thread-safe
-
-        # `te` sets _globals by default, `factory` does not
-        # n.b. for the case where _parser_assignment is set, `_globals` will
-        # be already present in `assignment` via recursion on this function
-        if _globals:
-            assignment = collections.ChainMap(assignment, _globals)
 
         if len(args) == 0:
             return None #TODO something else?
@@ -2232,9 +1978,6 @@ class TypedExpr(object):
                 return from_python(s, types.type_t)
             elif s in types.type_n.domain:
                 return from_python(s, types.type_n)
-            elif isinstance(s, str):
-                # TODO: remove?
-                return cls.old_parse(s, assignment)
             else:
                 c = from_python_container(s)
                 if c is not None:
@@ -3101,13 +2844,7 @@ class TypedExpr(object):
         return TypedExprFacade(self)
 
 
-def __ptf(s, typ=None, assignment=None):
-    return TypedExpr.term_factory(s, typ=typ, assignment=assignment).M
-
-
-TypedExpr.add_local('__ptf', __ptf, raw=True)
-
-
+# TODO: is this still useful after the parser overhaul?
 class TypedExprFacade(object):
     def __init__(self, e):
         if isinstance(e, TypedExprFacade):
@@ -4831,100 +4568,12 @@ class TupleIndex(SyncatOpExpr):
         return TupleIndex(tup, index)
 
 
-
 ###############
 #
 # Binding expressions
 #
 ###############
 
-
-
-global recurse_level
-recurse_level = 0
-
-# for use in parsing
-@dataclass
-class BindingOpHeader:
-    op_class: type
-    var_seq: list[tuple[str, types.TypeConstructor]] # py39 syntax
-    restrictor: TypedExpr = None
-
-    def classprop(self, k, default=None):
-        return getattr(self.op_class, k, default)
-
-    def ensure_types(self):
-        for i in range(len(self.var_seq)):
-            if self.var_seq[i][1] is None:
-                self.var_seq[i] = (self.var_seq[i][0],
-                            default_variable_type(self.var_seq[i][0]))
-
-    def precheck(self):
-        # side effect: will initialize any `None` types to the default type
-        # for the variable name
-        for i in range(len(self.var_seq)):
-            if not is_var_symbol(self.var_seq[i][0]):
-                raise parsing.ParseError(
-                    "Need variable name in binding expression"
-                    f" (received `{self.var_seq[i][0]}`)")
-            if self.var_seq[i][1] is None:
-                self.var_seq[i] = (self.var_seq[i][0],
-                            default_variable_type(self.var_seq[i][0]))
-
-        if not self.classprop('allow_multivars') and len(self.var_seq) > 1:
-            raise parsing.ParseError(
-                f"Operator class `{self.op_class.canonical_name}` does not"
-                " allow >1 variables")
-
-        if not self.classprop('allow_novars') and len(self.var_seq) == 0:
-            raise parsing.ParseError(
-                f"Operator class `{self.op_class.canonical_name}` does not"
-                " allow 0 variables")
-
-        if not self.classprop('allow_restrictor') and self.restrictor is not None:
-            raise parsing.ParseError(
-                f"Operator class `{self.op_class.canonical_name}` does not"
-                " allow a restrictor")
-
-        # note: type of restrictor not checked here! Instantiating class is
-        # responsible for that.
-
-    def get_kwargs(self, assignment=None):
-        kwargs = dict(assignment=assignment)
-        if self.classprop('allow_restrictor'):
-            kwargs['restrictor'] = tenorm(self.restrictor)
-        return kwargs
-
-    def factory(self, body, assignment=None):
-        self.precheck()
-        if self.classprop('allow_novars') or self.classprop('allow_multivars'):
-            # constructor should take an n-ary sequence of variables
-            var_arg = [self.var_init(v) for v in self.var_seq]
-        else:
-            # constructor should take a single variable
-            var_arg = self.var_init(self.var_seq[0])
-
-        return self.op_class(var_arg, tenorm(body), **self.get_kwargs())
-
-    @property
-    def opname(self):
-        return self.op_class.__name__
-
-    def var_init(self, var):
-        if isinstance(var, TypedTerm):
-            # or just return it?
-            varname = var.op
-            vartype = var.type
-        elif isinstance(var, tuple):
-            varname, vartype = var
-        else:
-            # mainly here to help subclass implementers
-            raise NotImplementedError(f"Unknown var for {self.opname}: `{repr(var)}`")
-
-        if not is_var_symbol(varname):
-            raise ValueError(f"{self.opname} needs a variable name (got `{repr(varname)}`)")
-
-        return TypedTerm(varname, typ=vartype)
 
 class BindingOp(TypedExpr):
     """Abstract class for a unary operator with a body that binds a single
@@ -4933,9 +4582,6 @@ class BindingOp(TypedExpr):
     Never instantiated directly.  To see how to use this, it may be helpful to
     look at the definite description tutorial, which shows how to build an iota
     operator."""
-
-    op_regex = None
-    init_op_regex = None
 
     # set the following in subclasses
     canonical_name = None
@@ -5134,43 +4780,6 @@ class BindingOp(TypedExpr):
             return None
         return self.vartype.domain.cardinality()
 
-    @classmethod
-    def compile_ops_re(cls):
-        """Recompile the regex for detecting operators."""
-        global registry
-        op_names = (registry.binding_ops.keys()
-                                | registry.canonicalize_binding_ops.keys())
-        # sort with longer strings first, to avoid matching subsets of long
-        # names i.e. | is not greedy, need to work around that.
-        op_names = list(op_names)
-        op_names.sort(reverse=True)
-        # somewhat ad hoc: allow `λx`. (Could add unicode quantifiers?)
-        # TODO: would it be better to always require a space?
-        nospace = {"λ"}
-
-        nospace_ops = [o for o in op_names if o in nospace]
-        if len(op_names) == 0:
-            BindingOp.op_regex = None
-            BindingOp.init_op_regex = None
-        else:
-            regex = f"({'|'.join(op_names)})\\s+"
-            if nospace_ops:
-                regex = f"(?:({'|'.join(nospace_ops)})|{regex})"
-            BindingOp.op_regex = re.compile(regex)
-            BindingOp.init_op_regex = re.compile(r'^\s*' + regex)
-
-    @classmethod
-    def init_op_match(cls, s):
-        if BindingOp.init_op_match and BindingOp.init_op_regex is not None:
-            # TODO: is there a clever way to do this with a single match group
-            match = re.match(BindingOp.init_op_regex, s)
-            if match:
-                if match.group(2):
-                    return match.group(2), match.end(2)
-                else:
-                    return match.group(1), match.end(1)
-        return None
-
     def alpha_convert(self, *new_varname):
         """Produce an alphabetic variant of the expression w.r.t. the bound
         variable(s), with `new_varname` as the new name(s).
@@ -5349,147 +4958,6 @@ class BindingOp(TypedExpr):
                     "Partiality (unquantified condition)")
         else:
             return result
-
-    @classmethod
-    def try_parse_header(cls, struc, assignment=None, locals=None):
-        """Try and parse the header of a binding operator expression, i.e.
-        everything up to the body including ':'.
-
-        If this succeeds, it will return a tuple with the class object, the
-        variable name, the variable type, and the string after the ':'' if any.
-
-        If it fails, it will either return None or raise an exception.  That
-        exception is typically a ParseError.
-        """
-
-        global registry
-        from .parser import try_parse_term_sequence
-
-        if len(struc) == 0 or not isinstance(struc[0], str):
-            return None
-
-        potential_header = struc[0]
-        i = 0
-        if not (op_match := cls.init_op_match(potential_header)):
-            raise parsing.ParseError(
-                "Unknown operator when trying to parse binding expression",
-                potential_header, None, met_preconditions=False)
-        op_name, i = op_match
-
-        if op_name in registry.canonicalize_binding_ops:
-            op_name = registry.canonicalize_binding_ops[op_name]
-        if op_name not in registry.binding_ops:
-            raise Exception(
-                "Can't find binding operator '%s'; should be impossible"
-                % op_name)
-        op_class = registry.binding_ops[op_name]
-
-        i = parsing.consume_whitespace(potential_header, i)
-
-        new_struc = [potential_header[i:]] + struc[1:]
-        # if `:` can ever appear in types, this will go wrong
-        main_split = parsing.struc_split(new_struc, ":")
-        # XX the whitespace here is a bit unfortunate. Currently, it prevents
-        # matching in a complex functional type...
-        restric_split = parsing.struc_split(main_split[0], " <<")
-        # assumption: no structure in header before <<
-        if len(restric_split) > 1 and len(restric_split[0]) > 1:
-            raise parsing.ParseError(
-                "Extraneous material in binding expression before `<<`",
-                s=flatten_paren_struc(main_split[0]),
-                met_preconditions=True)
-
-        try:
-            var_seq = try_parse_term_sequence(restric_split[0], lower_bound=None,
-                                    upper_bound=None, assignment=assignment)
-        except parsing.ParseError as e:
-            # somewhat involved logic: try to parse the var sequence before
-            # reporting errors about a missing `:`. However, if we are missing
-            # a `:`, mark `met_preconditions` as false so that the parser isn't
-            # committed to a binding op header.
-            if len(main_split) != 2:
-                e.met_preconditions = False
-            raise e
-        if (len(main_split) != 2):
-            # possibly should change to met_preconditions = True in the future.
-            # At this point, we have seen a binding expression token.
-            raise parsing.ParseError(
-                "Missing ':' in binding expression",
-                potential_header,
-                met_preconditions=True)
-        restric = None
-        if len(restric_split) > 1:
-            # ok, the right side of the split should now be parseable as a
-            # set expression
-            with parsing.parse_error_wrap(
-                        "Binding expression has unparsable restrictor",
-                        paren_struc=restric_split[1]):
-                # XX named variables should not occur free here
-                restric = TypedExpr.try_parse_paren_struc_r(restric_split[1],
-                        assignment=assignment, locals=locals)
-
-        return (BindingOpHeader(op_class=op_class, var_seq=var_seq, restrictor=restric),
-                main_split[1])
-
-    @classmethod
-    def try_parse_binding_struc_r(cls, struc, assignment=None, locals=None,
-                                                                vprefix="ilnb"):
-        """Attempt to parse structure `s` as a binding structure.  Used by the
-        factory function.
-        
-        assignment: a variable assignment to use when parsing.
-
-        `struc` is a semi-AST with all parenthetical structures parsed.
-        (See `parsing.parse_paren_str`.)
-
-        Format: 'Op v : b'
-          * 'Op' is one of 'lambda', 'L', 'λ', 'Forall', 'Exists', 'Iota'.
-            (Subclasses can register themselves to be parsed.)
-          * 'v' is a variable name expression (see try_parse_typed_term),
-             e.g. 'x_e'
-          * 'b' is a function body, i.e. something parseable into a TypedExpr.
-
-        If 'v' does not provide a type, it will attempt to guess one based on
-        the variable name. The body will be parsed using a call to the
-        recursive `TypedExpr.try_parse_paren_struc_r`, with a shifted assignment
-        using the new variable 'v'.
-
-        Returns a subclass of BindingOp.
-        """
-
-        struc_arg = struc
-        # TODO: integrate with general bracket handling
-        if (left := parsing.bracketed(struc)):
-            struc = parsing.debracket(struc)
-        if (result := BindingOp.try_parse_header(struc,
-                            assignment=assignment, locals=locals)) is None:
-            return None
-        header, struc = result
-
-        assignment = subassignment(assignment)
-        for var_tuple in header.var_seq:
-            (v,t) = var_tuple
-            assignment[v] = TypedTerm(v, t)
-        body = None
-        with parsing.parse_error_wrap(
-                        "Binding expression has unparsable body",
-                        paren_struc=struc_arg):
-            body = TypedExpr.try_parse_paren_struc_r(struc,
-                        assignment=assignment, locals=locals, vprefix=vprefix)
-
-        if body is None:
-            raise parsing.ParseError(
-                "Can't create body-less binding expression",
-                parsing.flatten_paren_struc(struc_arg), None)
-
-        with parsing.parse_error_wrap("Binding expression parse error",
-                                    paren_struc=struc_arg):
-            result = header.factory(body, assignment=assignment)
-        # TODO: integrate with general set handling
-        if left == "{":
-            from .sets import ListedSet
-            result = ListedSet(result)
-        return result
 
     @classmethod
     def join(cls, args, empty=None):

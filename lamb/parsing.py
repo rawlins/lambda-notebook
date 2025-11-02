@@ -41,8 +41,8 @@ class ParseError(Exception):
         else:
             self.e = None
         self.msg = msg
-        # set to False to indicate that a try_parse function did not find
-        # preconditions for what it is supposed to consume
+        # set to False to indicate that a parser did not find
+        # preconditions for what it is supposed to parse
         self.met_preconditions = met_preconditions
         self.has_preconditions = has_preconditions
         self.has_note = False
@@ -153,19 +153,6 @@ class ParseError(Exception):
         return p.text(self.tostring())
 
 
-@contextmanager
-def try_parse(suppress=False, has_preconditions=None):
-    try:
-        yield
-    except ParseError as e:
-        if suppress or not e.met_preconditions:
-            return None
-        else:
-            if has_preconditions is not None:
-                e.has_preconditions = has_preconditions
-            raise e
-
-
 def consume_char(s, i, match, error=None):
     if i >= len(s):
         if error is not None:
@@ -206,20 +193,6 @@ def consume_number(s, i, error=None):
     if m is not None:
         m = int(m)
     return m, i
-
-
-def find_pattern_locations(re, s, i=0, end=None):
-    matches = list()        
-    next = i
-    if end is None:
-        end = len(s)
-    while next <= end:
-        search = re.search(s, pos=next, endpos=end)
-        if not search:
-            break
-        matches.append(search)
-        next = search.end() + 1
-    return matches
 
 
 def consume_whitespace(s, i, plus=False, error=None):
@@ -1188,7 +1161,7 @@ def te_only(env):
 
 # wrap other exception types in ParseError with designated parameters
 @contextmanager
-def parse_error_wrap(msg, paren_struc=None, wrap_all=True, **kwargs):
+def parse_error_wrap(msg, wrap_all=True, **kwargs):
     from lamb.types import TypeParseError, TypeMismatch
     try:
         yield
@@ -1196,17 +1169,10 @@ def parse_error_wrap(msg, paren_struc=None, wrap_all=True, **kwargs):
         if not wrap_all:
             raise e
         kwargs['e'] = e
-        # special case this, so that the caller doesn't need to preemptively
-        # flatten
-        if paren_struc:
-            kwargs['s'] = flatten_paren_struc(paren_struc)
         raise ParseError(msg, **kwargs).with_traceback(e.__traceback__) from None
     except ParseError as e:
         if not e.msg:
             e.msg = msg # this should essentially not trigger ever?
-        if paren_struc:
-            # override any provided s...
-            kwargs['s'] = flatten_paren_struc(paren_struc)
 
         if 's' in kwargs and e.s != kwargs['s']:
             # `i` may or may not be set, but any previous `i` won't make sense
@@ -1448,6 +1414,7 @@ class AssignmentParser(Unit):
         # build cls.parser on first instantiation, to avoid circular import
         # issues. After first instantiation, this is memoized.
         from lamb.meta.parser import term_parser
+        # TODO: use parser.expr_parser to directly parse right side?
 
         eq_parser = (Whitespace()
                      + REParselet(r'=(?:<([a-zA-Z0-9_]*)>)?',
@@ -1620,20 +1587,12 @@ def parse(s, state=None, transforms=None, ambiguity=False):
     return parse_lines(s, transforms=transforms, env=state, ambiguity=ambiguity)
 
 
-def fullvar(d, s):
-    from lamb.meta import TypedTerm
-    if isinstance(s, TypedTerm):
-        return s
-    else:
-        return TypedTerm(s, d[s].type)
-
-
 def html_output(accum):
     # legacy function, maybe remove at some point
     x = utils.Namespace(accum)
     return utils.show(markdown=x._repr_markdown_(), plain=repr(x))
 
-
+# can this be removed? Does anyone or anything use it?
 def parse_qtree(s, i=0):
     s = s.strip()
     r, i = parse_qtree_r(s, i)
@@ -1713,175 +1672,3 @@ def parse_qtree_r(s, i=0):
     i = consume_whitespace(s, i)
     i = consume_char(s, i, "]", "Missing ']'")
     return (Tree(label, children=children), i)
-
-
-def flatten_paren_struc(struc):
-    """Flatten a parsed structure back into a string; mainly used for errors"""
-    s = ""
-    for sub in struc:
-        if isinstance(sub, str):
-            s += sub
-        else:
-            s += flatten_paren_struc(sub)
-    return s.strip()
-
-global all_brackets, close_brackets
-all_brackets = {"(" : ")", "{" : "}"}
-close_brackets = {all_brackets[y] : y for y in all_brackets.keys()}
-
-
-def bracketed(struc, brackets=None):
-    if brackets is None:
-        brackets = all_brackets
-    if (len(struc) > 0
-            and isinstance(struc[0], str)
-            and struc[0] in brackets
-            and all_brackets[struc[0]] == struc[-1]):
-        return struc[0]
-    else:
-        return None
-
-
-def debracket(struc):
-    # n.b. this does nothing on cases like [['(', 'stuff', ')']]
-    if bracketed(struc):
-        return debracket(struc[1:-1])
-    else:
-        return struc
-
-
-def struc_split(struc, sep):
-    # XX implement maxsplit, this currently does exactly 1 split
-    for i in range(len(struc)):
-        if isinstance(struc[i], str) and (pos := struc[i].find(sep)) >= 0:
-            l = struc[0:i]
-            r = struc[i+1:]
-            if pos > 0:
-                l = l + [struc[i][:pos]]
-            if pos + len(sep) < len(struc[i]):
-                r = [struc[i][pos+len(sep):]] + r
-            return l, r
-    return (struc,)
-
-
-def unconsumed(struc):
-    if isinstance(struc, str):
-        i = consume_whitespace(struc, 0)
-        return i < len(struc)
-    else:
-        for s in struc:
-            if unconsumed(s):
-                return True
-    return False
-
-
-def struc_dirstrip(struc, left=True):
-    # this guarantees at least len 1 on the return
-    if not struc:
-        return [""]
-
-    if left:
-        target = 0
-        remainder = slice(1, None)
-        f = lambda s: s.lstrip()
-        combine = lambda s,struc: [s] + struc
-    else:
-        target = -1
-        remainder = slice(None, -1)
-        f = lambda s: s.rstrip()
-        combine = lambda s,struc: struc + [s]
-
-    # no recursing
-    if not isinstance(struc[target], str):
-        return struc
-    stripped = f(struc[target])
-
-    if len(stripped) == 0:
-        return struc_dirstrip(struc[remainder], left=left)
-    else:
-        return combine(stripped, struc[remainder])
-
-
-def struc_lstrip(struc):
-    return struc_dirstrip(struc, left=True)
-
-
-def struc_rstrip(struc):
-    return struc_dirstrip(struc, left=False)
-
-
-def struc_strip(struc):
-    return struc_lstrip(struc_rstrip(struc))
-
-
-def parse_paren_str_r(s, i, stack, initial_accum=None, type_sys=None):
-    from lamb.meta.parser import term_symbols_re
-    # XX type_sys param vs get_type_system()
-    accum = ""
-    seq = list()
-    if initial_accum is not None:
-        seq.append(initial_accum)
-    start_i = i
-    while i < len(s):
-        # TODO: code dup/overlap with parse_term
-        if (i > 0 and s[i] == "_" and s[i-1] == "_"):
-            # without special handling here for this error case, an error
-            # message can be triggered on eval and is extremely cryptic.
-            raise ParseError("Stray `_` in expression", s=s, i=i)
-        elif (i > 0 and s[i] == "_" and re.match(term_symbols_re, s[i-1])
-                        and type_sys != None):
-            accum += "_"
-            # have to parse type here in order to handle bracketing in types
-            # correctly. I don't think there's a shortcut to this.  In the long
-            # run, this should do proper tokenizing of terms.
-            typ, end = type_sys.type_parser_recursive(s, i+1)
-            assert(typ is not None)
-            # this is unfortunate...
-            accum += s[i+1:end]
-            i = end
-        elif s[i] in all_brackets:
-            stack.append(s[i])
-            i += 1
-
-            r, new_i = parse_paren_str_r(s, i, stack, initial_accum=stack[-1],
-                                                            type_sys=type_sys)
-            if len(accum) > 0:
-                seq.append(accum)
-                accum = ""
-            seq.append(r)
-            i = new_i
-        elif s[i] in close_brackets:
-            if len(stack) > 0 and s[i] == all_brackets[stack[-1]]:
-                if len(accum) > 0:
-                    seq.append(accum)
-                    accum = ""
-                stack.pop()
-                seq.append(s[i])
-                i += 1
-                return (seq, i)
-            else:
-                raise ParseError("Unbalanced `%s...%s` expression"
-                                        % (close_brackets[s[i]], s[i]), s, i)
-        else:
-            accum += s[i]
-            i += 1
-    if len(accum) > 0:
-        seq.append(accum)
-    return (seq, i)
-
-
-def parse_paren_str(s, i, type_sys=None):
-    """Turn a string with parenthesis into a structured representation,
-    checking balance.
-
-    The structure consists of a list of strings/lists.  Sub-elements that are
-    lists have the same structure. Each distinct sub-element represents a
-    parenthesized grouping.
-
-    Right now only pays attention to () and {}."""
-    stack = list()
-    (seq, i) = parse_paren_str_r(s, i, stack, type_sys=type_sys)
-    if len(stack) != 0:
-        raise ParseError("Unbalanced '%s...%s' expression at end of string" %
-                                    (stack[-1], all_brackets[stack[-1]]), s, i)
-    return (seq, i)
