@@ -84,6 +84,6 @@ def BinaryDivExpr(self, x, y):
     return x / y
 
 # XX use superscript
-@op("**", type_n, type_n, op_latex="{**}")
+@op("**", type_n, type_n, op_latex="{**}", _left_assoc=False)
 def BinaryExpExpr(self, x, y):
     return x ** y

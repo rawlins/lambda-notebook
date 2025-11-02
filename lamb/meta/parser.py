@@ -42,53 +42,6 @@ class Attr(EnumClass):
     TYPE = "type"
 
 
-# XX move the precedence stuff into the registry
-# XX allow for operators to disable associativity, i.e. require parens
-op_precedence = {
-    '**': 8,
-    '*': 7,
-    '/': 7,
-    '@': 7,
-    '%': 7, # XX revisit
-    '+': 6,
-    '-': 6,
-    '<<': 5, # XX revisit
-    '==': 5,
-    '<=>': 5,
-    '!=': 5,
-    '^': 5, # XX revisit
-    '<': 5,
-    '>': 5,
-    '<=': 5,
-    '>=': 5,
-    '&': 4,
-    '|': 3,
-    '>>': 2, # XX revisit
-    '=>': 2,
-}
-
-# `p >> q | r` = `p >> (q | r)`
-# `p >> q & r` = `p >> (q & r)`
-# `p | q >> r` = `(p | q) >> r`
-# `p & q >> r` = `(p & q) >> r`
-# `p <=> q >> r` = `(p <=> q) >> r`
-# `p >> q <=> r` = `p >> (q <=> r)`
-
-
-def precedence(op):
-    if op in op_precedence:
-        return op_precedence[op]
-    elif op[0] in op_precedence:
-        return op_precedence[op[0]]
-    else:
-        return 9
-
-
-# left associative is the default
-right_assoc = {'**'}
-
-
-
 @astclass(label=Expr.EXPR)
 class ExprAST(ASTNode):
     pass
@@ -167,16 +120,17 @@ class OpExprAST(ASTNode):
         # restructure according to operator precedence.
         # a version of the precedence-climbing algorithm:
         def restructure(cur, min_prec):
+            global registry
             result = a.children[cur - 1] # lhs
             if cur >= len(a.children):
                 return result, cur
             while cur < len(a.children):
                 cur_op = a.children[cur][0]
-                prec = precedence(cur_op)
+                prec = registry.precedence(cur_op)
                 if prec < min_prec:
                     break
 
-                if cur_op in right_assoc:
+                if cur_op in registry.right_assoc:
                     next_prec = prec
                 else:
                     next_prec = prec + 1 # we need to escalate precedence to loop on the recursive call
@@ -358,7 +312,7 @@ match_term_re = fr'{base_term_re}$'
 
 # text operator symbols cannot start with a non-alpha char
 text_op_re = r'([^\W\d][^\W_]*)'
-symbol_op_symbols_re = r'[!@%^&*~<>|\\/\-=+]'
+symbol_op_symbols_re = r'[!@%^&*~<>|/\-=+]'
 symbol_op_re = fr'({symbol_op_symbols_re}+)'
 
 

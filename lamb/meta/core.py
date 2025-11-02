@@ -417,29 +417,6 @@ class MiniOp(object):
         return MiniOp(op.op_name, op.op_name_latex)
 
 
-builtin_arities = {
-    '~': {1},
-    '-': {1, 2},
-    '+': {1, 2},
-    '/': {2},
-    '//': {2},
-    '*': {2},
-    '**': {2},
-    '%': {2},
-    '@': {2},
-    '==': {2},
-    '!=': {2},
-    '<': {2},
-    '>': {2},
-    '<=': {2},
-    '>=': {2},
-    '&': {2},
-    '|': {2},
-    '^': {2},
-    '>>': {2},
-    '<<': {2}}
-
-
 def _sig_to_tuple(typs):
     # replace None with ∀X
     generic = types.VariableType.any()
@@ -447,6 +424,61 @@ def _sig_to_tuple(typs):
 
 
 class OperatorRegistry(object):
+    default_arities = {
+        '~': {1},
+        '-': {1, 2},
+        '+': {1, 2},
+        '/': {2},
+        '//': {2},
+        '*': {2},
+        '**': {2},
+        '%': {2},
+        '@': {2},
+        '==': {2},
+        '!=': {2},
+        '<': {2},
+        '>': {2},
+        '<=': {2},
+        '>=': {2},
+        '&': {2},
+        '|': {2},
+        '^': {2},
+        '>>': {2},
+        '<<': {2}}
+
+    # XX allow for operators to disable associtivity and require parens?
+    # `p >> q | r` = `p >> (q | r)`
+    # `p >> q & r` = `p >> (q & r)`
+    # `p | q >> r` = `(p | q) >> r`
+    # `p & q >> r` = `(p & q) >> r`
+    # `p <=> q >> r` = `(p <=> q) >> r`
+    # `p >> q <=> r` = `p >> (q <=> r)`
+    default_precedence = {
+        '**': 8,
+        '*': 7,
+        '/': 7,
+        '@': 7,
+        '%': 7, # XX revisit
+        '+': 6,
+        '-': 6,
+        '~': 6, # not a default binary operator
+        '<<': 5, # XX revisit
+        '==': 5,
+        '<=>': 5,
+        '!=': 5,
+        '^': 5, # XX revisit
+        '<': 5,
+        '>': 5,
+        '<=': 5,
+        '>=': 5,
+        '&': 4,
+        '|': 3,
+        '>>': 2,
+        '=>': 2,
+    }
+
+    default_default_precedence = 9
+
     class Operator(object):
         def __init__(self, _cls, *targs):
             self.cls = _cls
@@ -553,18 +585,40 @@ class OperatorRegistry(object):
         self.custom_transforms = {}
         self.ordering = {}
         self.exported = set()
+        self.right_assoc = set()
+        self.left_assoc = set()
+        self.op_precedence = collections.ChainMap({}, self.default_precedence)
         self.op_change()
         self.bop_change()
+
+    def precedence(self, op):
+        if op in self.op_precedence:
+            return self.op_precedence[op]
+        elif op[0] in self.op_precedence:
+            return self.op_precedence[op[0]]
+        else:
+            return self.default_default_precedence
 
     def add_operator(self, _cls, *targs, shadow_warning=True):
         if not targs and (sig := getattr(_cls, 'arg_signature', None)) is not None:
             targs = sig.signature
 
+        from .parser import valid_text_op, valid_symbol_op
+
+
         desc = self.Operator(_cls, *targs)
+        assoc_is_left = getattr(_cls, 'left_assoc', None)
         for symbol in desc.get_names():
-            if symbol in builtin_arities and desc.arity not in builtin_arities[symbol]:
-                # non-builtins have no validation!
+            if symbol in self.default_arities and desc.arity not in self.default_arities[symbol]:
+                # TODO: non-defaults have no validation!
                 raise parsing.ParseError(f"Invalid arity ({desc.arity}) for operator `{symbol}`")
+            if assoc_is_left is not None:
+                if valid_symbol_op(symbol) and (
+                        assoc_is_left and symbol in self.right_assoc
+                        or not assoc_is_left and symbol in self.left_assoc):
+                    raise parsing.ParseError(
+                        f"Mismatched associativity for operator `{symbol}`: operators bound to the same symbol must share associativity")
+        for symbol in desc.get_names():
             # use dicts and not sets for the sake of ordering
             if not symbol in self.ops:
                 self.ops[symbol] = dict()
@@ -600,13 +654,17 @@ class OperatorRegistry(object):
                     self.ordering[symbol][o2][desc] = None
                 else:
                     self.ordering[symbol][o2][desc] = -self.ordering[symbol][desc][o2]
-            from .parser import valid_text_op
             if valid_text_op(symbol):
                 if not symbol in self.exported and TypedExpr.has_local(symbol):
                     logger.warning(
                         f"Operator `{desc.name}/{desc.arg_signature}` shadows existing parsing local for `{symbol}`")
                 TypedExpr.add_local(symbol, self.op_instantiator(symbol))
                 self.exported.add(symbol)
+            elif assoc_is_left is not None: # valid_symbol_op is True
+                if assoc_is_left:
+                    self.left_assoc.add(symbol)
+                else:
+                    self.right_assoc.add(symbol)
 
         if not desc.arity in self.arities:
             self.arities[desc.arity] = dict()
@@ -625,6 +683,10 @@ class OperatorRegistry(object):
             if not any(op in self.ops[symbol] for symbol in self.ops):
                 # only delete from `arities` if no instances of op left
                 del self.arities[op.arity][op]
+        if symbol in self.left_assoc:
+            left_assoc.remove(symbol)
+        if symbol in self.right_assoc:
+            right_assoc.remove(symbol)
         self.op_change()
 
     def get_operators(self, *types, symbol=None, arity=None, cls=None, exact=False):
@@ -820,7 +882,7 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
             # if the type and operator symbol support it, default to arity 2
             # when left unspecified
             if (isinstance(e.type.right, types.FunType) and (
-                        op not in builtin_arities or 2 in builtin_arities[op])):
+                        op not in registry.default_arities or 2 in registry.default_arities[op])):
                 op_arity = 2
             else:
                 op_arity = 1
@@ -984,7 +1046,7 @@ def op_class(*args, **kwargs):
 
 def is_op_symbol(op):
     global registry
-    return op in registry.ops or op in builtin_arities
+    return op in registry.ops or op in registry.default_arities
 
 
 def op_expr_factory(op, *args, **kwargs):
@@ -4214,9 +4276,11 @@ def to_concrete(s, strict=False):
 
 # decorator for wrapping simplify functions, see examples in `meta.number`.
 # TODO: this could be generalized a further...
+# TODO: code dup with op_from_te?
 def op(op, arg_type, ret_type,
             op_uni=None, op_latex=None, deriv_desc=None,
-            python_only=True):
+            python_only=True,
+            _left_assoc=True):
     if deriv_desc is None:
         deriv_desc = op_uni and op_uni or op
 
@@ -4232,6 +4296,7 @@ def op(op, arg_type, ret_type,
             canonical_name = op
             op_name_uni = op_uni
             op_name_latex = op_latex
+            left_assoc = _left_assoc
 
             def __init__(self, *args, typ=None, **kwargs):
                 # XX this updates __name__ but not __class__
