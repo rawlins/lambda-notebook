@@ -4025,12 +4025,11 @@ class SyncatOpExpr(TypedExpr):
 
     # is the operation left associative without parens, i.e. for arbitrary `@`
     # does `p @ q @ r` mean `((p @ q) @ r)`?
-    # this is currently just cosmetic, in that it suppresses parens for left
-    # recursion on rich reprs. Essentially all python operations are left
-    # associative, and the metalanguage operators inherit this behavior, so
-    # it is true by default. But you could set it to False to always show
-    # for some operation.
-    left_assoc = True # currently just cosmetic: suppresses parens for left recursion
+    # two effects.
+    # * cosmetic: if true, suppress parens for left recursion on rich reprs.
+    # * parsing: determines parsing associativity for the operator symbol. Note
+    # that a non-associative operator can still left associate in this sense!
+    left_assoc = True
 
     def __init__(self, arg_type, *args, typ=None, tcheck_args=True):
         if typ is None:
@@ -4279,8 +4278,7 @@ def to_concrete(s, strict=False):
 # TODO: code dup with op_from_te?
 def op(op, arg_type, ret_type,
             op_uni=None, op_latex=None, deriv_desc=None,
-            python_only=True,
-            _left_assoc=True):
+            python_only=True):
     if deriv_desc is None:
         deriv_desc = op_uni and op_uni or op
 
@@ -4296,7 +4294,6 @@ def op(op, arg_type, ret_type,
             canonical_name = op
             op_name_uni = op_uni
             op_name_latex = op_latex
-            left_assoc = _left_assoc
 
             def __init__(self, *args, typ=None, **kwargs):
                 # XX this updates __name__ but not __class__
