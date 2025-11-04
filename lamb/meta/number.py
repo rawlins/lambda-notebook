@@ -1,12 +1,11 @@
 import lamb.meta.core, lamb.types
-from lamb.meta.core import op, registry, TypedExpr
+from lamb.meta.core import op, TypedExpr
 from lamb.types import type_t, type_n, is_numeric
 
 
-def setup_operators():
-    global registry
+def setup_operators(language):
     def add_n_op(c):
-        registry.add_operator(c, *[type_n for x in range(c.arity)])
+        language.registry.add_operator(c, *[type_n for x in range(c.arity)])
 
     add_n_op(UnaryNegativeExpr)
     add_n_op(UnaryPositiveExpr)
@@ -27,8 +26,8 @@ def setup_operators():
         # just calling `simplify` here is enough to trigger the recursion we
         # need
         return e.simplify()
-    registry.set_custom_transform(UnaryPositiveExpr, unary_presimplify)
-    registry.set_custom_transform(UnaryNegativeExpr, unary_presimplify)
+    language.registry.set_custom_transform(UnaryPositiveExpr, unary_presimplify)
+    language.registry.set_custom_transform(UnaryNegativeExpr, unary_presimplify)
 
 
 @op("-", type_n, type_n, python_only=False)

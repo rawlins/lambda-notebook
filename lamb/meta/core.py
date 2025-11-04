@@ -73,35 +73,31 @@ def set_strict_type_parsing(strict=True, coerced=None):
     _allow_coerced_types = not coerced
 
 
-# this will leave _type_system as None if something crashes in setup
-_type_system = None
-registry = None
-_namespace = {}
+base_language = None
 
+
+# TODO: remove these global functions
 def global_namespace():
-    global _namespace
-    return _namespace
+    global base_language
+    return base_language.namespace
 
 
-# TODO: could consider associating TypedExpr with a type system rather than
-# using the global variable. advantages: generality.  Disadvantages: may be a
-# little pointless in practice?
 def set_type_system(ts):
     """Sets the current type system for the metalanguage.  This is a global
     setting."""
-    global _type_system
-    _type_system = ts
+    global base_language
+    base_language.set_type_system(ts)
 
 
 def reset_type_system():
-    global _type_system
-    types.reset()
-    _type_system = types.poly_system
+    global base_language
+    base_language.set_type_system()
 
 
 def get_type_system():
     """Gets the current (global) type system for the metalanguage."""
-    return _type_system
+    global base_language
+    return base_language.get_type_system()
 
 
 def ts_unify(a, b):
@@ -199,7 +195,7 @@ def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True):
             if assignment is None:
                 assignment = {}
             assignment = collections.ChainMap(assignment, _globals)
-        result = TypedExpr.parse(s, assignment=assignment)
+        result = base_language.parse(s, assignment=assignment)
     else:
         result = tenorm(TypedExpr.factory(s, assignment=assignment,
                                         _globals=_globals, fullcopy=fullcopy))
@@ -553,7 +549,8 @@ class OperatorRegistry(object):
 
             return self.check_types_viable(*[a.type for a in args])
 
-    def __init__(self):
+    def __init__(self, language):
+        self.language = language
         self.op_listeners = []
         self.bop_listeners = []
         self.clear()
@@ -655,10 +652,9 @@ class OperatorRegistry(object):
                 else:
                     self.ordering[symbol][o2][desc] = -self.ordering[symbol][desc][o2]
             if valid_text_op(symbol):
-                if not symbol in self.exported and TypedExpr.has_local(symbol):
+                if not symbol in self.exported and self.language.has_local(symbol):
                     logger.warning(
                         f"Operator `{desc.name}/{desc.arg_signature}` shadows existing parsing local for `{symbol}`")
-                TypedExpr.add_local(symbol, self.op_instantiator(symbol))
                 self.exported.add(symbol)
             elif assoc_is_left is not None: # valid_symbol_op is True
                 if assoc_is_left:
@@ -856,6 +852,9 @@ class OperatorRegistry(object):
 def op_from_te(op_name, e, superclass=None, **kwargs):
     """Given some TypedExpr operator, produce a derived `SyncatOpExpr` subclass
     that uses that expression as its implementation."""
+
+    registry = base_language.registry
+
     if 'canonical_name' not in kwargs:
         kwargs['canonical_name'] = op_name
 
@@ -916,6 +915,13 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
     _secondary_names = kwargs.get('secondary_names', None)
     if _secondary_names is None:
         _secondary_names = set()
+
+    from .parser import valid_op_symbol
+    if not valid_op_symbol(kwargs['canonical_name'], prefix=(op_arity == 1)):
+        raise parsing.ParseError(f"Invalid operator symbol {kwargs['canonical_name']}")
+    for x in _secondary_names:
+        if not valid_symbol_op(x, prefix=(op_arity == 1)):
+            raise parsing.ParseError(f"Invalid operator symbol {x}")
 
     # note: validation happens elsewhere
     from .parser import valid_text_op
@@ -1045,17 +1051,17 @@ def op_class(*args, **kwargs):
 
 
 def is_op_symbol(op):
-    global registry
-    return op in registry.ops or op in registry.default_arities
+    global base_language
+    return op in base_language.registry.ops or op in base_language.registry.default_arities
 
 
 def op_expr_factory(op, *args, **kwargs):
-    global registry
+    global base_language
     if op == '[]':
         # not ideal to special case this, but this needs to be handled a bit
         # differently than other operators
         return TupleIndex(*args, **kwargs)
-    return registry.expr_factory(op, *args, **kwargs)
+    return base_language.registry.expr_factory(op, *args, **kwargs)
 
 
 def subassignment(assignment, _dict=None, **kwargs):
@@ -1073,6 +1079,59 @@ def subassignment(assignment, _dict=None, **kwargs):
     r.update(kwargs)
     return r
 
+
+class Language:
+    def __init__(self, type_system=None):
+        self.set_type_system(type_system=type_system)
+        registry = OperatorRegistry(self)
+        self.registry = registry
+        self.namespace = Namespace()
+        self.locals = {}
+        self._parsing_locals = {}
+
+    def set_type_system(self, type_system=None):
+        if type_system is None:
+            types.reset()
+            type_system = types.poly_system # XX better encapsulation?
+        self.type_system = type_system
+
+    def get_type_system(self):
+        return self.type_system
+
+    def parse(self, s, assignment=None, locals=None):
+        if assignment is None:
+            assignment = {}
+        if locals is None:
+            locals = {}
+        # XX is locals actually used, and if so, how
+        assignment.update(locals)
+        with parsing.parse_error_wrap("Failed to parse expression", s=s, wrap_all=False):
+            from .parser import expr_parser
+            return expr_parser.parse(s)[0].instantiate(assignment=assignment, language=self)
+
+    def add_local(self, l, value, raw=False):
+        # ensure that variable capture is handled correctly
+        ovalue = value
+        if not raw and getattr(value, 'from_arg_seq', None):
+            mname = getattr(value, 'canonical_name', value.__name__)
+            value = lambda *args, **kwargs: ovalue.from_arg_seq(*args, **kwargs)
+            value._meta_name_ = mname
+        self._parsing_locals[l] = value
+
+    def del_local(self, l):
+        del self._parsing_locals[l]
+
+    def has_local(self, l):
+        return l in self._parsing_locals
+
+    def is_op_symbol(self, s):
+        return s in self.registry.ops or s in self.registry.default_arities or s in self._parsing_locals
+
+    def is_local(self, s):
+        return s in self._parsing_locals
+
+    def instantiate_local(self, name, args):
+        return self._parsing_locals[name](args)
 
 ############### Type unification-related code
 
@@ -1830,42 +1889,6 @@ class TypedExpr(object):
         return f"subexpression {i}"
 
     @classmethod
-    def parse(cls, s, assignment=None, locals=None):
-        if assignment is None:
-            assignment = {}
-        if locals is None:
-            locals = {}
-        # locals.update(cls._parsing_locals)
-        # XX is locals actually used, and if so, how
-        assignment.update(locals)
-        with parsing.parse_error_wrap("Failed to parse expression", s=s, wrap_all=False):
-            from .parser import expr_parser
-            return expr_parser.parse(s)[0].instantiate(assignment=assignment)
-
-    # XX shouldn't be on this object probably?
-    _parsing_locals = dict()
-
-    @classmethod
-    def add_local(cls, l, value, raw=False):
-        # ensure that variable capture is handled correctly
-        ovalue = value
-        if not raw and getattr(value, 'from_arg_seq', None):
-            mname = getattr(value, 'canonical_name', value.__name__)
-            value = lambda *args, **kwargs: ovalue.from_arg_seq(*args, **kwargs)
-            value._meta_name_ = mname
-        cls._parsing_locals[l] = value
-
-    @classmethod
-    def del_local(cls, l):
-        if l == "TypedExpr" or l == "TypedTerm":
-            raise Exception("Cannot delete parsing local '%s'" % l)
-        del cls._parsing_locals[l]
-
-    @classmethod
-    def has_local(cls, l):
-        return l in cls._parsing_locals
-
-    @classmethod
     def term_factory(cls, s, typ=None, assignment=None, preparsed=False):
         """Attempt to construct a TypedTerm from argument s.
 
@@ -2004,7 +2027,7 @@ class TypedExpr(object):
         return cls._construct_appl(op, *remainder, assignment=assignment)
 
     @classmethod
-    def factory(cls, *args, assignment=None, _globals=None, fullcopy=False):
+    def factory(cls, *args, assignment=None, _globals=None, fullcopy=False, language=None):
         """Factory method for TypedExprs.  Will return a TypedExpr or subclass.
 
         Special cases:
@@ -2918,8 +2941,8 @@ class TypedExprFacade(object):
         return self
 
     def __getattr__(self, name):
-        global registry
-        matches = registry.get_operators(arity=1, symbol=name)
+        global base_language
+        matches = base_language.registry.get_operators(arity=1, symbol=name)
         if not matches:
             # this has to be AttributeError or it breaks the api
             # for parsing, this exception is later converted to ParseError
@@ -3987,11 +4010,6 @@ class Disjunctive(TypedExpr):
                         for i in range(length)}
         args = [ctrl(typ=t) for t in signature]
         return cls.factory(*args) # may not actually generate a Disjunctive
-
-
-# TODO: convert to a binary operator, or allow n-ary operators, so that this
-# can be in the registry
-TypedExpr.add_local("Disjunctive", Disjunctive)
 
 
 ###############
@@ -5430,14 +5448,9 @@ class MapFun(TypedExpr):
         return cls(*[(k, d[k]) for k in d])
 
 
-TypedExpr.add_local("Fun", MapFun)
-
-
 def reset():
-    global registry, _namespace
-    reset_type_system()
-    _namespace = Namespace()
+    global base_language
+    base_language = Language()
 
 
-registry = OperatorRegistry()
 reset()

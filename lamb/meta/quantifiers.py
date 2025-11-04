@@ -2,7 +2,7 @@ import random
 
 import lamb
 from lamb import types, utils
-from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
+from .core import op, derived, TypedExpr, TypedTerm, SyncatOpExpr
 from .core import BindingOp, Partial, LFun, get_sopt, ts_unify, is_concrete, te
 from .core import ts_reconcile
 from . import meta, ply, boolean
@@ -11,12 +11,12 @@ from lamb.types import type_t
 from lamb.utils import dbg_print
 
 
-def setup_operators():
-    registry.add_binding_op(Forall)
-    registry.add_binding_op(Exists)
-    registry.add_binding_op(ExistsExact)
-    registry.add_binding_op(Iota)
-    registry.add_binding_op(IotaPartial)
+def setup_operators(language):
+    language.registry.add_binding_op(Forall)
+    language.registry.add_binding_op(Exists)
+    language.registry.add_binding_op(ExistsExact)
+    language.registry.add_binding_op(Iota)
+    language.registry.add_binding_op(IotaPartial)
 
 
 def deriv_generic(instantiated, generic, varname):

@@ -2,7 +2,7 @@ import random
 import collections.abc
 import lamb
 from lamb import types, utils
-from .core import derived, registry, get_type_system, BindingOp, TypedExpr, get_sopt
+from .core import derived, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
 from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality, tp, te
 from .core import op_class, MapFun, ChainFun
@@ -37,23 +37,23 @@ def derived_classes():
         pass
 
 
-def setup_operators():
-    registry.add_operator(SetContains)
-    registry.add_operator(SetUnion)
-    registry.add_operator(SetIntersection)
-    registry.add_operator(SetDifference)
-    registry.add_operator(SetEquivalence,
+def setup_operators(language):
+    language.registry.add_operator(SetContains)
+    language.registry.add_operator(SetUnion)
+    language.registry.add_operator(SetIntersection)
+    language.registry.add_operator(SetDifference)
+    language.registry.add_operator(SetEquivalence,
         shadow_warning=False)
-    registry.add_operator(SetSubset)
-    registry.add_operator(SetProperSubset)
-    registry.add_binding_op(ConditionSet)
+    language.registry.add_operator(SetSubset)
+    language.registry.add_operator(SetProperSubset)
+    language.registry.add_binding_op(ConditionSet)
 
-    registry.add_operator(FunDom)
-    registry.add_operator(FunCodom)
+    language.registry.add_operator(FunDom)
+    language.registry.add_operator(FunCodom)
 
     derived_classes()
-    registry.add_operator(SetSupset)
-    registry.add_operator(SetProperSupset)
+    language.registry.add_operator(SetSupset)
+    language.registry.add_operator(SetProperSupset)
 
 
 def safevar(e, typ=None):

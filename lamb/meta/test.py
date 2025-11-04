@@ -5,7 +5,7 @@ from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from . import core, boolean, number, sets, meta, quantifiers
 from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
-from .core import is_concrete, is_te
+from .core import is_concrete, is_te, base_language
 from .meta import MetaTerm
 from .ply import alphanorm
 
@@ -117,7 +117,7 @@ def random_lfun_force_bound(typ, ctrl):
 
 
 def random_tf_op_expr(ctrl_fun):
-    op = random.choice(core.registry.get_operators(type_t, type_t, exact=True))
+    op = random.choice(base_language.registry.get_operators(type_t, type_t, exact=True))
     return op.cls(*[ctrl_fun(typ=t) for t in op.targs])
 
 
@@ -432,9 +432,8 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(te("--2"), te("- - 2"))
         self.assertEqual(te("--x_n"), te("- - x_n"))
 
-        # uncomment when old parser validation goes away
-        # self.assertEqual(te("{:}"), core.MapFun())
-        # self.assertEqual(te("{:}"), te("Fun()"))
+        self.assertEqual(te("{:}"), core.MapFun())
+        self.assertEqual(te("{:}"), te("Fun()"))
         self.assertEqual(te("{}"), sets.ListedSet())
         self.assertEqual(te("()"), core.Tuple())
 

@@ -14,8 +14,8 @@ from lamb.parsing import LeftRecursive, Repeat, LateDisjunctive, parse_error_wra
 from lamb.parsing import Failure
 from lamb.types import TypeConstructor, TypeParseError
 
-from lamb.meta.core import get_type_system, registry, subassignment
-from lamb.meta.core import is_op_symbol, TypedExpr, Tuple, MapFun
+from lamb.meta.core import Language, get_type_system, base_language, subassignment
+from lamb.meta.core import TypedExpr, Tuple, MapFun
 
 
 class Expr(EnumClass):
@@ -106,12 +106,13 @@ class VarSeq(ExprSeq):
 class OpExprAST(ASTNode):
     op: str
     op_i = None
-    def instantiate(self, **kwargs):
-        if not is_op_symbol(self.op):
+    def instantiate(self, language=None, **kwargs):
+        if not language.is_op_symbol(self.op):
             raise ParseError(f"Unknown operator `{self.op}`", s=self.s, i=self.op_i)
         # TODO: validating ops against the registry doesn't work quite right
         return TypedExpr.factory(self.op,
-                                 *[n.instantiate(**kwargs) for n in self.children],
+                                 *[n.instantiate(language=language, **kwargs) for n in self.children],
+                                 language=language,
                                  **kwargs)
 
     @classmethod
@@ -120,17 +121,16 @@ class OpExprAST(ASTNode):
         # restructure according to operator precedence.
         # a version of the precedence-climbing algorithm:
         def restructure(cur, min_prec):
-            global registry
             result = a.children[cur - 1] # lhs
             if cur >= len(a.children):
                 return result, cur
             while cur < len(a.children):
                 cur_op = a.children[cur][0]
-                prec = registry.precedence(cur_op)
+                prec = base_language.registry.precedence(cur_op)
                 if prec < min_prec:
                     break
 
-                if cur_op in registry.right_assoc:
+                if cur_op in base_language.registry.right_assoc:
                     next_prec = prec
                 else:
                     next_prec = prec + 1 # we need to escalate precedence to loop on the recursive call
@@ -167,13 +167,12 @@ class FactorAST(OpExprAST):
 class DotAST(ASTNode):
     attr: str
     def instantiate(self, **kwargs):
-        global registry
         # TODO: needs work
 
         # currently follows logic from facade: error unless there's a matching unary operator
         # of any kind.
         lhs = self.children[0].instantiate(**kwargs)
-        matches = registry.get_operators(arity=1, symbol=self.attr)
+        matches = base_language.registry.get_operators(arity=1, symbol=self.attr)
         if not matches:
             raise ParseError(
                 f"Unknown postfix unary operator `{self.attr}` for expression type `{lhs.type}`", s=self.s, i=self.i)
@@ -186,21 +185,21 @@ class DotAST(ASTNode):
 # this distinciton is handled in instantiation, not parsing
 @astclass(label=Expr.APPLY)
 class ApplyAST(ASTNode):
-    def instantiate(self, **kwargs):
+    def instantiate(self, language=None, **kwargs):
         if len(self.children[1]) == 0:
             rhs = []
         else:
-            rhs = self.children[1].instantiate(**kwargs)
+            rhs = self.children[1].instantiate(language=language, **kwargs)
 
-        if isinstance(self.children[0], TermNode) and self.children[0].is_operator():
-            return self.children[0].instantiate_as_operator(*rhs, **kwargs)
+        if isinstance(self.children[0], TermNode) and self.children[0].is_operator(language):
+            return self.children[0].instantiate_as_operator(language, *rhs, **kwargs)
 
         if len(rhs) == 0:
             # 0-ary functions have the type signature <(), whatever>
             # TODO: the logic here is filling in a gap in current _construct_appl
             rhs = [Tuple()]
 
-        return TypedExpr.factory(self.children[0].instantiate(**kwargs), *rhs, **kwargs)
+        return TypedExpr.factory(self.children[0].instantiate(language=language, **kwargs), *rhs, **kwargs)
 
 
 @astclass(label=Expr.INDEX)
@@ -222,14 +221,13 @@ class BindingAST(ASTNode):
     op_class = None
 
     def __post_init__(self):
-        global registry
         super().__post_init__()
-        if self.op in registry.canonicalize_binding_ops:
-            self.op = registry.canonicalize_binding_ops[self.op]
-        if self.op not in registry.binding_ops:
+        if self.op in base_language.registry.canonicalize_binding_ops:
+            self.op = base_language.registry.canonicalize_binding_ops[self.op]
+        if self.op not in base_language.registry.binding_ops:
             # should be unreachable
             raise ParseError(f"Unknown binding operator `{self.op}`", s=self.s, i=self.i)
-        self.op_class = registry.binding_ops[self.op]
+        self.op_class = base_language.registry.binding_ops[self.op]
 
     def classprop(self, k, default=None):
         assert(self.op_class is not None)
@@ -320,13 +318,16 @@ def valid_text_op(s):
     return re.fullmatch(text_op_re, s) is not None
 
 
-def valid_symbol_op(s):
+def valid_symbol_op(s, prefix=False):
+    if prefix and len(s) > 1:
+        # the parser only accepts 1-char prefix symbol operators
+        return False
     return re.fullmatch(symbol_op_re, s) is not None
 
 
-def valid_op_symbol(s):
-    # XX is_op vs valid...
-    return is_op_symbol(s) or valid_text_op(s)
+def valid_op_symbol(s, prefix=False):
+    # XX this relies on these two checks being disjoint
+    return valid_symbol_op(s, prefix=prefix) or valid_text_op(s)
 
 
 @astclass(Expr.TERM)
@@ -334,32 +335,33 @@ class TermNode(ASTNode):
     name: str
     type: typing.Optional[TypeConstructor] = None
 
-    def is_operator(self):
-        return is_op_symbol(self.name) or self.name in TypedExpr._parsing_locals
+    def is_operator(self, language):
+        return language.is_op_symbol(self.name)
+        # return is_op_symbol(self.name) or language and self.name in language._parsing_locals
 
-    def instantiate_as_operator(self, *args, **kwargs):
-        if self.type is not None and self.is_operator(): # if the latter is true, force the internal error below
+    def instantiate_as_operator(self, language, *args, **kwargs):
+        if self.type is not None and self.is_operator(language): # if the latter is true, force the internal error below
             raise ParseError(
                 f"Operators cannot receive type annotations (operator `{self.name}`)",
                 s=self.s, i=self.i)
 
-        if is_op_symbol(self.name):
+        if language.is_local(self.name):
+            return language.instantiate_local(self.name, args)
+        elif language.is_op_symbol(self.name):
             if len(args) == 0:
                 # XX verify this is correct, and probably fix this
                 args = [Tuple()]
             return TypedExpr.factory(self.name, *args, **kwargs)
-        elif self.name in TypedExpr._parsing_locals:
-            return TypedExpr._parsing_locals[self.name](args)
 
         raise ParseError("Internal parser error: term instantiated as operator", s=self.s, i=self.i)
 
-    def instantiate(self, typ=None, assignment=None):
+    def instantiate(self, typ=None, assignment=None, language=None, **kwargs):
         # allow a type override. Note: this is *not* cross-checked with self.type!
         # note `typ` used here for consistency with metalanguage code
         if typ is None:
             typ = self.type
 
-        if self.is_operator():
+        if self.is_operator(language):
             raise ParseError(
                 f"Stray operator name `{self.name}` in expression", s=self.s, i=self.i)
 
@@ -428,7 +430,7 @@ class BindingParser(Unit):
                       + cls.subexpr)
 
 
-registry.add_bop_listener(BindingParser.update_bops, initial_run=True)
+base_language.registry.add_bop_listener(BindingParser.update_bops, initial_run=True)
 
 
 class ExprParser(Unit):

@@ -352,6 +352,7 @@ class ASTNode:
 
     def instantiate(self, **kwargs):
         if len(self.children) == 1 and isinstance(self.children[0], ASTNode):
+            assert 'language' in kwargs # TODO remove or clean up
             return self.children[0].instantiate(**kwargs)
 
         # if this shows up, it's a parser bug
@@ -1336,6 +1337,7 @@ class AssignmentAST(ASTNode):
     transform: typing.Optional[str] = field(default=None, kw_only=True)
 
     def eval_right_side(self, var_env, transforms):
+        # XX parameterize by language
         right_side = parse_right(self.left_desc(), self.expr, var_env, constants=True)
         if right_side is not None:
             right_side = apply_rs_transform(right_side, self.transform, transforms=transforms)
@@ -1349,7 +1351,7 @@ class VarAssignAST(AssignmentAST):
     def left_desc(self):
         return self.term.name
 
-    def instantiate(self, var_env, transforms):
+    def instantiate(self, var_env, transforms, language):
         right_side = self.eval_right_side(var_env, transforms)
         if right_side is None:
             return None, None
@@ -1360,7 +1362,7 @@ class VarAssignAST(AssignmentAST):
             left_type = right_side.type
         if left_type != right_side.type:
             right_side = right_side.ensure_typed_expr(right_side, typ=left_type)
-        term = self.term.instantiate(typ=right_side.type)
+        term = self.term.instantiate(typ=right_side.type, language=language)
         return term.op, right_side
 
 
@@ -1381,7 +1383,7 @@ class LexAssignAST(AssignmentAST):
         else:
             return int(self.index)
 
-    def instantiate(self, var_env, transforms):
+    def instantiate(self, var_env, transforms, language):
         from lamb.lang import Item
 
         right_side = self.eval_right_side(var_env, transforms)
@@ -1404,7 +1406,7 @@ class OpAssignAST(AssignmentAST):
     def left_desc(self):
         return f"operator {self.op}"
 
-    def instantiate(self, var_env, transforms):
+    def instantiate(self, var_env, transforms, language):
         raise NotImplementedError()
 
 
@@ -1477,6 +1479,7 @@ def insert_item(item, index, env):
 
 def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
     from lamb.meta.parser import TermNode, valid_op_symbol
+    from lamb.meta.core import base_language
 
     if env is None:
         env = {}
@@ -1500,7 +1503,7 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
     with parse_error_wrap(f"Assignment to `{left_desc}` failed"):
         match ast:
             case VarAssignAST():
-                term_name, right_side = ast.instantiate(var_env, transforms)
+                term_name, right_side = ast.instantiate(var_env, transforms, base_language)
                 if term_name is None:
                     return ({}, env)
                 else:
@@ -1508,7 +1511,7 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
                     env[term_name] = right_side
                     return ({term_name : right_side}, env)
             case LexAssignAST():
-                item = ast.instantiate(var_env, transforms)
+                item = ast.instantiate(var_env, transforms, base_language)
                 if item is None:
                     return {}, env
                 try:
@@ -1517,7 +1520,7 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
                     raise ParseError(f"Invalid index `{ast.index}` in assignment to lexical entry `{left_desc}`", s=ast.s, i=ast.i)
                 return {item.name: env[item.name]}, env
             case OpAssignAST(op=op_symbol, arity=arity):
-                from lamb.meta.core import op_from_te, registry
+                from lamb.meta.core import op_from_te, base_language
 
                 right_side = ast.eval_right_side(var_env, transforms)
                 if right_side is None:
@@ -1529,8 +1532,8 @@ def parse_assignment(s, i=0, env=None, transforms=None, ambiguity=False):
                 if arity is not None:
                     arity = int(arity)
                 op_cls = op_from_te(op_symbol, right_side, arity=arity)
-                registry.add_operator(op_cls)
-                op = registry.get_operators(cls=op_cls)[0]
+                base_language.registry.add_operator(op_cls)
+                op = base_language.registry.get_operators(cls=op_cls)[0]
                 try:
                     # operators aren't stored in the env, so attempt to display them
                     # now (TODO: sequencing will be wrong)

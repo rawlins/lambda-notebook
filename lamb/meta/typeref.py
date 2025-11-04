@@ -3,14 +3,12 @@ from . import core, meta, ply
 from .core import get_type_system, tp
 from lamb.utils import ensuremath
 from lamb.types import is_type, demeta
-from .core import registry
 from .ply import derived
 
 
-def setup_operators():
-    global registry
-    get_type_system().add_nonatomic(TypeType)
-    registry.add_operator(TypeOp)
+def setup_operators(language):
+    language.type_system.add_nonatomic(TypeType)
+    language.registry.add_operator(TypeOp)
 
 
 class TypeDomainSet(lamb.types.ComplexDomainSet):

@@ -1,6 +1,6 @@
 import lamb
 from lamb import types, utils
-from .core import op, derived, registry, TypedExpr, TypedTerm, SyncatOpExpr
+from .core import op, derived, TypedExpr, TypedTerm, SyncatOpExpr
 from .core import BindingOp, Partial, LFun, get_sopt, tp
 from .meta import MetaTerm, DomainError
 from .ply import simplify_all, alphanorm
@@ -9,9 +9,9 @@ from lamb.utils import dbg_print
 
 global true_term, false_term
 
-def setup_operators():
+def setup_operators(language):
     def add_t_op(c):
-        registry.add_operator(c, *[type_t for x in range(c.arity)],
+        language.registry.add_operator(c, *[type_t for x in range(c.arity)],
                                                     shadow_warning=False)
 
     add_t_op(UnaryNegExpr)
@@ -21,7 +21,7 @@ def setup_operators():
     add_t_op(BinaryNeqExpr)
     add_t_op(BinaryBiarrowExpr)
 
-    registry.add_operator(Case)
+    language.registry.add_operator(Case)
 
 true_term = MetaTerm(True)
 false_term = MetaTerm(False)
