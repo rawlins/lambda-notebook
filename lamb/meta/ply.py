@@ -473,6 +473,7 @@ def find_constant_name(symbol, m):
     name `symbol`. If there are multiple such constants, return the
     lexicographically first. If there are none, returns `None`."""
     # TODO: this is a bit painful of an implementation, revisit...
+    from .parser import symbol_is_constant_symbol
     keys = [k for k in m if symbol_is_constant_symbol(k) and m[k].op == symbol]
     if keys:
         return sorted(keys)[0] # better sort?
@@ -636,32 +637,6 @@ def alpha_convert(t, changeset):
         return t.copy_local(*[alpha_convert_r(sub, overlap) for sub in t])
 
     return alpha_convert_r(t, overlap)
-
-
-# XX overlap with parsing code...
-# XX maybe too strict for initial char depending on locale?
-symbol_re = re.compile(r'^[a-zA-Z_]\w*$')
-var_re = re.compile(r'^[a-z]\w*$')
-
-
-def is_symbol(s):
-    """A string `s` is a symbol if it starts with an alphabetic char or `_` and
-    contains only alphanumeric characters."""
-    return isinstance(s, str) and bool(re.match(symbol_re, s))
-
-
-def symbol_is_var_symbol(s):
-    return s[0].islower()
-
-
-def symbol_is_constant_symbol(s):
-    return not symbol_is_var_symbol(s)
-
-
-def is_var_symbol(s):
-    """A string s is a variable symbol if it's a symbol that starts with a
-    lowercase letter."""
-    return isinstance(s, str) and bool(re.match(var_re, s))
 
 
 #################################

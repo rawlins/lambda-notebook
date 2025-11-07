@@ -335,7 +335,7 @@ class MetaTest(unittest.TestCase):
     def setUp(self):
         core.set_strict_type_parsing()
         self.ident = te("L x_e : x") 
-        self.ia = TypedExpr.factory(self.ident, "y_e")
+        self.ia = TypedExpr.factory(self.ident, te("y_e"))
         self.ib = LFun(TypedTerm("y", typ=type_e), self.ia)
         self.P = TypedTerm("P", types.FunType(type_e, type_t))
         self.Q = TypedTerm("Q", types.FunType(type_e, type_t))
@@ -498,22 +498,50 @@ class MetaTest(unittest.TestCase):
         self.assertRaises(parsing.ParseError, te, "L : P(x)")
         self.assertRaises(parsing.ParseError, te, "Exists x_e, y_e : P_<e,t>(x) & p_t")
 
+        # these should raise given strict type parsing. See below for the normal behavior.
+        self.assertRaises(parsing.ParseError, te, "P(x)")
+        self.assertRaises(parsing.ParseError, te, "Forall x : P_<e,t>(x)")
+
         # quick test of variable type conventions
         logger.setLevel(logging.WARNING)
         core.set_strict_type_parsing(False)
         try:
+            self.assertEqual(te("P(x)"), te("P_<e,t>(x_e)"))
+            self.assertEqual(te("Forall x : P_<e,t>(x)"), te("Forall x_e : P_<e,t>(x_e)"))
             self.assertEqual(te("L x: L y: In(y)(x)"), te("L x_e: L y_e: In_<e,<e,t>>(y)(x)"))
         finally:
             core.set_strict_type_parsing(True)
             logger.setLevel(logging.INFO)
 
     def test_terms(self):
+        # term() is verified in random objects
         self.assertTrue(te("x_e").term())
         self.assertTrue(te("X_e").term())
         self.assertTrue(te("_c1_e").term())
         self.assertTrue(te("True").term())
         self.assertTrue(te("10").term())
-        # term() is verified in random objects
+
+        self.assertTrue(te("x_e").variable)
+        self.assertTrue(te("X_e").constant)
+        self.assertTrue(te("True").constant)
+        self.assertTrue(te("_c10").constant)
+        self.assertTrue(te("5").constant)
+
+        self.assertFalse(te("x_e").meta())
+        self.assertFalse(te("X_e").meta())
+        self.assertTrue(te("True").meta())
+        self.assertTrue(te("_c10").meta())
+        self.assertTrue(te("5").meta())
+
+        self.assertEqual(te("x_e"), self.x)
+        self.assertEqual(te("p_t"), self.p)
+        self.assertEqual(te("P_<e,t>"), self.P)
+        self.assertEqual(te("True"), True)
+        self.assertEqual(te("False"), False)
+        self.assertEqual(te("_True"), True)
+        self.assertEqual(te("_False"), False)
+        self.assertEqual(te("0"), 0)
+        self.assertEqual(te("1"), 1)
 
         # basic comparison. These look simple here, but are a bit tricky
         # because python 0/1 compare as equal to python False/True; the latter
@@ -563,16 +591,19 @@ class MetaTest(unittest.TestCase):
         self.assertEqual(te("---3"), -3) # unary - is pre-simplified
         self.assertEqual(te("+3"), 3)    # unary + is pre-simplified
         self.assertEqual(MetaTerm("c1"), "_c1")
+        self.assertEqual(MetaTerm("c1"), te("_c1"))
         self.assertEqual(MetaTerm("c1"), MetaTerm("_c1"))
         self.assertNotEqual(MetaTerm(False), MetaTerm(True))
 
-        self.assertRaises(types.TypeParseError, te, "_c1__")     # wrong for various reasons, but the error is a type error
+        self.assertRaises(parsing.ParseError, te, "0f")          # invalid term name
+        self.assertRaises(parsing.ParseError, te, "0.2")         # no floats
         self.assertRaises(parsing.ParseError, te, "__c1")        # extra _ at beginning
+        self.assertRaises(parsing.ParseError, te, "_x1")         # x is an invalid prefix by default
+        self.assertRaises(types.TypeParseError, te, "_c1__")     # wrong for various reasons, but the error is a type error
         self.assertRaises(parsing.ParseError, TypedTerm, True)   # no domain element references in TypedTerms
         self.assertRaises(parsing.ParseError, TypedTerm, 3)      # no domain element references in TypedTerms
         self.assertRaises(parsing.ParseError, TypedTerm, "_c1")  # no _ TypedTerms
         self.assertRaises(parsing.ParseError, MetaTerm, "_c1_e") # invalid string format
-        self.assertRaises(parsing.ParseError, MetaTerm, "_x1")   # x is an invalid prefix by default
 
         self.assertNotEqual(MetaTerm("c1", typ=type_e), te("c1_e"))
         self.assertNotEqual(MetaTerm("c1", typ=type_e), TypedTerm("c1", typ=type_e))

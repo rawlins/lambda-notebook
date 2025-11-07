@@ -10,8 +10,8 @@ from lamb.utils import ensuremath, dbg_print, Namespace
 from lamb.types import TypeMismatch, BasicType, FunType, TupleType, is_type_var
 # meta.ply is the only meta module imported by core
 from .ply import derived, collectable, multisimplify, alphanorm, get_sopt
-from .ply import simplify_all, symbol_is_var_symbol, alphanorm_key
-from .ply import is_var_symbol, is_symbol, unsafe_variables, alpha_convert, beta_reduce_ts
+from .ply import simplify_all, alphanorm_key
+from .ply import unsafe_variables, alpha_convert, beta_reduce_ts
 from .ply import term_replace_unify, variable_convert, alpha_variant
 from .ply import commutative, associative, left_commutative, right_commutative
 from .ply import Derivation, DerivationStep, set_derivation, no_derivations
@@ -53,10 +53,7 @@ def setup_logger():
 setup_logger()
 
 
-global _constants_use_custom, _type_system, _allow_coerced_types, _allow_guessed_types
 _constants_use_custom = False
-_allow_coerced_types = True
-_allow_guessed_types = True
 
 
 def constants_use_custom(v):
@@ -65,39 +62,45 @@ def constants_use_custom(v):
     _constants_use_custom = v
 
 
-def set_strict_type_parsing(strict=True, coerced=None):
-    global _allow_coerced_types, _allow_guessed_types
-    if coerced is None:
-        coerced = strict
-    _allow_guessed_types = not strict
-    _allow_coerced_types = not coerced
-
-
 base_language = None
 
 
+def get_language():
+    return base_language
+
+
 # TODO: remove these global functions
-def global_namespace():
-    global base_language
-    return base_language.namespace
+def global_namespace(language=None):
+    if language is None:
+        language = get_language()
+    return language.namespace
 
 
-def set_type_system(ts):
+def set_strict_type_parsing(strict=True, coerced=None, language=None):
+    if language is None:
+        language = get_language()
+    language.set_strict_type_parsing(strict=strict, coerced=coerced)
+
+
+def set_type_system(ts, language=None):
     """Sets the current type system for the metalanguage.  This is a global
     setting."""
-    global base_language
-    base_language.set_type_system(ts)
+    if language is None:
+        language = get_language()
+    language.set_type_system(ts)
 
 
-def reset_type_system():
-    global base_language
-    base_language.set_type_system()
+def reset_type_system(language=None):
+    if language is None:
+        language = get_language()
+    language.set_type_system()
 
 
-def get_type_system():
+def get_type_system(language=None):
     """Gets the current (global) type system for the metalanguage."""
-    global base_language
-    return base_language.get_type_system()
+    if language is None:
+        language = get_language()
+    return language.get_type_system()
 
 
 def ts_unify(a, b):
@@ -182,29 +185,6 @@ def tefnorm(e):
         return e
 
 
-def te(s, *, let=True, assignment=None, _globals=None, fullcopy=True):
-    """Public interface for constructing `TypedExpr` objects; `s` may be a
-    string, in which case it will be parsed."""
-
-    # XX incorporate lexicon namespace into this function somehow?
-    if _globals is None:
-        _globals = global_namespace()
-
-    if isinstance(s, str):
-        if _globals:
-            if assignment is None:
-                assignment = {}
-            assignment = collections.ChainMap(assignment, _globals)
-        result = base_language.parse(s, assignment=assignment)
-    else:
-        result = tenorm(TypedExpr.factory(s, assignment=assignment,
-                                        _globals=_globals, fullcopy=fullcopy))
-    if let and isinstance(result, TypedExpr):
-        result = let_wrapper(result)
-
-    return result
-
-
 def is_te(x, cls=None):
     if cls is None:
         return isinstance(x, TypedExpr)
@@ -267,33 +247,6 @@ def check_type(item, typ, raise_tm=True, msg=None):
             return None
     else:
         return item
-
-
-def default_variable_type(s):
-    #TODO something better
-    return types.type_e
-
-def default_type(s):
-    if isinstance(s, TypedExpr):
-        return s.type
-    elif isinstance(s, bool):
-        return types.type_t
-    elif types.is_numeric(s):
-        return types.type_n
-    elif isinstance(s, str):
-        t = utils.num_or_str(s)
-        if types.is_numeric(s):
-            return types.type_n
-        elif isinstance(s, bool):
-            return types.type_t
-        elif is_var_symbol(t):
-            return default_variable_type(s)
-        else:
-            #TODO, better default
-            return types.type_t
-    else:
-        # TODO: more default special cases?  predicates?
-        raise NotImplementedError
 
 
 def let_compact_type_vars(*args, unsafe=None, store_mapping=False, all_vars=False):
@@ -588,6 +541,11 @@ class OperatorRegistry(object):
         self.op_change()
         self.bop_change()
 
+    def is_op_symbol(self, s):
+        return (s in self.ops
+                or s in self.default_arities
+                or s == '[]') # TODO: remove hard-coding
+
     def precedence(self, op):
         if op in self.op_precedence:
             return self.op_precedence[op]
@@ -600,7 +558,7 @@ class OperatorRegistry(object):
         if not targs and (sig := getattr(_cls, 'arg_signature', None)) is not None:
             targs = sig.signature
 
-        from .parser import valid_text_op, valid_symbol_op
+        from .parser import valid_text_op, valid_glyph_op
 
 
         desc = self.Operator(_cls, *targs)
@@ -610,7 +568,7 @@ class OperatorRegistry(object):
                 # TODO: non-defaults have no validation!
                 raise parsing.ParseError(f"Invalid arity ({desc.arity}) for operator `{symbol}`")
             if assoc_is_left is not None:
-                if valid_symbol_op(symbol) and (
+                if valid_glyph_op(symbol) and (
                         assoc_is_left and symbol in self.right_assoc
                         or not assoc_is_left and symbol in self.left_assoc):
                     raise parsing.ParseError(
@@ -643,7 +601,7 @@ class OperatorRegistry(object):
             # could be more efficient by explicitly implementing a graph
             self.ordering[symbol][desc] = {}
             for o2 in self.ops[symbol]:
-                self.ordering[symbol][desc][o2] = get_type_system().cmp(
+                self.ordering[symbol][desc][o2] = self.language.get_type_system().cmp(
                                     desc.arg_signature,
                                     types.freshen_type(o2.arg_signature))
 
@@ -656,7 +614,7 @@ class OperatorRegistry(object):
                     logger.warning(
                         f"Operator `{desc.name}/{desc.arg_signature}` shadows existing parsing local for `{symbol}`")
                 self.exported.add(symbol)
-            elif assoc_is_left is not None: # valid_symbol_op is True
+            elif assoc_is_left is not None: # valid_glyph_op is True
                 if assoc_is_left:
                     self.left_assoc.add(symbol)
                 else:
@@ -767,6 +725,10 @@ class OperatorRegistry(object):
         """Given some operator/relation symbol with arguments, construct an
         appropriate TypedExpr subclass for that operator."""
 
+        if symbol == '[]':
+            # TODO: make this special casing less special
+            return TupleIndex(*args, **kwargs)
+
         if not symbol in self.ops:
             raise parsing.ParseError(f"Unknown operator symbol `{symbol}`")
 
@@ -853,7 +815,7 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
     """Given some TypedExpr operator, produce a derived `SyncatOpExpr` subclass
     that uses that expression as its implementation."""
 
-    registry = base_language.registry
+    registry = get_language().registry
 
     if 'canonical_name' not in kwargs:
         kwargs['canonical_name'] = op_name
@@ -920,7 +882,7 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
     if not valid_op_symbol(kwargs['canonical_name'], prefix=(op_arity == 1)):
         raise parsing.ParseError(f"Invalid operator symbol {kwargs['canonical_name']}")
     for x in _secondary_names:
-        if not valid_symbol_op(x, prefix=(op_arity == 1)):
+        if not valid_glyph_op(x, prefix=(op_arity == 1)):
             raise parsing.ParseError(f"Invalid operator symbol {x}")
 
     # note: validation happens elsewhere
@@ -1050,20 +1012,6 @@ def op_class(*args, **kwargs):
     return wrapper
 
 
-def is_op_symbol(op):
-    global base_language
-    return op in base_language.registry.ops or op in base_language.registry.default_arities
-
-
-def op_expr_factory(op, *args, **kwargs):
-    global base_language
-    if op == '[]':
-        # not ideal to special case this, but this needs to be handled a bit
-        # differently than other operators
-        return TupleIndex(*args, **kwargs)
-    return base_language.registry.expr_factory(op, *args, **kwargs)
-
-
 def subassignment(assignment, _dict=None, **kwargs):
     from .meta import Assignment
     if assignment is None:
@@ -1088,6 +1036,8 @@ class Language:
         self.namespace = Namespace()
         self.locals = {}
         self._parsing_locals = {}
+        self.allow_guessed_types = True
+        self.allow_coerced_types = True
 
     def set_type_system(self, type_system=None):
         if type_system is None:
@@ -1109,6 +1059,27 @@ class Language:
             from .parser import expr_parser
             return expr_parser.parse(s)[0].instantiate(assignment=assignment, language=self)
 
+    def te(self, s, *, let=True, assignment=None, fullcopy=True):
+        """Public interface for constructing `TypedExpr` objects; `s` may be a
+        string, in which case it will be parsed."""
+
+        # XX incorporate lexicon namespace into this function somehow?
+
+        if isinstance(s, str):
+            if assignment is None:
+                assignment = {}
+            assignment = collections.ChainMap(assignment, self.namespace)
+            result = self.parse(s, assignment=assignment)
+        else:
+            # otherwise, pass directly to the factory function
+            result = tenorm(TypedExpr.factory(s, assignment=assignment,
+                                            _globals=self.namespace, fullcopy=fullcopy))
+
+        if let:
+            result = let_wrapper(result)
+
+        return result
+
     def add_local(self, l, value, raw=False):
         # ensure that variable capture is handled correctly
         ovalue = value
@@ -1125,13 +1096,45 @@ class Language:
         return l in self._parsing_locals
 
     def is_op_symbol(self, s):
-        return s in self.registry.ops or s in self.registry.default_arities or s in self._parsing_locals
+        return self.registry.is_op_symbol(s) or s in self._parsing_locals
 
     def is_local(self, s):
         return s in self._parsing_locals
 
     def instantiate_local(self, name, args):
         return self._parsing_locals[name](args)
+
+    def set_strict_type_parsing(self, strict=True, coerced=None):
+        if coerced is None:
+            coerced = not strict
+        self.allow_guessed_types = not strict
+        # type coercion in this sense can't happen without strict=False
+        self.allow_coerced_types = coerced
+
+    def default_variable_type(self, s):
+        # called directly by the parser
+        if not self.allow_guessed_types:
+            raise parsing.ParseError(f"No type provided for term name `{s}` (guessed types disabled)")
+        #TODO something better
+        return types.type_e
+
+    def default_type(self, s):
+        if not self.allow_guessed_types:
+            raise parsing.ParseError(f"No type provided for term name `{s}` (guessed types disabled)")
+
+        from .parser import is_var_symbol
+        if is_var_symbol(s):
+            return self.default_variable_type(s)
+        else:
+            #TODO, better default
+            return types.type_t
+
+
+def te(s, *, let=True, assignment=None, fullcopy=True, language=None):
+    if language is None:
+        language = get_language()
+    return language.te(s, let=let, assignment=assignment, fullcopy=fullcopy)
+
 
 ############### Type unification-related code
 
@@ -1896,9 +1899,6 @@ class TypedExpr(object):
         If s is a string, try to use the string as a term name (only).
         Otherwise, fail.
         """
-        ts = get_type_system()
-        if isinstance(typ, str):
-            typ = ts.type_parser(typ)
 
         aname = None
         # convert any assignments to MetaTerms to those MetaTerms, and then
@@ -1947,21 +1947,17 @@ class TypedExpr(object):
             # this does not validate term name formatting!
             v = s
 
-        v = utils.num_or_str(v)
-        if typ is not None:
-            type_vars = typ.bound_type_vars() # ??
-
         if not isinstance(v, str) or v.startswith("_"):
             # casting behavior when parsing: pythonic conversions between
             # type t and n in both directions. For now this is *only* in
             # parsing, so (for example) is not visited by try_adjust_type.
-            if v == 0 and not isinstance(v, bool) and typ == types.type_t:
+            if v == 0 and typ == types.type_t:
                 v = False
-            elif types.is_numeric(v) and not isinstance(v, bool) and typ == types.type_t:
+            elif types.is_numeric(v) and typ == types.type_t:
                 v = True
-            elif v == 0 and isinstance(v, bool) and typ == types.type_n:
+            elif v == 0 and typ == types.type_n:
                 v = 0
-            elif v == 1 and isinstance(v, bool) and typ == types.type_n:
+            elif v == 1 and typ == types.type_n:
                 v = 1
 
             from .meta import MetaTerm
@@ -1971,6 +1967,7 @@ class TypedExpr(object):
             return r
 
         global _constants_use_custom
+        from .parser import is_var_symbol
         if _constants_use_custom and not is_var_symbol(v):
             return CustomTerm(v, typ=typ, assignment=assignment)
         else:
@@ -1978,9 +1975,8 @@ class TypedExpr(object):
 
     @classmethod
     def _construct_op(cls, op,  *args):
-        # XX simplify to have only either this or op_expr_factory?
         def _op_factory(*args):
-            return op_expr_factory(op, *args)
+            return get_language().registry.expr_factory(op, *args)
         return combine_with_type_envs(_op_factory, *args)
 
     @classmethod
@@ -1990,7 +1986,7 @@ class TypedExpr(object):
                 arg = Tuple(*args)
             else:
                 arg = args[0]
-            if (not f.type.functional()) and f.type_guessed and _allow_coerced_types:
+            if (not f.type.functional()) and f.type_guessed and get_language().allow_coerced_types:
                 # special case: see if the type of the operator is guessed and
                 # coerce accordingly
 
@@ -2017,7 +2013,7 @@ class TypedExpr(object):
         # assumption: len(args) >= 1
         op = args[0]
         remainder = [cls.ensure_typed_expr(a) for a in args[1:]]
-        if is_op_symbol(op) or op == '[]':
+        if get_language().is_op_symbol(op):
             return cls._construct_op(op, *remainder)
 
         # the only kind of operator-expression generated after this point is
@@ -2043,32 +2039,33 @@ class TypedExpr(object):
         """
 
         if len(args) == 0:
-            return None #TODO something else?
+            raise parsing.ParseError("`TypedExpr.factory` requires one or more arguments")
         elif len(args) == 1:
-            args = (tenorm(args[0]),)
+            x = args[0]
 
-            if isinstance(args[0], TypedExpr):
+            if isinstance(x, TypedExpr):
                 # handing the factory function a single TypedExpr always returns
                 # a copy of the object.
-                result = args[0].copy()
+                result = x.copy()
                 if fullcopy:
-                    result.derivation = args[0].derivation
+                    result.derivation = x.derivation
                 return result
 
-            # args[0] is either an unsaturated function, a term, or a string
-            # that needs parsed.
-            # in the first two cases, return a unary TypedExpr
-            s = args[0]
-            if s in types.type_t.domain: # generalize using get_element_type?
-                return from_python(s, types.type_t)
-            elif s in types.type_n.domain:
-                return from_python(s, types.type_n)
+            if x in types.type_t.domain: # generalize using get_element_type?
+                return from_python(x, types.type_t)
+            elif x in types.type_n.domain:
+                return from_python(x, types.type_n)
+            elif isinstance(x, str) and x.startswith("_"):
+                # assume that `x` is some other sort of domain element
+                return TypedExpr.term_factory(x, assignment=assignment)
             else:
-                c = from_python_container(s)
-                if c is not None:
-                    return c
+                # finally, data structures. Note that this constructs complex
+                # TypedExpr objects, and not MetaTerm objects.
+                result = from_python_container(x)
+                if result is not None:
+                    return result
                 # XX improve error messaging here?
-                raise NotImplementedError(f"TypedExpr.factory called on unhandled type `{type(s)}`") # did you run a notebook with reload_lamb() out of order?
+                raise NotImplementedError(f"`TypedExpr.factory` called on unhandled type `{type(x)}`") # did you run a notebook with reload_lamb() out of order?
         else:
             # Argument length > 1.  
             # This code path is for constructing complex TypedExprs where
@@ -2079,20 +2076,23 @@ class TypedExpr(object):
     @classmethod
     def ensure_typed_expr(cls, s, typ=None, assignment=None):
         """Coerce s to a typed expression if necessary, otherwise, return s."""
-        if isinstance(s, TypedExprFacade):
-            s = s._e
+        s = tenorm(s)
 
-        if isinstance(s, TypedExpr):
-            if assignment is not None:
-                result = s.under_assignment(assignment)
-            else:
-                result = s
+        # does not parse! This just handles e.g. "_c1" and the like.
+        if not isinstance(s, TypedExpr):
+            s = cls.factory(s, assignment=assignment)
+
+        # if isinstance(s, TypedExpr):
+        if assignment is not None:
+            result = s.under_assignment(assignment)
         else:
-            # XX consider removing this from this particular function
-            try:
-                result = te(s, assignment=assignment)
-            except NotImplementedError:
-                return validate_te(s)
+            result = s
+        # else:
+        #     # XX consider removing this from this particular function
+        #     try:
+        #         result = te(s, assignment=assignment)
+        #     except NotImplementedError:
+        #         return validate_te(s)
         if typ is None:
             return result
         else:
@@ -2286,6 +2286,7 @@ class TypedExpr(object):
         """Find the set of variables that are free in the typed expression.
         """
         v = set(self.get_type_env().terms())
+        from .parser import symbol_is_var_symbol
         if var_only:
             v = {var for var in v if symbol_is_var_symbol(var)}
         return v
@@ -2941,8 +2942,7 @@ class TypedExprFacade(object):
         return self
 
     def __getattr__(self, name):
-        global base_language
-        matches = base_language.registry.get_operators(arity=1, symbol=name)
+        matches = get_language().registry.get_operators(arity=1, symbol=name)
         if not matches:
             # this has to be AttributeError or it breaks the api
             # for parsing, this exception is later converted to ParseError
@@ -3315,9 +3315,7 @@ class TypedTerm(TypedExpr):
             # if there's no annotation on the term name, and no info from the
             # assignment, we can fall back on some default types for various
             # term names
-            if not _allow_guessed_types:
-                raise parsing.ParseError(f"No type provided for term `{self.op}` (guessed types disabled)")
-            self.type = default_type(varname)
+            self.type = get_language().default_type(varname)
             self.type_guessed = True
         else:
             self.type = typ
@@ -3333,6 +3331,7 @@ class TypedTerm(TypedExpr):
         self.suppress_type = False
         from .meta import MetaTerm
         if validate_name:
+            from .parser import is_symbol, is_var_symbol
             if not isinstance(self.op, str):
                 # note: don't use `s` parameter, because the resulting error
                 # message is confusing for this specific case
@@ -3349,7 +3348,8 @@ class TypedTerm(TypedExpr):
                     f"`TypedTerm` requires a valid symbol name, got `{self.op}`")
 
             # This follows the prolog convention: a named constant is a term with a
-            # capitalized first letter. All MetaTerms are constants, 
+            # capitalized first letter. All MetaTerms are constants.
+
             self._variable = is_var_symbol(self.op)
             self._constant = not self.variable
 
@@ -4068,7 +4068,7 @@ class SyncatOpExpr(TypedExpr):
     def copy_local(self, *args, **kwargs):
         """This must be overriden by classes that are not produced by the
         factory."""
-        return self.copy_core(op_expr_factory(self.op, *args, **kwargs))
+        return self.copy_core(get_language().registry.expr_factory(self.op, *args, **kwargs))
 
     def name_of(self, i):
         return f"operand {i}"

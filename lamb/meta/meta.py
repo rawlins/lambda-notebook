@@ -6,7 +6,7 @@ import lamb
 from lamb import types
 
 from . import core, boolean
-from .ply import get_sopt, symbol_is_var_symbol
+from .ply import get_sopt
 from .core import is_te, te, global_namespace, get_type_system, Tuple, to_concrete, is_concrete
 from lamb import types, parsing, utils
 from lamb.utils import ensuremath, dbg_print
@@ -397,7 +397,7 @@ class MetaTerm(core.TypedTerm):
                 return aname.latex_str(show_types=show_types,
                                             assignment=assignment,
                                             superscript=superscript,
-                                            sf=not symbol_is_var_symbol(aname.op),
+                                            sf=not aname.variable,
                                             **kwargs)
             else:
                 # render a domain element name as sans serif
@@ -1221,7 +1221,7 @@ class Assignment(utils.Namespace):
         """
 
         nameable = {k: self[k] for k in self if self[k].meta()
-                                and not symbol_is_var_symbol(k)
+                                and self[k].variable # XX guaranteed false if meta() is true?
                                 and isinstance(self[k].type, types.BasicType)}
         n_types = {nameable[k].type for k in nameable}
         with contextlib.ExitStack() as stack:

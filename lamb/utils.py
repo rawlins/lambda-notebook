@@ -221,38 +221,6 @@ def ltx_print(*args):
         s += "<br />"
     return show(s)
 
-# based on AIMA utils
-def num_or_str(x, allow_float=False):
-    """The argument is a string; convert to a number if possible, or strip it.
-    >>> num_or_str('42')
-    42
-    >>> num_or_str(' 42x ')
-    '42x'
-    """
-    if isinstance(x, str):
-        x = x.strip()
-
-    # TODO: less hacky approach to `_` for parsing purposes...
-    if isinstance(x, Number): # includes bool
-        return x
-    elif x == 'True' or x == '_True':
-        return True
-    elif x == 'False' or x == '_False':
-        return False
-
-    try:
-        if isinstance(x, str) and x.startswith("_"):
-            return int(x[1:])
-        else:
-            return int(x)
-    except (ValueError, TypeError):
-        if allow_float:
-            try:
-                return float(x)
-            except (ValueError, TypeError):
-                pass
-        return str(x)
-
 
 def latex_repr(x, **kwargs):
     """Given some (possibly structured) object `x`, return a MathJax-compatible

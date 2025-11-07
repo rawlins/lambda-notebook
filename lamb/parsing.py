@@ -735,6 +735,9 @@ class Optional(Parselet):
 
 class REParselet(Parselet):
     def __init__(self, regex, consume=None, ast_label=None, flags=0, **kwargs):
+        if isinstance(regex, REParselet):
+            # minimal copy semantics
+            regex = regex.raw_regex
         self.raw_regex = regex
         regex = re.compile(regex, flags=flags)
         # by default: consume if there is no label and no capturing groups
@@ -758,6 +761,9 @@ class REParselet(Parselet):
 
     def default_error(self, state):
         return f"Failed to match pattern for {self.rule_name()}"
+
+    def fullmatch(self, s):
+        return self.parser.fullmatch(s)
 
     def _parse(self, state):
         m = self.parser.match(state.s, state.i)

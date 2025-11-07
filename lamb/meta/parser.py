@@ -1,4 +1,4 @@
-import sys, re, traceback, collections, enum, typing, dataclasses
+import sys, re, traceback, collections, enum, typing, dataclasses, string
 
 try:
     EnumClass = enum.StrEnum
@@ -14,8 +14,15 @@ from lamb.parsing import LeftRecursive, Repeat, LateDisjunctive, parse_error_wra
 from lamb.parsing import Failure
 from lamb.types import TypeConstructor, TypeParseError
 
-from lamb.meta.core import Language, get_type_system, base_language, subassignment
+from lamb.meta.core import Language, get_type_system, get_language, subassignment
 from lamb.meta.core import TypedExpr, Tuple, MapFun
+
+
+def slang(l):
+    if l is None:
+        return get_language()
+    else:
+        return l
 
 
 class Expr(EnumClass):
@@ -88,13 +95,13 @@ class MapAST(ASTNode):
 
 @astclass(label=Attr.VARS)
 class VarSeq(ExprSeq):
-    def ensure_types(self):
-        from lamb.meta.core import default_variable_type
+    def ensure_types(self, language):
         for i in range(len(self.children)):
             if self.children[i].type is None:
                 # XX reconcile with call to `default_type` in TypedTerm constructor
+                # Also, check strict type setting
                 self.children[i] = TermNode(self.children[i].name,
-                                          default_variable_type(self.children[i].name))
+                                        slang(language).default_variable_type(self.children[i].name))
 
     @classmethod
     def from_ast(cls, a):
@@ -107,7 +114,7 @@ class OpExprAST(ASTNode):
     op: str
     op_i = None
     def instantiate(self, language=None, **kwargs):
-        if not language.is_op_symbol(self.op):
+        if not slang(language).is_op_symbol(self.op):
             raise ParseError(f"Unknown operator `{self.op}`", s=self.s, i=self.op_i)
         # TODO: validating ops against the registry doesn't work quite right
         return TypedExpr.factory(self.op,
@@ -126,11 +133,12 @@ class OpExprAST(ASTNode):
                 return result, cur
             while cur < len(a.children):
                 cur_op = a.children[cur][0]
-                prec = base_language.registry.precedence(cur_op)
+                # TODO: how to parameterize for language?
+                prec = get_language().registry.precedence(cur_op)
                 if prec < min_prec:
                     break
 
-                if cur_op in base_language.registry.right_assoc:
+                if cur_op in get_language().registry.right_assoc:
                     next_prec = prec
                 else:
                     next_prec = prec + 1 # we need to escalate precedence to loop on the recursive call
@@ -166,23 +174,23 @@ class FactorAST(OpExprAST):
 @astclass(label=Expr.DOT)
 class DotAST(ASTNode):
     attr: str
-    def instantiate(self, **kwargs):
+    def instantiate(self, language=None, **kwargs):
         # TODO: needs work
 
         # currently follows logic from facade: error unless there's a matching unary operator
         # of any kind.
-        lhs = self.children[0].instantiate(**kwargs)
-        matches = base_language.registry.get_operators(arity=1, symbol=self.attr)
+        lhs = self.children[0].instantiate(language=language, **kwargs)
+        matches = slang(language).registry.get_operators(arity=1, symbol=self.attr)
         if not matches:
             raise ParseError(
                 f"Unknown postfix unary operator `{self.attr}` for expression type `{lhs.type}`", s=self.s, i=self.i)
 
-        return TypedExpr.factory(self.attr, lhs, **kwargs)
+        return TypedExpr.factory(self.attr, lhs, language=language, **kwargs)
 
 
 # prefix function or operator
 # assumption: valid alphanumeric operator names are a subset of valid term names
-# this distinciton is handled in instantiation, not parsing
+# this distinction is handled in instantiation, not parsing
 @astclass(label=Expr.APPLY)
 class ApplyAST(ASTNode):
     def instantiate(self, language=None, **kwargs):
@@ -222,21 +230,21 @@ class BindingAST(ASTNode):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.op in base_language.registry.canonicalize_binding_ops:
-            self.op = base_language.registry.canonicalize_binding_ops[self.op]
-        if self.op not in base_language.registry.binding_ops:
+        # TODO: parameterize by language somehow
+        if self.op in get_language().registry.canonicalize_binding_ops:
+            self.op = get_language().registry.canonicalize_binding_ops[self.op]
+        if self.op not in get_language().registry.binding_ops:
             # should be unreachable
             raise ParseError(f"Unknown binding operator `{self.op}`", s=self.s, i=self.i)
-        self.op_class = base_language.registry.binding_ops[self.op]
+        self.op_class = get_language().registry.binding_ops[self.op]
 
     def classprop(self, k, default=None):
         assert(self.op_class is not None)
         return getattr(self.op_class, k, default)
 
-    def precheck(self):
+    def precheck(self, language):
         # side effect: will initialize any `None` types to the default type
         # for the variable name
-        from lamb.meta.core import is_var_symbol
         if self.vars:
             for i in range(len(self.vars)):
                 if not is_var_symbol(self.vars[i].name):
@@ -244,7 +252,7 @@ class BindingAST(ASTNode):
                         f"Need variable name in binding expression `{self.op_class.canonical_name}`"
                         f" (received non-variable `{self.vars[i].name}`)", s=self.vars.s, i=self.vars.i)
 
-            self.vars.ensure_types()
+            self.vars.ensure_types(language)
 
             if not self.classprop('allow_multivars') and len(self.vars) > 1:
                 raise ParseError(
@@ -264,18 +272,18 @@ class BindingAST(ASTNode):
         # note: type of restrictor not checked here! Instantiating class is
         # responsible for that.
 
-    def get_opclass_kwargs(self, **factory_kwargs):
+    def get_opclass_kwargs(self, language=None, **factory_kwargs):
         from lamb.meta.core import tenorm
         kwargs = dict(assignment=factory_kwargs.get('assignment', {}))
         if self.classprop('allow_restrictor') and self.restrictor is not None:
             with parse_error_wrap("Error when trying to instantiate binding expression restrictor",
                         s=self.restrictor.s, i=self.restrictor.i):
-                kwargs['restrictor'] = self.restrictor.instantiate(**factory_kwargs)
+                kwargs['restrictor'] = self.restrictor.instantiate(language=language, **factory_kwargs)
         return kwargs
 
-    def instantiate(self, assignment=None, **kwargs):
+    def instantiate(self, assignment=None, language=None, **kwargs):
         from lamb.meta.core import tenorm
-        self.precheck() # validate var sequence
+        self.precheck(language) # validate var sequence
         # TODO: this inherits a behavior from before the parsing patch where
         # variable instantiation here just ignored the assignment. We definitely
         # don't want to *instantiate* from the assignment, but maybe we want to
@@ -284,7 +292,7 @@ class BindingAST(ASTNode):
         #    parse just fine. 
         # 2. cases where the global environment has declaratively set variable
         #    types/values; the types get ignored. 
-        var_arg = self.vars.instantiate(assignment=None, **kwargs)
+        var_arg = self.vars.instantiate(assignment=None, language=language, **kwargs)
 
         inst_assignment = subassignment(assignment, {v.op:v for v in var_arg})
 
@@ -294,40 +302,74 @@ class BindingAST(ASTNode):
 
         with parse_error_wrap("Error when trying to instantiate binding expression body",
                     s=self.expr.s, i=self.expr.i):
-            body = self.expr.instantiate(assignment=inst_assignment, **kwargs)
+            body = self.expr.instantiate(assignment=inst_assignment, language=language, **kwargs)
 
-        return self.op_class(var_arg, body, **self.get_opclass_kwargs(assignment=assignment, **kwargs))
+        return self.op_class(var_arg, body, **self.get_opclass_kwargs(assignment=assignment, language=language, **kwargs))
 
     @property
     def opname(self):
         return self.op_class.__name__
 
 
-term_symbols_re = r'[a-zA-Z0-9]'
-base_term_re = fr'{term_symbols_re}+'
-full_term_re = fr'(_?{base_term_re})(_)?'
-match_term_re = fr'{base_term_re}$'
+# using REParselets here as a convenient package for raw+compiled regexes
+base_term = REParselet(r'([\w][^\W_]*)')
 
-# text operator symbols cannot start with a non-alpha char
-text_op_re = r'([^\W\d][^\W_]*)'
-symbol_op_symbols_re = r'[!@%^&*~<>|/\-=+]'
-symbol_op_re = fr'({symbol_op_symbols_re}+)'
+# symbols cannot start with a non-alpha char. For now, text operators have
+# identical constraints.
+symbol_term = REParselet(r'([^\W\d][^\W_]*)')
+text_op = symbol_term
 
+glyph_op_symbols_re = r'[!@%^&*~<>|/\-=+]'
+glyph_op = REParselet(fr'({glyph_op_symbols_re}+)')
+glyph_op_prefix = REParselet(fr'({glyph_op_symbols_re})')
 
 def valid_text_op(s):
-    return re.fullmatch(text_op_re, s) is not None
+    return text_op.fullmatch(s) is not None
 
 
-def valid_symbol_op(s, prefix=False):
-    if prefix and len(s) > 1:
-        # the parser only accepts 1-char prefix symbol operators
-        return False
-    return re.fullmatch(symbol_op_re, s) is not None
+def valid_glyph_op(s, prefix=False):
+    if prefix:
+        return glyph_op_prefix.fullmatch(s) is not None
+    else:
+        return glyph_op.fullmatch(s) is not None
 
 
 def valid_op_symbol(s, prefix=False):
     # XX this relies on these two checks being disjoint
-    return valid_symbol_op(s, prefix=prefix) or valid_text_op(s)
+    return valid_glyph_op(s, prefix=prefix) or valid_text_op(s)
+
+
+def is_symbol(s):
+    """A string `s` is a symbol if it starts with an alphabetic char or `_` and
+    contains only alphanumeric characters."""
+    # XX is the str check really needed any more?
+    return isinstance(s, str) and symbol_term.fullmatch(s) is not None
+
+
+def symbol_is_var_symbol(s):
+    # low cost way of checking whether something already known to be a symbol is
+    # a variable. Not safe to use unless `is_symbol(s)` is True.
+    return s[0].islower()
+
+
+def symbol_is_constant_symbol(s):
+    return not symbol_is_var_symbol(s)
+
+
+def is_var_symbol(s):
+    """A string s is a variable symbol if it's a symbol that starts with a
+    lowercase letter."""
+    return is_symbol(s) and symbol_is_var_symbol(s)
+
+
+# some hardcoded cases
+# build into parser directly?
+fixed_constants = {
+    'True': True,
+    '_True': True,
+    'False': False,
+    '_False': False,
+}
 
 
 @astclass(Expr.TERM)
@@ -336,8 +378,7 @@ class TermNode(ASTNode):
     type: typing.Optional[TypeConstructor] = None
 
     def is_operator(self, language):
-        return language.is_op_symbol(self.name)
-        # return is_op_symbol(self.name) or language and self.name in language._parsing_locals
+        return slang(language).is_op_symbol(self.name)
 
     def instantiate_as_operator(self, language, *args, **kwargs):
         if self.type is not None and self.is_operator(language): # if the latter is true, force the internal error below
@@ -345,9 +386,9 @@ class TermNode(ASTNode):
                 f"Operators cannot receive type annotations (operator `{self.name}`)",
                 s=self.s, i=self.i)
 
-        if language.is_local(self.name):
-            return language.instantiate_local(self.name, args)
-        elif language.is_op_symbol(self.name):
+        if slang(language).is_local(self.name):
+            return slang(language).instantiate_local(self.name, args)
+        elif slang(language).is_op_symbol(self.name):
             if len(args) == 0:
                 # XX verify this is correct, and probably fix this
                 args = [Tuple()]
@@ -365,8 +406,19 @@ class TermNode(ASTNode):
             raise ParseError(
                 f"Stray operator name `{self.name}` in expression", s=self.s, i=self.i)
 
-        return TypedExpr.term_factory(self.name, typ=typ,
-                                    preparsed=True, assignment=assignment)
+        x = self.name
+        if x in fixed_constants:
+            x = fixed_constants[x]
+        elif x[0] in string.digits:
+            # TODO: currently, no floats allowed. There are potential use cases
+            # in e.g. probabilistic or gradable semantics.
+            try:
+                x = int(x)
+            except (ValueError, TypeError):
+                raise ParseError(f"Invalid numeric symbol `{x}` in expression", s=self.s, i=self.i)
+
+        return TypedExpr.term_factory(x, typ=typ,
+                                        preparsed=True, assignment=assignment)
 
 
 # Here begins the parser itself:
@@ -379,7 +431,7 @@ class TypeParser(Unit):
 
 class TermParser(Unit):
     parser = (Label(TermNode)
-               + REParselet(term_re, ast_label=Attr.NAME)
+               + REParselet(base_term, ast_label=Attr.NAME)
                + Optional(Precondition(REParselet('_')) + TypeParser(),
                          fully=False))
     name = "term"
@@ -409,6 +461,7 @@ class BindingParser(Unit):
 
     @classmethod
     def update_bops(cls, reg):
+        # TODO: shouldn't be a classmethod
         # TODO: the old parser allowed `λx` as a special case
         bop_names = (reg.binding_ops.keys()
                                 | reg.canonicalize_binding_ops.keys())
@@ -430,7 +483,8 @@ class BindingParser(Unit):
                       + cls.subexpr)
 
 
-base_language.registry.add_bop_listener(BindingParser.update_bops, initial_run=True)
+# TODO: do this in Language init?
+get_language().registry.add_bop_listener(BindingParser.update_bops, initial_run=True)
 
 
 class ExprParser(Unit):
@@ -512,7 +566,7 @@ class ExprParser(Unit):
         primary = LeftRecursive(
             atom,
             Label(DotAST) + (Precondition(Token(r'\.'))
-                             + (Label(Attr.ATTR) + REParselet(text_op_re, name="postfix operator"))),
+                             + (Label(Attr.ATTR) + REParselet(text_op, name="postfix operator"))),
             Label(IndexAST) + (Precondition(Token(r'\[')) + cls.subexpr + Token(r'\]')),
             (Label(ApplyAST, force_node=True)
              + (Precondition(Token(r'\('))
@@ -527,7 +581,7 @@ class ExprParser(Unit):
         # factor -> SymbolOp+ primary
         # factor -> primary
         # note: factors take higher precedence than all binary operators! (Unlike python...)
-        factor_op_token = Token(fr'({symbol_op_symbols_re})', ast_label=Attr.OP)
+        factor_op_token = Token(glyph_op_prefix.raw_regex, ast_label=Attr.OP)
         factor = (Unit(Label(FactorAST)
                       + Precondition(factor_op_token)
                           + Repeat(factor_op_token)
@@ -543,7 +597,7 @@ class ExprParser(Unit):
         # E.g. python parses "2 ++4" as +(2, +4), but we parse it as ++(2,4)
         # the redundant Whitespace() here is in order to ge the position right for error
         # messaging
-        opexpr = Unit(Join(Token(fr'({symbol_op_re})', ast_label=Attr.OP), factor,
+        opexpr = Unit(Join(Token(glyph_op.raw_regex, ast_label=Attr.OP), factor,
                         ast_label=OpExprAST,
                         name="operator expression",
                         label_single=None, # without at least one op, defer label to factor

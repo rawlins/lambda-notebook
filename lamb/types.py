@@ -1952,7 +1952,7 @@ class TypeSystem(object):
                         e_type = FunType(e_type.content_type, type_t)
                         if not element in e_type.domain:
                             # should be impossible...
-                            raise ValueError("Set is absent from corresponding characteristic function domain??")
+                            raise ValueError("Internal error: set is absent from corresponding characteristic function domain")
                     return e_type
 
         return None
