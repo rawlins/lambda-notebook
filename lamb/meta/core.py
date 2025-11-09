@@ -53,15 +53,6 @@ def setup_logger():
 setup_logger()
 
 
-_constants_use_custom = False
-
-
-def constants_use_custom(v):
-    """Set whether constants use custom display routines."""
-    global _constants_use_custom
-    _constants_use_custom = v
-
-
 base_language = None
 
 
@@ -1966,12 +1957,7 @@ class TypedExpr(object):
                 r.assignment_name = cls.term_factory(aname, r.type)
             return r
 
-        global _constants_use_custom
-        from .parser import is_var_symbol
-        if _constants_use_custom and not is_var_symbol(v):
-            return CustomTerm(v, typ=typ, assignment=assignment)
-        else:
-            return TypedTerm(v, typ=typ, assignment=assignment)
+        return TypedTerm(v, typ=typ, assignment=assignment)
 
     @classmethod
     def _construct_op(cls, op,  *args):
@@ -3074,9 +3060,7 @@ class ApplicationExpr(TypedExpr):
         arg = self.args[1]
         # suppress parens for Tuple args (among others)
         arg_str = f"({arg.latex_str(suppress_parens=True, **kwargs)})"
-        if isinstance(fun, CustomTerm):
-            return ensuremath(fun.custom_appl_latex(arg_str))
-        elif isinstance(fun, LFun): # or maybe: not fun.term()?
+        if isinstance(fun, LFun): # or maybe: not fun.term()?
             # we use [] for the parens, following the Heim & Kratzer convention.
             # (Is this really a good idea?)
             return ensuremath(f"{{[{fun.latex_str(suppress_parens=True, **kwargs)}]}}{arg_str}")
@@ -3089,11 +3073,8 @@ class ApplicationExpr(TypedExpr):
         arg_str = utils.parens(repr(self.args[1]),
             force=isinstance(self.args[1], ApplicationExpr))
 
-        if isinstance(fun, CustomTerm):
-            return fun.custom_appl(arg_str) # TODO: ???
-        else:
-            # assumption: LFun adds its own parens
-            return f"{repr(fun)}{arg_str}"
+        # assumption: LFun adds its own parens
+        return f"{repr(fun)}{arg_str}"
 
     def try_coerce_new_argument(self, typ, remove_guessed=False,
                                                         assignment=None):
@@ -3531,90 +3512,6 @@ class TypedTerm(TypedExpr):
                 varname = alpha_variant(base, blockset | {n.op for n in usedset})
         
         return TypedExpr.term_factory(varname, typ=typ)
-
-
-class CustomTerm(TypedTerm):
-    """A subclass of TypedTerm used for custom displays of term names.
-
-    The main application is for English-like metalanguage a la Heim and Kratzer.
-    This isn't fully implemented as that metalanguage is actually extremely
-    difficult to get right computationally..."""
-    def __init__(self, varname, custom_english=None, suppress_type=True,
-                 small_caps=True, **kwargs):
-        TypedTerm.__init__(self, varname, **kwargs)
-        self.custom = custom_english
-        self.sc = small_caps
-        self.suppress_type = suppress_type
-        self.verbal = False
-        # TODO: check type against custom string
-
-    def copy(self):
-        return self.copy_core(CustomTerm(self.op, custom_english=self.custom,
-                                   suppress_type=self.suppress_type,
-                                   small_caps=self.sc,
-                                   typ=self.type))
-
-    def copy_local(self, **kwargs):
-        return self.copy()
-
-    def copy(self, op):
-        return self.copy_core(CustomTerm(op, custom_english=self.custom,
-                              suppress_type=self.suppress_type,
-                              small_caps=self.sc,
-                              typ=self.type))
-
-    def latex_str(self, show_types=True, **kwargs):
-        s = ""
-        # custom made small caps
-        if self.sc:
-            if len(self.op) == 1:
-                s += "{\\rm %s}" % (self.op[0].upper())
-            else:
-                s += "{\\rm %s {\\small %s}}" % (self.op[0].upper(),
-                                                        self.op[1:].upper())
-        else:
-            s += "{\\rm %s}" % self.op
-        if show_types and not self.suppress_type:
-            s += "_{%s}" % self.type.latex_str()
-        return ensuremath(s)
-
-    def __repr__(self):
-        if self.sc:
-            return self.op.upper()
-        else:
-            return self.op
-
-    def get_custom(self):
-        # needs to be dynamic to deal with coerced types
-        if self.custom is None:
-            if self.type == types.type_property:
-                if self.verbal:
-                    return "s"
-                else:
-                    return "is a"
-            else:
-                if self.type == types.type_transitive:
-                    if self.verbal:
-                        return "s"
-                return ""
-        else:
-            return self.custom
-
-
-    def custom_appl_latex(self, arg_str):
-        if self.verbal:
-            return "%s\\text{ }%s\\text{%s}" % (arg_str, self.latex_str(),
-                                                            self.get_custom())
-        else:
-            return "%s \\text{ %s }%s" % (arg_str, self.get_custom(),
-                                                            self.latex_str())
-
-    def custom_appl(self, arg_str):
-        if self.verbal:
-            return "%s %s%s" % (arg_str, self.latex_str(), self.get_custom())
-        else:
-            return "%s %s %s" % (arg_str, repr(self), self.get_custom())
-
 
 
 ###############

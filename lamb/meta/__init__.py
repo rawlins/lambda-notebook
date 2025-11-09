@@ -9,11 +9,11 @@ from lamb.types import type_property, type_transitive, BasicType, FunType
 from lamb.meta import parser
 from lamb.meta import core, boolean, meta, number, ply, quantifiers, sets
 from lamb.meta import typeref
-from lamb.meta.core import TypedExpr, TypedTerm, CustomTerm, ApplicationExpr
+from lamb.meta.core import TypedExpr, TypedTerm, ApplicationExpr
 from lamb.meta.core import LFun, BindingOp
 from lamb.meta.core import Tuple, TupleIndex, Partial, Disjunctive, BinaryGenericEqExpr
 from lamb.meta.core import base_language, logger, op
-from lamb.meta.core import get_type_system, set_type_system, constants_use_custom, ts_unify, ts_compatible
+from lamb.meta.core import get_type_system, set_type_system, ts_unify, ts_compatible
 from lamb.meta.core import te, is_te, tp, term, let_wrapper, check_type, MiniOp
 from lamb.meta.core import unify, global_namespace
 
