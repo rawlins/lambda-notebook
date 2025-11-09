@@ -101,7 +101,7 @@ class VarSeq(ExprSeq):
                 # XX reconcile with call to `default_type` in TypedTerm constructor
                 # Also, check strict type setting
                 self.children[i] = TermNode(self.children[i].name,
-                                        slang(language).default_variable_type(self.children[i].name))
+                                        slang(language).default_type(self.children[i].name))
 
     @classmethod
     def from_ast(cls, a):

@@ -1029,6 +1029,7 @@ class Language:
         self._parsing_locals = {}
         self.allow_guessed_types = True
         self.allow_coerced_types = True
+        self.reset_type_conventions()
 
     def set_type_system(self, type_system=None):
         if type_system is None:
@@ -1102,23 +1103,22 @@ class Language:
         # type coercion in this sense can't happen without strict=False
         self.allow_coerced_types = coerced
 
-    def default_variable_type(self, s):
-        # called directly by the parser
-        if not self.allow_guessed_types:
-            raise parsing.ParseError(f"No type provided for term name `{s}` (guessed types disabled)")
-        #TODO something better
-        return types.type_e
+    def add_type_convention(self, pattern, typ):
+        self.type_conventions.append((re.compile(pattern), typ))
+
+    def reset_type_conventions(self):
+        self.type_conventions = []
 
     def default_type(self, s):
         if not self.allow_guessed_types:
             raise parsing.ParseError(f"No type provided for term name `{s}` (guessed types disabled)")
 
-        from .parser import is_var_symbol
-        if is_var_symbol(s):
-            return self.default_variable_type(s)
-        else:
-            #TODO, better default
-            return types.type_t
+        # XX could provide a mode that enforces these conventions, as is typical
+        # in the logic literature
+        for p in self.type_conventions:
+            if p[0].match(s):
+                return p[1]
+        return None
 
 
 def te(s, *, let=True, assignment=None, fullcopy=True, language=None):
@@ -1321,6 +1321,8 @@ class TypeEnv(object):
         return r
 
     def term_type(self, t, specific=True):
+        if t not in self.term_mapping:
+            return None
         return self.term_mapping[t].get_type(specific=specific)
 
     def add_term_mapping(self, vname, typ, allow_poly=False):
@@ -3292,14 +3294,14 @@ class TypedTerm(TypedExpr):
         else:
             self.from_assignment = None
 
-        if typ is None and self.from_assignment is None:
+        if (typ is None and self.from_assignment is None
+                and (typ := get_language().default_type(varname)) is not None):
             # if there's no annotation on the term name, and no info from the
             # assignment, we can fall back on some default types for various
             # term names
-            self.type = get_language().default_type(varname)
             self.type_guessed = True
-        else:
-            self.type = typ
+
+        self.type = typ
 
         if not copying and not defer_type_env:
             # initialize a type environment based on self.type
@@ -3308,6 +3310,10 @@ class TypedTerm(TypedExpr):
             # re-set the type, based on its value in the type env
             self.type = env.term_type(self.op, specific=True)
             self.set_type_env(env)
+
+        if self.type is None:
+            raise parsing.ParseError(
+                f"Term `{self.op}` instantiated without a type")
 
         self.suppress_type = False
         from .meta import MetaTerm
@@ -5345,9 +5351,19 @@ class MapFun(TypedExpr):
         return cls(*[(k, d[k]) for k in d])
 
 
+def default_type_conventions(language):
+    language.reset_type_conventions()
+    language.add_type_convention(r'[pqr]', types.type_t)
+    language.add_type_convention(r'[a-z]', types.type_e)
+    # we use t as the default so that type guessing can produce a variety of
+    # things when a default-typed term is provided with an argument.
+    language.add_type_convention(r'.*', types.type_t)
+
+
 def reset():
     global base_language
     base_language = Language()
+    default_type_conventions(base_language)
 
 
 reset()
