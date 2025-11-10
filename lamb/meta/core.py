@@ -144,13 +144,12 @@ def ts_unify_with(a, b, error=None):
 
 
 global unify
-unify = ts_unify # remove this?
+unify = ts_unify
 
 def ts_compatible(a, b):
     """Returns `True` or `False` depending on whether `a` and `b` are
     compatible types."""
-    ts = get_type_system()
-    return ts.unify(a,b) is not None
+    return get_type_system().unify(a,b) is not None
 
 def tp(s):
     """Convenience wrapper for the current type system's type parser."""
@@ -183,23 +182,6 @@ def is_te(x, cls=None):
         return issubclass(cls, TypedExpr) and isinstance(x, cls)
 
 
-def validate_te(x, s=None):
-    if not is_te(x):
-        name = getattr(x, '_meta_name_', None)
-        if name is not None:
-            raise parsing.ParseError(f"Invalid syntax: stray operator `{name}`", s=s)
-        else:
-            # how to make this less cryptic?
-            raise parsing.ParseError(f"Invalid syntax", s=s)
-    return x
-
-
-def is_equality(x):
-    # this looks a bit brittle, but this is probably the best current way to
-    # check for all equality/equivalence relations at once.
-    return x.op == "<=>"
-
-
 def term(s, typ=None, assignment=None, meta=False):
     """Convenience wrapper for building terms.
     `s`: the term's name, optionally followed by `_` and a type (as in normal metalanguage syntax)
@@ -208,7 +190,7 @@ def term(s, typ=None, assignment=None, meta=False):
         from .parser import term_parser
         n = term_parser.parse(s)[0]
         if n.type is not None and typ is not None:
-            principal = get_type_system().unify(typ, n.type)
+            principal = ts_unify(typ, n.type)
             if principal is None:
                 raise TypeMismatch(typ, n.type,
                     f"Term `{s}` instantiated with inconsistent types")
@@ -227,17 +209,6 @@ def term(s, typ=None, assignment=None, meta=False):
         elif not r.meta():
             raise parsing.ParseError(f"Failed to infer a type domain element", s=s)
     return r
-
-
-def check_type(item, typ, raise_tm=True, msg=None):
-    ts = get_type_system()
-    if not ts.eq_check(item.content.type, typ):
-        if raise_tm:
-            raise types.TypeMismatch(item, typ, error=msg)
-        else:
-            return None
-    else:
-        return item
 
 
 def let_compact_type_vars(*args, unsafe=None, store_mapping=False, all_vars=False):
@@ -328,35 +299,6 @@ def combine_with_type_envs(fun, *args, **kwargs):
     return result
 
 
-class MiniOp(object):
-    """This is a class to pass to a TypeMismatch so that the operator is
-    displayed nicely."""
-    def __init__(self, op_uni, op_latex, typ=None):
-        if typ != None:
-            self.type = typ
-        self.op_uni = op_uni
-        self.op_latex = op_latex
-
-    def __repr__(self):
-        return self.op_uni
-
-    def __str__(self):
-        return repr(self)
-
-    def latex_str(self):
-        return self.op_latex
-
-    def short_str_latex(self):
-        return self.latex_str()
-
-    def _repr_latex_(self):
-        return self.latex_str()
-
-    @classmethod
-    def from_op(cls, op):
-        return MiniOp(op.op_name, op.op_name_latex)
-
-
 def _sig_to_tuple(typs):
     # replace None with ∀X
     generic = types.VariableType.any()
@@ -375,6 +317,8 @@ class OperatorRegistry(object):
         '%': {2},
         '@': {2},
         '==': {2},
+        '<=>': {2},
+        '=>': {2},
         '!=': {2},
         '<': {2},
         '>': {2},
@@ -397,6 +341,7 @@ class OperatorRegistry(object):
         '**': 8,
         '*': 7,
         '/': 7,
+        '//': 7,
         '@': 7,
         '%': 7, # XX revisit
         '+': 6,
@@ -800,6 +745,15 @@ class OperatorRegistry(object):
         for k in struc:
             struc[k] = list(self.ops[k].keys())
         p.pretty(struc)
+
+    @classmethod
+    def is_equality(cls, x):
+        # this looks a bit brittle, but this is the best current way to
+        # check for all equality/equivalence relations at once.
+        return x.op == "<=>"
+
+
+
 
 
 def op_from_te(op_name, e, superclass=None, **kwargs):
@@ -1354,9 +1308,8 @@ class TypeEnv(object):
         del self.term_mapping[t]
 
     def try_unify(self, t1, t2, update_mapping=False):
-        ts = get_type_system()
         try:
-            result = ts.unify_details(t1, t2, assignment=self.type_mapping)
+            result = get_type_system().unify_details(t1, t2, assignment=self.type_mapping)
         except types.OccursCheckFailure as e:
             # are there contexts where this should be raised?
             return None
@@ -1764,7 +1717,6 @@ class TypedExpr(object):
         If unify suggests a strengthened type, but it can't get there, it
           returns self and prints a warning.
         If it fails completely, it returns None."""
-        ts = get_type_system()
         env = self.get_type_env().copy()
         
         unify_target = env.try_unify(self.type, new_type, update_mapping=True)
@@ -1862,7 +1814,6 @@ class TypedExpr(object):
         if not isinstance(old, TypedExpr):
             raise ValueError("Cannot perform substitution on non-TypedExpr %s"
                                                                     % (old))
-        ts = get_type_system()
         # check: is the type of the substitution compatible with the type of
         # what it is replacing?
         # order matters: prioritize type variables from the substitution
@@ -2075,12 +2026,7 @@ class TypedExpr(object):
             result = s.under_assignment(assignment)
         else:
             result = s
-        # else:
-        #     # XX consider removing this from this particular function
-        #     try:
-        #         result = te(s, assignment=assignment)
-        #     except NotImplementedError:
-        #         return validate_te(s)
+
         if typ is None:
             return result
         else:
@@ -3485,7 +3431,6 @@ class TypedTerm(TypedExpr):
     @classmethod
     def random(cls, random_ctrl_fun, typ=None, blockset=None, usedset=set(),
                             prob_used=0.8, prob_var=0.5, max_type_depth=1):
-        ts = get_type_system()
         if blockset is None:
             blockset = set()
         varname = None
@@ -3497,7 +3442,7 @@ class TypedTerm(TypedExpr):
                 varname = used_var.op
                 typ = used_var.type
             else:
-                typ = ts.random_type(max_type_depth, 0.5)
+                typ = get_type_system().random_type(max_type_depth, 0.5)
         else:
             used_typed = [x for x in list(usedset)
                                 if (x.type==typ and x.variable == is_var)]
@@ -5047,11 +4992,7 @@ class LFun(BindingOp):
         `__call__` plus `reduce` is (almost) equivalent to `apply`, but using
         `apply` directly will not generate a derivation."""
 
-        # do I really want flexible equality here??
-        # TODO: return to this.  Right now a type mismatch still gets raised
-        # during beta reduction.
-        ts = get_type_system()
-        if ts.eq_check(self.argtype, arg.type):
+        if ts_compatible(self.argtype, arg.type):
             result = alpha_convert(self, unsafe_variables(self, arg))
             result = beta_reduce_ts(result.body, result.varname, arg)
             return result
@@ -5286,7 +5227,7 @@ class MapFun(TypedExpr):
         # this will go more badly wrong than usual if will_reduce is not
         # checked!
         from .meta import OutOfDomain
-        if get_type_system().eq_check(self.type[0], arg.type):
+        if ts_compatible(self.type[0], arg.type):
             if not arg in self.arg_map:
                 raise OutOfDomain(self, arg)
             return self.arg_map[arg]

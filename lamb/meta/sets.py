@@ -4,8 +4,8 @@ import lamb
 from lamb import types, utils
 from .core import derived, get_type_system, BindingOp, TypedExpr, get_sopt
 from .core import BinaryGenericEqExpr, SyncatOpExpr, LFun, TypedTerm, to_python_container
-from .core import Tuple, is_concrete, to_concrete, TypeEnv, is_equality, tp, te
-from .core import op_class, MapFun, ChainFun
+from .core import Tuple, is_concrete, to_concrete, TypeEnv, tp, te
+from .core import op_class, MapFun, ChainFun, OperatorRegistry
 from . import meta
 from .meta import MetaTerm
 from .ply import alphanorm_key, set_derivation
@@ -199,7 +199,7 @@ class ConditionSet(BindingOp):
             # of anti-elimination so as to get set characterizations that meet
             # this criteria?
             return derived(self[1][1].copy(), self, "condition directly characterizes")
-        elif is_equality(self[1]):
+        elif OperatorRegistry.is_equality(self[1]):
             target = None
             if self[1][0] == self[0]:
                 target = self[1][1]

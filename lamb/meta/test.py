@@ -5,7 +5,7 @@ from lamb import types, parsing
 from lamb.types import TypeMismatch, type_e, type_t, type_n
 from . import core, boolean, number, sets, meta, quantifiers
 from .core import logger, te, tp, get_type_system, TypedExpr, LFun, TypedTerm
-from .core import is_concrete, is_te, base_language
+from .core import is_concrete, is_te, base_language, OperatorRegistry
 from .meta import MetaTerm
 from .ply import alphanorm
 
@@ -377,6 +377,12 @@ class MetaTest(unittest.TestCase):
         self.assertTrue(isinstance(te("x_{e} <=> y_{Y}"), sets.SetEquivalence))
         self.assertTrue(isinstance(te("x_{X} <=> y_{e}"), sets.SetEquivalence))
         self.assertTrue(isinstance(te("x_{e} <=> y_{e}"), sets.SetEquivalence))
+
+        # validate some hardcoded data
+        prec_ops = sorted(OperatorRegistry.default_precedence.keys())
+        arity_ops = sorted(OperatorRegistry.default_arities.keys())
+        self.assertEqual(prec_ops, arity_ops,
+            f"Mismatch in default precedence and arities:\n{repr(prec_ops)}\nvs.\n{repr(arity_ops)}")
 
     def test_class_random(self):
         for c in te_classes:
