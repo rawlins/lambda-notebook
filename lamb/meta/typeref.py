@@ -23,6 +23,7 @@ class TypeDomainSet(lamb.types.ComplexDomainSet):
         return "type"
 
     def __iter__(self):
+        # for now, just prevent iteration...leads to too many issues.
         raise ValueError("Can't iterate over `TypeDomainSet`.")
 
     @classmethod
@@ -77,6 +78,16 @@ class TypeOp(core.SyncatOpExpr):
             typ = TypeType()
         typ = self.type_constraint(typ, TypeType)
         super().__init__(None, arg, typ=typ, tcheck_args=False)
+
+    def _compile(self):
+        if self[0].type.is_polymorphic():
+            # in principle we could just give the type. However, this will be
+            # "wrong" (i.e. different from simplification) in cases where a
+            # polymorphic variable is valued on exection. For example,
+            # `exec(te("Type(x_X)"), x="_c1")` would give type `X` without this
+            # check.
+            raise TypeError(f"Unable to statically evaluate polymorphic type for `{self}`")
+        return lambda context: self[0].type
 
     def simplify(self, **sopts):
         return derived(meta.MetaTerm(self[0].type), self, "Type evaluation")

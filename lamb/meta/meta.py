@@ -10,7 +10,7 @@ from .ply import get_sopt
 from .core import is_te, te, global_namespace, get_type_system, Tuple, to_concrete, is_concrete
 from lamb import types, parsing, utils
 from lamb.utils import ensuremath, dbg_print
-from lamb.types import TypeMismatch, type_e, type_t, type_n, BasicType, SetType, TupleType
+from lamb.types import TypeMismatch, type_e, type_t, type_n, BasicType, SetType, TupleType, is_type
 
 
 class DomainError(Exception):
@@ -74,6 +74,8 @@ def mt_key(m):
             return (m[0], int(m[1:]))
         except:
             return (m,)
+    elif is_type(m):
+        return (" type", repr(m))
     elif isinstance(m, tuple):
         return (" ()",) + tuple(mt_key(e) for e in m)
     elif isinstance(m, collections.abc.Set):
@@ -288,11 +290,13 @@ class MetaTerm(core.TypedTerm):
     def copy(self):
         return self.copy_local()
 
+    def copy_core(self, other):
+        other = super().copy_core(other)
+        other.assignment_name = self.assignment_name
+        return other
+
     def copy_local(self, **kwargs):
-        r = self.copy_core(MetaTerm(self.op, typ=self.type))
-        r.latex_op_str = self.latex_op_str
-        r.assignment_name = self.assignment_name
-        return r
+        return self.copy_core(MetaTerm(self.op, typ=self.type))
 
     def under_assignment(self, assignment, **kwargs):
         # ensure that these terms are completely inert to assignments
@@ -348,11 +352,24 @@ class MetaTerm(core.TypedTerm):
     def calc_type_env(self, recalculate=False):
         # currently, MetaTerms are not represented at all in the type
         # environment. They definitely need to be absent from term_mapping, but
-        # should they be present in some form?
+        # should they be present in some form? Main case to worry about:
+        # type references to polymorphic types
         return core.TypeEnv()
 
     def type_env(self, constants=False, target=None, free_only=True):
         return set()
+
+    def under_type_assignment(self, mapping, reset=False, merge_intersect=True):
+        if is_type(self.op):
+            # ensure that any type variables in self.op get appropriately
+            # updated. Note that this logic is *not* implemented for MetaTerm
+            # data structures containing types, which in principle could lead
+            # to reduction issues. However, such data structures can (I believe)
+            # only be instantiated manually.
+            c = self.op.sub_type_vars(mapping)
+            return self.copy_core(MetaTerm(c, typ=self.type))
+        else:
+            return super().under_type_assignment(mapping, reset=reset, merge_intersect=merge_intersect)
 
     def free_terms(self, var_only=False):
         return set()
