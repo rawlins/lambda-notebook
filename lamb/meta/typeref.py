@@ -66,16 +66,6 @@ class TypeType(lamb.types.TypeConstructor):
         return TypeType()
 
 
-def try_parse_type_term(s, i):
-    m, next = lamb.parsing.consume_pattern(s, i, 'type ')
-    if m is None:
-        raise lamb.parsing.ParseError("Failed to match `type `",
-            s=s, i=i, met_preconditions=False)
-    typ, end = lamb.meta.parser.type_parser.parse(s, next) # should raise
-    assert(typ is not None)
-    return typ, end
-
-
 class TypeOp(core.SyncatOpExpr):
     arity = 1
     canonical_name = "Type"

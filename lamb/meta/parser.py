@@ -407,7 +407,12 @@ class TermNode(ASTNode):
                 f"Stray operator name `{self.name}` in expression", s=self.s, i=self.i)
 
         x = self.name
-        if x in fixed_constants:
+        if x == "type":
+            if typ is None:
+                raise ParseError(f"Stray reserved word `type` in expression", s=self.s, i=self.i)
+            x = typ
+            typ = None
+        elif x in fixed_constants:
             x = fixed_constants[x]
         elif x[0] in string.digits:
             # TODO: currently, no floats allowed. There are potential use cases
@@ -429,11 +434,17 @@ class TypeParser(Unit):
     name = "type"
 
 
+# currently:
+# term -> "type" type
+# term -> base_term ("_" type)
+# however, base_term covers a bunch of ground that is implemented in instantiation,
+# not parsing, including numerics and True/False.
 class TermParser(Unit):
-    parser = (Label(TermNode)
-               + REParselet(base_term, ast_label=Attr.NAME)
-               + Optional(Precondition(REParselet('_')) + TypeParser(),
-                         fully=False))
+    parser = (Label(TermNode,
+                Precondition(REParselet(r'(type) ', ast_label=Attr.NAME)) + TypeParser()
+                | REParselet(base_term, ast_label=Attr.NAME)
+                    + Optional(Precondition(REParselet('_')) + TypeParser(),
+                         fully=False)))
     name = "term"
 
     def __init__(self, error="Expected a valid term"):
