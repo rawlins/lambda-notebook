@@ -90,4 +90,11 @@ class TypeOp(core.SyncatOpExpr):
         return lambda context: self[0].type
 
     def simplify(self, **sopts):
-        return derived(meta.MetaTerm(self[0].type), self, "Type evaluation")
+        if self[0].type.is_polymorphic():
+            # not ideal, but it is safer to wait until type variables are
+            # resolved. E.g. prevent `L x_X : Type(x) <=> type e` from being
+            # treated as a constant function to False. (It *will* still be a
+            # constant function even with just application, if X is narrowed.)
+            return self
+        else:
+            return derived(meta.MetaTerm(self[0].type), self, "Type evaluation")

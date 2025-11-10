@@ -4251,7 +4251,11 @@ class BinaryGenericEqExpr(SyncatOpExpr):
             left = l(context)
             right = r(context)
             # can this be done statically?
-            if callable(left) and callable(right):
+            # TODO: callable is too strong, and catches classes that could be
+            # safely checked. Types are an example that I have hardcoded a
+            # workaround for, because of typeref.
+            if (not (types.is_type(left) and types.is_type(right))
+                    and callable(left) and callable(right)):
                 raise TypeError(f"Unable to dynamically check equality for {left} <=> {right}")
             return left == right
         return c

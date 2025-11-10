@@ -1573,11 +1573,14 @@ class MetaTest(unittest.TestCase):
                     True)
 
     def test_typeref(self):
-        self.assertTrue(te("Type(P_<e,t>) <=> Type(Q_<e,t>)").simplify_all())
+        self.assertEqual(te("Type(P_<e,t>) <=> Type(Q_<e,t>)").simplify_all(), boolean.true_term)
         f = te("L x_X : Type(x)", let=True)
         self.assertEqual(f(te("x_e")).simplify_all(reduce=True), te("type e"))
         f = te("L x_X : type X", let=True)
         self.assertEqual(f(te("x_e")).simplify_all(reduce=True), te("type e"))
+        f = te("L x_X : Type(x) <=> type e", let=True)
+        self.assertEqual(f(te("x_e")).simplify_all(reduce=True), boolean.true_term)
+        self.assertEqual(f(te("x_t")).simplify_all(reduce=True), boolean.false_term)
 
     def test_random_reduce(self):
         # XX the functions generated this way do reduce substantially, but it's
