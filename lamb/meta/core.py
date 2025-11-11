@@ -2808,7 +2808,7 @@ class TypedExpr(object):
                     # override
                     return f"{name}"
                 else:
-                    return f"{name}({", ".join([repr(a) for a in self.args])})"
+                    return f"{name}({', '.join([repr(a) for a in self.args])})"
 
     # XX default _repr_pretty_?
 

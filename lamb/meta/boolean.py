@@ -330,8 +330,9 @@ class Case(TypedExpr):
             cases.append((c[1], c[0]))
             c = c[2]
         cases = [f"{case[0].latex_str(**kwargs)} & \\text{{if }}{case[1].latex_str(**kwargs)} \\\\" for case in cases]
+        newline = '\n'
         return utils.ensuremath(
-            f"\\begin{{cases}}\n{'\n'.join(cases)}"
+            f"\\begin{{cases}}\n{newline.join(cases)}"
             f"{c.latex_str(**kwargs)} & \\text{{otherwise}} \\end{{cases}}")
 
 
