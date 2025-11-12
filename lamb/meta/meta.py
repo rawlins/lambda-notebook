@@ -1,7 +1,6 @@
 import random, numbers
 import collections, collections.abc
 import contextlib, itertools
-import IPython.lib.pretty as pretty
 
 import lamb
 from lamb import types
@@ -1307,6 +1306,8 @@ class Model(collections.abc.MutableMapping):
         # XX the output here is neither python nor metalanguage code, but a
         # mix; it's very readable but looks misleadingly like something might
         # parse it
+        import IPython.lib.pretty as pretty
+
         if cycle:
             p.text("Model(...)")
         else:
