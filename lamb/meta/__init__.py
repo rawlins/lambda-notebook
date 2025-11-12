@@ -8,7 +8,6 @@ from lamb.types import type_property, type_transitive, BasicType, FunType
 
 from lamb.meta import parser
 from lamb.meta import core, boolean, meta, number, ply, quantifiers, sets
-from lamb.meta import typeref
 from lamb.meta.core import TypedExpr, TypedTerm, CustomTerm, ApplicationExpr
 from lamb.meta.core import LFun, BindingOp
 from lamb.meta.core import Tuple, TupleIndex, Partial, Disjunctive, BinaryGenericEqExpr
@@ -44,7 +43,7 @@ def default_metalanguage():
     registry.add_operator(core.Body, tp("X"))
     registry.add_operator(core.Condition, tp("X"))
     # TODO: core.MapFun
-    for m in [typeref, boolean, number, sets, quantifiers]:
+    for m in [boolean, number, sets, quantifiers]:
         m.setup_operators()
 
 
