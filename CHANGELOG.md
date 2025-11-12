@@ -27,7 +27,7 @@ New features:
       a purely boolean expression together with an assignment filling in the
       non-boolean parts.
     - An implementation of first-order model theory using the evaluation system.
-- Metalanguage features 
+- Metalanguage features
     - Set operations: intersection, union, difference. Core relations:
       equivalence, the various sub/superset relations.
     - Set-related simplification heuristics.

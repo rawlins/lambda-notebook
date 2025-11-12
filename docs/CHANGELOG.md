@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-The next release will be 0.8.0, and involves a major metalanguage/type system
-update, centered around a new approach to metasemantics. This is probably the
-biggest set of changes since the initial release.
+## [0.8.0] - Metasemantics - 2025-11-11
+
+This version involves a major metalanguage/type system update, centered around
+a new approach to metasemantics. This is probably the biggest set of changes
+since the initial release.
 
 New features:
 
-- Meta-meta-language (new module, `lamb.meta.meta`):
+- Meta-meta-language features (new module, `lamb.meta.meta`):
     - `MetaTerm`: this is a major change/improvement to how constant values
       (e.g. `True`) work. A `MetaTerm` is a direct, immutable reference to
       a backing python object that provides a metasemantics for the term. This
@@ -24,10 +26,19 @@ New features:
     - `extract_boolean`: given an arbitrary metalanguage expression, produce
       a purely boolean expression together with an assignment filling in the
       non-boolean parts.
-- Metalanguage set operations and relations
-    - core operations: intersection, union, difference. Core relations:
+    - An implementation of first-order model theory using the evaluation system.
+- Metalanguage features
+    - Set operations: intersection, union, difference. Core relations:
       equivalence, the various sub/superset relations.
-    - corresponding simplification heuristics.
+    - Set-related simplification heuristics.
+    - A ternary conditional operator `Case`
+    - Operators `Dom`, `Codom` and `Fun`, as well as a sequencing operator
+      `+` for working with functions.
+    - A facade class for working with `TypedExpr`s.
+    - Improvements to operator handling, including the ability to define
+      operators based on metalanguage functions.
+    - Support for restricted quantification for existential and universal
+      operators (and Iota).
 - Type system features:
     - As noted above, the ontology for simple types is new essentially complete,
       at least for the finite case, by implementing domain sets.
