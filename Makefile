@@ -4,15 +4,17 @@ clearopts = --ClearOutputPreprocessor.enabled=True
 
 FORCE:
 
+cleancmd = nb-clean clean
+
 cleardocs:
-	for nb in docs/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
+	for nb in docs/*.ipynb; do $(cleancmd) "$$nb" || exit 1; done
 
 clear: cleardocs
-	for nb in notebooks/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
-	for nb in notebooks/documentation/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
-	for nb in notebooks/fragments/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
-	for nb in notebooks/misc/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
-	for nb in notebooks/tutorials/*.ipynb; do jupyter nbconvert $(clearopts) --inplace "$$nb" || exit 1; done
+	for nb in notebooks/*.ipynb; do $(cleancmd) "$$nb" || exit 1; done
+	for nb in notebooks/documentation/*.ipynb; do $(cleancmd) "$$nb" || exit 1; done
+	for nb in notebooks/fragments/*.ipynb; do $(cleancmd) "$$nb" || exit 1; done
+	for nb in notebooks/misc/*.ipynb; do $(cleancmd) "$$nb" || exit 1; done
+	for nb in notebooks/tutorials/*.ipynb; do $(cleancmd) "$$nb" || exit 1; done
 
 # note: assumes `lamb` in pythonpath! currently satisfied by a symlink...
 site:
