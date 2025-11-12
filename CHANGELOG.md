@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## [0.8.0] - Metasemantics - 2025-11-11
+## [0.8.0] - Metasemantics - 2025-11-12
 
 This version involves a major metalanguage/type system update, centered around
 a new approach to metasemantics. This is probably the biggest set of changes
@@ -101,6 +101,12 @@ Fixes, improvements, changes:
 - improvements to latex rendering compatibility, including colab (katex) and
   mathjax 3.
 - Older support code has been removed
+
+## [0.7.1] - Bugfix release - 2024-04-22
+
+Fixes:
+
+- Rename a notebook to avoid a Windows filename issue
 
 ## [0.7.0] - Rendering and metalanguage updates - 2023-09-27
 
