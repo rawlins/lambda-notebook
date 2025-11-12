@@ -136,6 +136,8 @@ ul.task-list li input[type="checkbox"] {
   <li><a href="#changelog-for-lambda-notebook" id="toc-changelog-for-lambda-notebook" class="nav-link active" data-scroll-target="#changelog-for-lambda-notebook">Changelog for <code>lambda-notebook</code></a>
   <ul class="collapse">
   <li><a href="#unreleased" id="toc-unreleased" class="nav-link" data-scroll-target="#unreleased">Unreleased</a></li>
+  <li><a href="#metasemantics---2025-11-12" id="toc-metasemantics---2025-11-12" class="nav-link" data-scroll-target="#metasemantics---2025-11-12">[0.8.0] - Metasemantics - 2025-11-12</a></li>
+  <li><a href="#bugfix-release---2024-04-22" id="toc-bugfix-release---2024-04-22" class="nav-link" data-scroll-target="#bugfix-release---2024-04-22">[0.7.1] - Bugfix release - 2024-04-22</a></li>
   <li><a href="#rendering-and-metalanguage-updates---2023-09-27" id="toc-rendering-and-metalanguage-updates---2023-09-27" class="nav-link" data-scroll-target="#rendering-and-metalanguage-updates---2023-09-27">[0.7.0] - Rendering and metalanguage updates - 2023-09-27</a></li>
   <li><a href="#compatibility-fix---2022-06-18" id="toc-compatibility-fix---2022-06-18" class="nav-link" data-scroll-target="#compatibility-fix---2022-06-18">[0.6.9] - Compatibility fix - 2022-06-18</a></li>
   <li><a href="#vacuity-improvements---2021-10-18" id="toc-vacuity-improvements---2021-10-18" class="nav-link" data-scroll-target="#vacuity-improvements---2021-10-18">[0.6.8] - Vacuity improvements - 2021-10-18</a></li>
@@ -163,20 +165,29 @@ ul.task-list li input[type="checkbox"] {
 <h1>Changelog for <code>lambda-notebook</code></h1>
 <section id="unreleased" class="level2">
 <h2 class="anchored" data-anchor-id="unreleased">Unreleased</h2>
-<p>The next release will be 0.8.0, and involves a major metalanguage/type system update, centered around a new approach to metasemantics. This is probably the biggest set of changes since the initial release.</p>
+</section>
+<section id="metasemantics---2025-11-12" class="level2">
+<h2 class="anchored" data-anchor-id="metasemantics---2025-11-12">[0.8.0] - Metasemantics - 2025-11-12</h2>
+<p>This version involves a major metalanguage/type system update, centered around a new approach to metasemantics. This is probably the biggest set of changes since the initial release.</p>
 <p>New features:</p>
 <ul>
-<li>Meta-meta-language (new module, <code>lamb.meta.meta</code>):
+<li>Meta-meta-language features (new module, <code>lamb.meta.meta</code>):
 <ul>
 <li><code>MetaTerm</code>: this is a major change/improvement to how constant values (e.g.&nbsp;<code>True</code>) work. A <code>MetaTerm</code> is a direct, immutable reference to a backing python object that provides a metasemantics for the term. This change goes together with an explicit implementation of domain sets of python objects, providing backing domains for all simple types (e.g. type e is backed by strings of a certain kind, <code>SetType</code> is backed by python sets, functions are backed by mappings/callables, etc).</li>
 <li>Simplification guarantees complete simplification when dealing with <code>MetaTerm</code>s. This change also allows simplification for quantified expressions with finite domains (by iterating over the type domain).</li>
 <li><code>Evaluations</code>: much richer support for truth-table-like batch evaluations of boolean expressions. <code>truthtable</code> is a handy wrapper function on this.</li>
 <li><code>extract_boolean</code>: given an arbitrary metalanguage expression, produce a purely boolean expression together with an assignment filling in the non-boolean parts.</li>
+<li>An implementation of first-order model theory using the evaluation system.</li>
 </ul></li>
-<li>Metalanguage set operations and relations
+<li>Metalanguage features
 <ul>
-<li>core operations: intersection, union, difference. Core relations: equivalence, the various sub/superset relations.</li>
-<li>corresponding simplification heuristics.</li>
+<li>Set operations: intersection, union, difference. Core relations: equivalence, the various sub/superset relations.</li>
+<li>Set-related simplification heuristics.</li>
+<li>A ternary conditional operator <code>Case</code></li>
+<li>Operators <code>Dom</code>, <code>Codom</code> and <code>Fun</code>, as well as a sequencing operator <code>+</code> for working with functions.</li>
+<li>A facade class for working with <code>TypedExpr</code>s.</li>
+<li>Improvements to operator handling, including the ability to define operators based on metalanguage functions.</li>
+<li>Support for restricted quantification for existential and universal operators (and Iota).</li>
 </ul></li>
 <li>Type system features:
 <ul>
@@ -218,6 +229,13 @@ ul.task-list li input[type="checkbox"] {
 <li>many improvements to metalanguage simplification and reduction heuristics.</li>
 <li>improvements to latex rendering compatibility, including colab (katex) and mathjax 3.</li>
 <li>Older support code has been removed</li>
+</ul>
+</section>
+<section id="bugfix-release---2024-04-22" class="level2">
+<h2 class="anchored" data-anchor-id="bugfix-release---2024-04-22">[0.7.1] - Bugfix release - 2024-04-22</h2>
+<p>Fixes:</p>
+<ul>
+<li>Rename a notebook to avoid a Windows filename issue</li>
 </ul>
 </section>
 <section id="rendering-and-metalanguage-updates---2023-09-27" class="level2">
