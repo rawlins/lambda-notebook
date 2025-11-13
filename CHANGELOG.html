@@ -165,29 +165,6 @@ ul.task-list li input[type="checkbox"] {
 <h1>Changelog for <code>lambda-notebook</code></h1>
 <section id="unreleased" class="level2">
 <h2 class="anchored" data-anchor-id="unreleased">Unreleased</h2>
-<p>New features:</p>
-<ul>
-<li>Parsing-related features:
-<ul>
-<li>The syntax <code>{:}</code> can now be used for the empty map.</li>
-<li>Non-python operators (e.g.&nbsp;<code>=&gt;</code>) are now first-class operators, and can be defined independently of python operator symbols.</li>
-<li>Precedence and associativity for binary operators are now configurable.</li>
-</ul></li>
-<li>Reference to types in the metalanguage, via the <code>Type</code> operator and a new reserved word <code>type</code> for writing type terms.</li>
-<li>Improvements to type defaults for terms, both the api and the defaults. The main obvious change is that terms beginning with p, q, and r default to type <code>t</code> as is typical in propositional logic.</li>
-</ul>
-<p>Fixes, improvements, changes:</p>
-<ul>
-<li>Changes to parser behavior:
-<ul>
-<li>The parser has been completely rewritten and is now based on standard parsing techniques. This should be mostly opaque to the user, except for a few things noted in this changelog.</li>
-<li>Binding expressions no longer have an absolute requirement for parens.</li>
-<li>Various changes to operator precedence that diverge from python. Equality has a more standard precedence than before (when it was derived from %). &gt;&gt; and =&gt; have lower precedence than &amp; and |. Unary operators now have highest precedence.</li>
-<li>Many weirdnesses that resulted from running python’s <code>eval</code> on semi-parsed code are eliminated.</li>
-<li>Improvements and changes to parsing error messages.</li>
-</ul></li>
-<li>The deprecated <code>CustomTerm</code> has been removed.</li>
-</ul>
 </section>
 <section id="metasemantics---2025-11-12" class="level2">
 <h2 class="anchored" data-anchor-id="metasemantics---2025-11-12">[0.8.0] - Metasemantics - 2025-11-12</h2>
