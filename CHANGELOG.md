@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+New features:
+
+- Parsing-related features:
+    - The syntax `{:}` can now be used for the empty map.
+    - Non-python operators (e.g. `=>`) are now first-class operators, and can
+      be defined independently of python operator symbols.
+    - Precedence and associativity for binary operators are now configurable.
+- Reference to types in the metalanguage, via the `Type` operator and a new
+  reserved word `type` for writing type terms.
+- Improvements to type defaults for terms, both the api and the defaults. The
+  main obvious change is that terms beginning with p, q, and r default to type
+  `t` as is typical in propositional logic.
+
+Fixes, improvements, changes:
+
+- Changes to parser behavior:
+    - The parser has been completely rewritten and is now based on standard
+      parsing techniques. This should be mostly opaque to the user, except for
+      a few things noted in this changelog.
+    - Binding expressions no longer have an absolute requirement for parens.
+    - Various changes to operator precedence that diverge from python. Equality has
+      a more standard precedence than before (when it was derived from %). >> and =>
+      have lower precedence than & and |. Unary operators now have highest precedence.
+    - Many weirdnesses that resulted from running python's `eval` on
+      semi-parsed code are eliminated.
+    - Improvements and changes to parsing error messages.
+- The deprecated `CustomTerm` has been removed.
+
 ## [0.8.0] - Metasemantics - 2025-11-12
 
 This version involves a major metalanguage/type system update, centered around
