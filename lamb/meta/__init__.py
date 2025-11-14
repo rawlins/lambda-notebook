@@ -1,4 +1,4 @@
-__all__ = ['parser', 'core', 'boolean', 'meta', 'number', 'ply', 'quantifiers', 'sets', 'test']
+__all__ = ['parser', 'core', 'boolean', 'meta', 'number', 'ply', 'quantifiers', 'sets', 'typeref', 'test']
 
 # -*- coding: utf-8 -*-
 from numbers import Number

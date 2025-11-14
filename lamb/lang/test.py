@@ -1,7 +1,8 @@
 import unittest, logging
 
 import lamb
-from . import lang, parsing, meta, types
+from lamb import parsing, meta, types
+from . import composition
 from lamb.meta import logger
 
 parsing.errors_raise = True
@@ -73,7 +74,7 @@ class LangTest(unittest.TestCase):
         meta.core.set_strict_type_parsing(False)
 
     def test_basic(self):
-        from lamb.lang import Item
+        from .composition import Item
         # this doesn't do much, but will test that basic metalanguage things
         # are working in the `lang` context
         cat = Item("cat", "L x_e: Cat_<e,t>(x)")
@@ -84,7 +85,7 @@ class LangTest(unittest.TestCase):
         texas = Item("Texas", "Texas_e")
         pvar = meta.TypedTerm("p", types.type_property)
         isV = Item("is", meta.LFun(meta.TypedTerm("p", typ=types.type_property), pvar))
-        system = lang.td_system.copy()
+        system = composition.td_system.copy()
         system.add_items(cat, gray, john, julius, inP, texas, isV)
 
 
@@ -144,7 +145,7 @@ class LangTest(unittest.TestCase):
         # test IPython.display calls?
         outs = [
             self.state['test1'],
-            lang.Items([self.state['test1'], self.state['test2']]),
+            composition.Items([self.state['test1'], self.state['test2']]),
             self.state['test1'] * self.state['test2'], # one-step success
             self.state['test3'] * self.state['test2'], # one-step failure
             (self.state['test1'] * self.state['test2']) * self.state['test2'], # two-step success
@@ -167,7 +168,7 @@ class LangTest(unittest.TestCase):
             o.show()._repr_markdown_()
 
         # test Lexicon repr
-        l = lang.Lexicon()
+        l = composition.Lexicon()
         self.assertTrue(has_ipython_repr(l),
             msg=f"Failed repr existence test on Lexicon")
         l._repr_markdown_()
