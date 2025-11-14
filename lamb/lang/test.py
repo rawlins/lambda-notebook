@@ -2,7 +2,7 @@ import unittest, logging
 
 import lamb
 from lamb import parsing, meta, types
-from . import composition
+from . import composition, parser
 from lamb.meta import logger
 
 parsing.errors_raise = True
@@ -33,7 +33,7 @@ class LangParsingTest(unittest.TestCase):
         # really basic stuff:
         state = dict()
         logger.setLevel(logging.WARNING)
-        parsing.parse("\n".join(basic_testcases), state=state)
+        parser.parse("\n".join(basic_testcases), state=state)
         logger.setLevel(logging.INFO)
         self.assertEqual(len(state), 7)
         self.assertEqual(state["test1"].content, meta.te("L x_e : P_<e,t>(x)"))
@@ -66,7 +66,7 @@ class LangTest(unittest.TestCase):
         meta.core.set_strict_type_parsing()
         self.state = dict()
         logger.setLevel(logging.WARNING)
-        parsing.parse("\n".join(basic_testcases), state=self.state)
+        parser.parse("\n".join(basic_testcases), state=self.state)
         logger.setLevel(logging.INFO)
 
     def tearDown(self):

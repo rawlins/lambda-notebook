@@ -1,14 +1,10 @@
 import sys, re, traceback, collections, enum, typing, dataclasses, string
 
-try:
-    EnumClass = enum.StrEnum
-except:
-    EnumClass = enum.Enum
-
+from enum import StrEnum
 from dataclasses import dataclass, field
 
 from lamb.parsing import ParseError
-from lamb.parsing import Parselet, REParselet, Label, Optional, Precondition, term_re
+from lamb.parsing import Parselet, REParselet, Label, Optional, Precondition
 from lamb.parsing import ASTNode, Unit, Token, Sequence, astclass, Whitespace, Join
 from lamb.parsing import LeftRecursive, Repeat, LateDisjunctive, parse_error_wrap
 from lamb.parsing import Failure
@@ -25,7 +21,7 @@ def slang(l):
         return l
 
 
-class Expr(EnumClass):
+class Expr(StrEnum):
     EXPR = "expr"
     TUPLE = "tuple"
     SET = "set"
@@ -39,7 +35,7 @@ class Expr(EnumClass):
     TERM = "term"
 
 
-class Attr(EnumClass):
+class Attr(StrEnum):
     OP = "op"
     NAME = "name"
     ATTR = "attr"

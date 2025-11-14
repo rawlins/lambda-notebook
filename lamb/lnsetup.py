@@ -80,6 +80,7 @@ def reload_lamb(use_nltk_tree=None):
         importlib.reload(lamb.meta.test)
         importlib.reload(lamb.meta)
         importlib.reload(lamb.lang.composition)
+        importlib.reload(lamb.lang.parser)
         importlib.reload(lamb.lang)
         importlib.reload(lamb.display)
         colab_setup()

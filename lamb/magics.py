@@ -75,13 +75,13 @@ class LambMagics(Magics):
         # XX it wouldn't be entirely crazy to use %%lexicon for this...
         self.cur_ambiguity = self.ambiguity
         if cell is None:
-            (accum, env) = parsing.parse(line, self.env)
+            (accum, env) = lang.parser.parse(line, self.env)
         else:
             if len(line) > 0:
                 r = self.control_line(line)
                 if r is not None:
                     return r #TODO fix this up, not right
-            (accum, env) = parsing.parse(cell, self.env,
+            (accum, env) = lang.parser.parse(cell, self.env,
                                                 ambiguity=self.cur_ambiguity)
             self.control_line(line, post=True, accum=accum)
         self.push_accum(accum)

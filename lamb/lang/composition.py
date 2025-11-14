@@ -10,6 +10,8 @@ from lamb.meta.meta import Assignment
 from lamb import tree_mini
 
 from lamb.meta.core import te, tp
+from lamb.parsing import ParseError
+
 
 try:
     from collections import MutableMapping
@@ -2411,7 +2413,6 @@ class CompositionSystem(object):
         Brute force tries every composition rule and order of items.  Note that
         currently this not handle arities > 2.
         """
-        from lamb import parsing
         #items = self.lookup(*items)
         ret = CompositionResult(items, list(), list())
         arity = len(items)
@@ -2439,8 +2440,8 @@ class CompositionSystem(object):
                     ret.extend(result)
                 except (CompositionFailure,
                         TypeMismatch,
-                        parsing.ParseError) as e:
-                    if isinstance(e, parsing.ParseError):
+                        ParseError) as e:
+                    if isinstance(e, ParseError):
                         if e.e and isinstance(e.e, TypeMismatch):
                             # extract TypeMismatches that lead to ParseErrors
                             # somewhere in the composition operation. This is

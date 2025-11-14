@@ -16,6 +16,7 @@ from lamb.meta.core import base_language, logger, op
 from lamb.meta.core import get_type_system, set_type_system, ts_unify, ts_compatible
 from lamb.meta.core import te, is_te, tp, term, let_wrapper
 from lamb.meta.core import unify, global_namespace
+from lamb.meta.core import get_language
 
 from lamb.meta.ply import simplify_all, derived, default_sopts, collect, join
 

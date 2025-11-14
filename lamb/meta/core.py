@@ -1883,8 +1883,8 @@ class TypedExpr(object):
             if isinstance(s, str) and not preparsed:
                 # should anything else be done here? this code path is mostly
                 # for internal code...
-                from .parser import term_re
-                if not re.fullmatch(term_re, s):
+                from .parser import base_term
+                if not base_term.fullmatch(s):
                     # shouldn't be reachable if everything is working correctly
                     raise parsing.ParseError(f"Invalid term name in term_factory: {s}")
 
