@@ -350,14 +350,10 @@ class MetaTerm(core.TypedTerm):
         return r
 
     def calc_type_env(self, recalculate=False):
-        # currently, MetaTerms are not represented at all in the type
-        # environment. They definitely need to be absent from term_mapping, but
-        # should they be present in some form? Main case to worry about:
-        # type references to polymorphic types
-        return core.TypeEnv()
-
-    def type_env(self, constants=False, target=None, free_only=True):
-        return set()
+        env = core.TypeEnv()
+        if is_type(self.op):
+            env.add_type_to_var_set(self.op)
+        return env
 
     def under_type_assignment(self, mapping, reset=False, merge_intersect=True):
         if is_type(self.op):
@@ -370,6 +366,12 @@ class MetaTerm(core.TypedTerm):
             return self.copy_core(MetaTerm(c, typ=self.type))
         else:
             return super().under_type_assignment(mapping, reset=reset, merge_intersect=merge_intersect)
+
+    def under_type_injection(self, mapping):
+        if is_type(self.op) and self.op.is_polymorphic():
+            return self.under_type_assignment(mapping)
+        else:
+            return super().under_type_injection(mapping)
 
     def free_terms(self, var_only=False):
         return set()

@@ -1994,7 +1994,8 @@ class TypedExpr(object):
                 return from_python(x, types.type_t)
             elif x in types.type_n.domain:
                 return from_python(x, types.type_n)
-            elif isinstance(x, str) and x.startswith("_"):
+            elif (isinstance(x, str) and x.startswith("_")
+                        or types.is_type(x)):
                 # assume that `x` is some other sort of domain element
                 return TypedExpr.term_factory(x, assignment=assignment)
             else:
@@ -2133,14 +2134,6 @@ class TypedExpr(object):
 
     def has_type_vars(self):
         return len(self.get_type_env().type_var_set) > 0
-
-    def _unsafe_under_type_injection(self, mapping):
-        if len(mapping) == 0:
-            return self
-        for i in range(len(self)):
-            self._unsafe_subst(i, self[i].under_type_injection(mapping))
-        self.type = self.type.sub_type_vars(mapping)
-        return self
 
     def under_type_injection(self, mapping):
         accum = list()
