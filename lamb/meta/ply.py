@@ -1002,13 +1002,16 @@ class Derivation(object):
         return d[sl]
 
     def trace(self, index=None, recurse=True, style=None, all_recursion=False):
-        return self.build_display_tree(index=index, recurse=recurse, style=style, all_recursion=all_recursion)
+        return utils.show(
+            html=self.build_display_tree(index=index, recurse=recurse, style=style, all_recursion=all_recursion),
+            plain=self.__repr__())
 
     def show(self, index=None, recurse=False, style=None, all_recursion=False):
         return self.trace(index=index, recurse=recurse, style=style, all_recursion=all_recursion)
 
-    def _repr_html_(self):
-        return utils.show(self.build_display_tree(recurse=False))._repr_html_()
+    def _ipython_display_(self):
+        import IPython
+        IPython.display.display(self.show())
 
     def steps_str(self):
         # XX _repr_pretty_, could implement trace() for text output as well
