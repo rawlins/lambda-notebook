@@ -2309,8 +2309,13 @@ class CompositionSystem(object):
             s += ", ".join([x.name for x in self.rules]) + "}"
         return s
 
-    def _repr_html_(self):
-        return utils.show(self.description(latex=True))._repr_html_()
+    def show(self):
+        return utils.show(html=self.description(latex=True),
+                          plain=self.description(latex=False))
+
+    def _ipython_display_(self):
+        import IPython
+        IPython.display.display(self.show())
 
     def lookup(self, *items):
         """Look up a sequence of potential lexical items, replacing any that
