@@ -2094,12 +2094,20 @@ class TypeSystem(object):
     def type_allowed(self, a):
          return True
 
-    def latex_str(self, **kwargs):
-        return "Type system with atomic types: " + ensuremath(", ".join(
+    def description(self, latex=False):
+        if latex:
+            atomic_desc = ensuremath(", ".join(
                                         [a.latex_str() for a in self.atomics]))
+        else:
+            atomic_desc = ", ".join([repr(a) for a in self.atomics])
 
-    def _repr_latex_(self):
-        return self.latex_str()
+        return f"Type system with atomic types: {atomic_desc}"
+
+    def _repr_markdown_(self):
+        return self.description(latex=True)
+
+    def __str__(self):
+        return self.description(latex=False)
 
     def random_type(self, max_depth, p_terminate_early, nonatomics=None):
         term = random.random()

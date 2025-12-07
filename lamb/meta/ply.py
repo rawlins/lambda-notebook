@@ -1008,7 +1008,7 @@ class Derivation(object):
         return self.trace(index=index, recurse=recurse, style=style, all_recursion=all_recursion)
 
     def _repr_html_(self):
-        return self.build_display_tree(recurse=False)._repr_html_()
+        return utils.show(self.build_display_tree(recurse=False))._repr_html_()
 
     def steps_str(self):
         # XX _repr_pretty_, could implement trace() for text output as well
