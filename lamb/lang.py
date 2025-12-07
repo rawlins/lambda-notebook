@@ -2310,7 +2310,7 @@ class CompositionSystem(object):
         return s
 
     def _repr_html_(self):
-        return self.description(latex=True)
+        return utils.show(self.description(latex=True))._repr_html_()
 
     def lookup(self, *items):
         """Look up a sequence of potential lexical items, replacing any that
