@@ -1330,9 +1330,15 @@ class Model(collections.abc.MutableMapping):
         if cycle:
             p.text("Model(...)")
         else:
-            ctor = pretty.CallExpression.factory(self.__class__.__name__)
-            p._define_context = True
-            p.pretty(ctor(assignment=dict(self.assignment), domain=self.domains, strict_charfuns=self.strict_charfuns))
+            try:
+                ctor = pretty.CallExpression.factory(self.__class__.__name__)
+                p._define_context = True
+                p.pretty(ctor(assignment=dict(self.assignment), domain=self.domains, strict_charfuns=self.strict_charfuns))
+            except AttributeError:
+                # colab has a version of IPython that is old enough to not
+                # support CallExpression (yikes). This will probably look bad,
+                # but also won't crash, and is rarely seen:
+                p.text(repr(self))
 
     def _domain_latex(self):
         r = ""
