@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.8.1] - Bugfix release - 2025-12-09
+
+Fixes:
+
+- Address some issues in colab rendering
+- Widen supported IPython version to handle colab's old version
+
 ## [0.8.0] - Metasemantics - 2025-11-12
 
 This version involves a major metalanguage/type system update, centered around
