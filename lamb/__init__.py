@@ -1,7 +1,7 @@
 __all__ = ['utils', 'types', 'meta', 'lang', 'tree_mini', 'parsing', 'magics',
            'lnsetup', 'display', 'combinators', 'auto', 'console']
 
-__version_info__ = (0, 8, 0)
+__version_info__ = (0, 8, 1)
 __release__ = True
 __version__ = ".".join(str(i) for i in __version_info__)
 if not __release__:
