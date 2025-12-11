@@ -233,7 +233,7 @@ def equality_table(lines):
     for l in lines:
         row = SubElement(e, "tr")
         if i > 0:
-            first_cell = " $=$ "
+            first_cell = f" {utils.ensuremath('=')} "
         else:
             first_cell = ""
         subelement_with_text(row, "td", text=first_cell,
@@ -270,11 +270,8 @@ class DisplayNode(object):
                                                                     **kwargs)
 
     def _repr_html_(self):
-        r = ElementTree.tostring(self.render(), encoding="unicode",
-                                                   method="html")
-        if "VSCODE_PID" in os.environ:
-            r = "<div><b>Complex HTML rendering (trees and derivations) is not currently supported in VSCode, sorry! See <a href='https://github.com/microsoft/vscode-jupyter/issues/7801'>https://github.com/microsoft/vscode-jupyter/issues/7801</a>.</b></div>" + r
-        return r
+        return  ElementTree.tostring(self.render(), encoding="unicode",
+                                                    method="html")
 
     def __repr__(self):
         # this is to avoid a unique object identifier showing up in

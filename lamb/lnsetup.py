@@ -20,14 +20,16 @@ except:
 
 KERNEL_NAME = "lambda-notebook"
 
-def colab_setup():
-    # check if we are running in colab. This won't necessarily work outside
-    # of an ipython context.
-    if 'google.colab' not in sys.modules:
-        return
-    # activate colab-specific display code
-    lamb.utils.LNDisplay = lamb.utils.ColabLNDisplay
-    lamb.display.latex_mode = lamb.display.LatexMode.KATEX
+def special_setup():
+    # check if we are running in colab or VSCode. This won't necessarily work
+    # outside of an ipython context.
+    if 'google.colab' in sys.modules:
+        # activate colab-specific display code
+        lamb.utils.LNDisplay = lamb.utils.ColabLNDisplay
+        lamb.display.latex_mode = lamb.display.LatexMode.KATEX
+    elif "VSCODE_PID" in os.environ:
+        lamb.utils.LNDisplay = lamb.utils.VSCodeLNDisplay
+        lamb.display.latex_mode = lamb.display.LatexMode.KATEX
 
 def inject_into_ipython():
     try:
@@ -35,7 +37,7 @@ def inject_into_ipython():
         # inject the module names
         ip.user_ns["lamb"] = lamb
         ip.user_ns["utils"] = lamb.utils
-        colab_setup()
+        special_setup()
         ip.user_ns["types"] = lamb.types
         ip.user_ns["meta"] = lamb.meta
         ip.user_ns["lang"] = lamb.lang

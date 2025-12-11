@@ -176,6 +176,29 @@ class ColabLNDisplay(BaseLNDisplay):
             # should work for everything else...
             IPython.display.display(super())
 
+
+
+# This is more or less the recipe from:
+#    https://github.com/microsoft/vscode/issues/203725#issuecomment-2217367218
+# I've been unable to get any fully local solution to work, but I hope that
+# VSCode might at least cache this...
+# Also, the defaults don't support $ so tweaking delimiters is necessary
+vscode_katex = r"""<script type="module">import renderMathInElement from "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.mjs";renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}, {left: '\\(', right: '\\)', display: false}, {left: '\\[', right: '\\]', display: true}]});"""
+
+
+class VSCodeLNDisplay(BaseLNDisplay):
+    def __init__(self, html = None, latex = None, markdown = None, plain = ""):
+        super().__init__(html, latex, markdown, plain)
+
+    def _ipython_display_(self):
+        import IPython.display
+        # VSCode uses katex exclusively, but is very inconsistent about
+        # triggering a render.
+        IPython.display.display(super())
+        if self.html or self.markdown:
+            IPython.display.display(IPython.display.HTML(vscode_katex))
+
+
 # warning! The value of LNDisplay may change, so it is not recommended to do
 # from utils import LNDisplay. Use `show` below instead.
 LNDisplay = BaseLNDisplay
