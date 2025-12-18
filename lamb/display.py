@@ -154,6 +154,10 @@ def reset_default():
 
 reset_default()
 
+def dark_mode_defaults():
+    reset_default()
+    default(expl_color="cyan")
+
 def merge_dicts(target, defaults):
     """Merge default styles from `defaults` into `target`.
     
