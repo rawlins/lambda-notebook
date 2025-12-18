@@ -574,9 +574,9 @@ class OperatorRegistry(object):
                 # only delete from `arities` if no instances of op left
                 del self.arities[op.arity][op]
         if symbol in self.left_assoc:
-            left_assoc.remove(symbol)
+            self.left_assoc.remove(symbol)
         if symbol in self.right_assoc:
-            right_assoc.remove(symbol)
+            self.right_assoc.remove(symbol)
         self.op_change()
 
     def get_operators(self, *types, symbol=None, arity=None, cls=None, exact=False):
