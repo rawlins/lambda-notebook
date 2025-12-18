@@ -85,7 +85,7 @@ def reload_lamb(use_nltk_tree=None):
         importlib.reload(lamb.lang.parser)
         importlib.reload(lamb.lang)
         importlib.reload(lamb.display)
-        colab_setup()
+        special_setup()
         importlib.reload(lamb.combinators)
         lamb.reload_all = reload_lamb
         inject_into_ipython()
