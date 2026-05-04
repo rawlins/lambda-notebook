@@ -567,8 +567,8 @@ class Parselet(object):
 
 class Unit(Parselet):
     def __init__(self, parser=None, **kwargs):
-        if parser is not None and self.parser_builder:
-            raise ParseError("Internal parser error: `Unit` parser builder subclass has doubly-supplied parser on construction")
+        if parser is not None and self.parser_builder():
+            raise ParseError(f"Internal parser error: `Unit` parser builder subclass `{self.__class__.__name__}` has doubly-supplied parser on construction")
         elif self.parser is not None:
             if parser is not None:
                 # subclasses will typically not bother with __init__, so validate
@@ -595,7 +595,6 @@ class Unit(Parselet):
             p.text(f"{self.__class__.__name__}(...)")
 
     @classmethod
-    @property
     def parser_builder(cls):
         return bool(getattr(cls, 'build_parser', False))
 
@@ -605,7 +604,7 @@ class Unit(Parselet):
         cls.parser = cls.build_parser()
 
     def get_parser(self):
-        if self.parser is None and self.parser_builder:
+        if self.parser is None and self.parser_builder():
             # if a subclass defines `build_parser`, call it and memoize the
             # resulting parser at this point. This allows a parser to be
             # instantiated at the module level without worrying about circular
