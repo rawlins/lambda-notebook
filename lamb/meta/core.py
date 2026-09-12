@@ -1,4 +1,4 @@
-import sys, re, logging, random, functools, inspect, operator
+import sys, re, logging, random, functools, inspect, operator, enum
 import collections, contextlib
 from numbers import Number
 from dataclasses import dataclass
@@ -17,6 +17,13 @@ from .ply import commutative, associative, left_commutative, right_commutative
 from .ply import Derivation, DerivationStep, set_derivation, no_derivations
 
 ############### Basic stuff
+
+
+class Fixity(enum.IntFlag):
+    PRE = enum.auto()
+    IN = enum.auto()
+    POST = enum.auto()
+
 
 global logger
 def setup_logger():
@@ -832,7 +839,7 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
 
     # note: validation happens elsewhere
     from .parser import valid_text_op
-    is_py_op = not valid_text_op(kwargs['canonical_name'])
+    is_glyph_op = not valid_text_op(kwargs['canonical_name'])
 
     class WrappedOp(superclass):
         arity = op_arity
@@ -841,8 +848,8 @@ def op_from_te(op_name, e, superclass=None, **kwargs):
         secondary_names = _secondary_names
         op_name_uni = kwargs.get('op_name_uni', None)
         op_name_latex = kwargs.get('op_name_latex', None)
-        operator_style = kwargs.get('operator_style', is_py_op)
-        infix_style = kwargs.get('infix_style', is_py_op)
+        operator_style = kwargs.get('operator_style', is_glyph_op)
+        fixity = kwargs.get('fixity', None)
         commutative = kwargs.get('commutative', superclass.commutative)
         associative = kwargs.get('associative', superclass.associative)
         left_assoc = kwargs.get('left_assoc', superclass.left_assoc)
@@ -2619,6 +2626,35 @@ class TypedExpr(object):
         
         return TypedExpr.factory(self, *args)
 
+    @classmethod
+    def default_fixity(cls):
+        cls.fixity = Fixity.PRE
+        return cls.fixity
+
+    @classmethod
+    def default_operator_style(cls):
+        cls.operator_style = False
+        return cls.operator_style
+
+    def get_fixity(self, latex=False):
+        fixity = getattr(self, 'fixity', None)
+        if latex:
+            fixity = getattr(self, 'latex_fixity', fixity)
+
+        if fixity is None:
+            return self.default_fixity()
+        else:
+            return fixity
+
+    def get_operator_style(self, latex=False):
+        operator_style = getattr(self, 'operator_style', None)
+        if latex:
+            operator_style = getattr(self, 'latex_operator_style', operator_style)
+
+        if operator_style is None:
+            return self.default_operator_style()
+        else:
+            return operator_style
 
     def __repr__(self):
         """Return a string representation of the TypedExpr.
@@ -2632,16 +2668,20 @@ class TypedExpr(object):
         name = getattr(self, 'canonical_name')
         if name is None:
             name = self.op
+        fixity = self.get_fixity()
         if len(self.args) == 1:
-            if getattr(self, 'operator_style', False):
-                return f"{name}{repr(self.args[0])}"
+            if fixity & Fixity.PRE:
+                if self.get_operator_style():
+                    return f"{name}{repr(self.args[0])}"
+                else:
+                    # using utils.parens here relies on infix operator code
+                    # guaranteeing parentheses. If that code ever returned
+                    # anything like `(1+2)+(3+4)`, this wouldn't be safe.
+                    return f"{name}{utils.parens(repr(self.args[0]))}"
             else:
-                # using utils.parens here relies on infix operator code
-                # guaranteeing parentheses. If that code ever returned
-                # anything like `(1+2)+(3+4)`, this wouldn't be safe.
-                return f"{name}{utils.parens(repr(self.args[0]))}"
+                return f"{repr(self.args[0])}.{name}"
         else:
-            if getattr(self, 'infix_style', False):
+            if (fixity & Fixity.IN) and len(self.args) > 1:
                 op_text = f" {name} "
                 return "(%s)" % (op_text.join([repr(a) for a in self.args]))
             else:
@@ -2665,15 +2705,19 @@ class TypedExpr(object):
 
         # past this point in the list of cases should only get hard-coded
         # operators
-        if len(self.args) == 1: # Prefix operator
-            if getattr(self, 'operator_style', False):
-                return ensuremath(
-                    f"{self.op}{self.args[0].latex_str(**kwargs)}")
+        fixity = self.get_fixity()
+        if len(self.args) == 1:
+            if fixity & Fixity.PRE:
+                if self.get_operator_style(latex=True):
+                    return ensuremath(
+                        f"{self.op}{self.args[0].latex_str(**kwargs)}")
+                else:
+                    return ensuremath(
+                        f"{self.op}({self.args[0].latex_str(suppress_parens=True, **kwargs)})")
             else:
-                return ensuremath(
-                    f"{self.op}({self.args[0].latex_str(suppress_parens=True, **kwargs)})")
+                return ensuremath(f"{self.args[0].latex_str(suppress_parens=False, **kwargs)}.{self.op_name_latex}")
         else:
-            if getattr(self, 'infix_style', False):
+            if (fixity & Fixity.IN) and len(self.args) > 1:
                 base = f" {self.op} ".join([a.latex_str(**kwargs) for a in self.args])
                 if not suppress_parens:
                     base = f"({base})"
@@ -3878,9 +3922,9 @@ class SyncatOpExpr(TypedExpr):
     associative = False # default - override if needed. Mostly only relevant if
                         # the arguments have the same type as `typ`.
     operator_style = True # if unary, do we omit parens?
-    infix_style = True # if 2-ary, is it infix or prefix?
-    # `latex_operator_style` and `latex_infix_style` can be set independently
-    # of the above two, but otherwise, will inherit their values
+    fixity = None
+    # `latex_operator_style` and `latex_fixity` can be set independently
+    # of the above two, to cause different rendering in latex outpus.
 
     # is the operation left associative without parens, i.e. for arbitrary `@`
     # does `p @ q @ r` mean `((p @ q) @ r)`?
@@ -3914,27 +3958,61 @@ class SyncatOpExpr(TypedExpr):
     def name_of(self, i):
         return f"operand {i}"
 
-    def _repr_pretty_(self, p, cycle):
-        if cycle:
-            p.text("%s(...)" % self.op_name_uni)
-        elif self.arity == 1:
-            p.text(self.op_name_uni)
-            if not self.operator_style:
-                p.text("(")
-            p.pretty(self.args[0])
-            if not self.operator_style:
-                p.text(")")
+    @classmethod
+    def is_glyph_op(cls):
+        if cls.canonical_name is None:
+            raise NotImplementedError(f"Unset canonical_name for operator class {cls.__name__}")
+        from .parser import valid_text_op
+        return not valid_text_op(cls.canonical_name)
+
+    @classmethod
+    def default_fixity(cls):
+        if cls.fixity is not None:
+            return cls.fixity
+
+        glyph_op = cls.is_glyph_op()
+        if cls.arity == 2 and glyph_op:
+            cls.fixity = Fixity.IN
         else:
-            if self.infix_style:
+            cls.fixity = Fixity.PRE
+
+        if cls.arity == 1 and not glyph_op:
+            cls.fixity |= Fixity.POST
+        return cls.fixity
+
+    @classmethod
+    def default_operator_style(cls):
+        if cls.operator_style is not None:
+            return cls.operator_style
+        cls.operator_style = cls.is_glyph_op()
+        return cls.operator_style
+
+    def _repr_pretty_(self, p, cycle):
+        fixity = self.get_fixity()
+        if cycle:
+            p.text(f"{self.op_name_uni}(...)")
+        elif self.arity == 1:
+            if fixity & Fixity.PRE:
+                p.text(self.op_name_uni)
+                if not self.get_operator_style():
+                    p.text("(")
+                p.pretty(self.args[0])
+                if not self.get_operator_style():
+                    p.text(")")
+            else:
+                p.pretty(self.args[0])
+                p.text(f".{self.op_name_uni}")
+        else:
+            if fixity & Fixity.IN:
                 # XX left assoc parens?
                 p.text("(")
                 for a in self.args[0:-1]:
                     p.pretty(self.args[0])
-                    p.text(" %s " % self.op_name_uni)
+                    p.text(f" {self.op_name_uni} ")
                 p.pretty(self.args[-1])
                 p.text(")")
             else:
-                p.text("%s" % self.op_name_uni)
+                p.text(self.op_name_uni)
                 p.text("(")
                 for a in self.args[0:-1]:
                     p.pretty(self.args[0])
@@ -3959,19 +4037,18 @@ class SyncatOpExpr(TypedExpr):
         return self.args[i].latex_str(suppress_parens=suppress_parens, **kwargs)
 
     def latex_str(self, suppress_parens=False, **kwargs):
+        # XX code dup with TypedExpr
+        fixity = self.get_fixity(latex=True)
         if self.arity == 1:
-            latex_operator_style = getattr(self, 'latex_operator_style', self.operator_style)
-            # XX allow for latex postfix rendering? (Possibly a bad idea given
-            # that this syntax doesn't exist at all in the metalanguage...)
-            if (latex_operator_style):
-                return ensuremath("%s %s" % (self.op_name_latex,
-                    self._sub_latex_str(0, **kwargs)))
+            if fixity & Fixity.PRE:
+                if self.get_operator_style(latex=True):
+                    return ensuremath(f"{self.op_name_latex} {self._sub_latex_str(0, **kwargs)}")
+                else:
+                    return ensuremath(f"{self.op_name_latex}({self._sub_latex_str(0, suppress_parens=True, **kwargs)})")
             else:
-                return ensuremath("%s(%s)" % (self.op_name_latex,
-                    self._sub_latex_str(0, suppress_parens=True, **kwargs)))
+                return ensuremath(f"{self._sub_latex_str(0, suppress_parens=False, **kwargs)}.{self.op_name_latex}")
         else:
-            latex_infix_style = getattr(self, 'latex_infix_style', self.infix_style)
-            if latex_infix_style:
+            if fixity & Fixity.IN:
                 sub_parens = True
                 inner = f" {self.op_name_latex} ".join(
                     [self._sub_latex_str(i, **kwargs) for i in range(len(self.args))])
