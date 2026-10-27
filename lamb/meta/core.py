@@ -982,6 +982,7 @@ def subassignment(assignment, _dict=None, **kwargs):
 
 class Language:
     def __init__(self, type_system=None):
+        self.typereqs = []
         self.set_type_system(type_system=type_system)
         registry = OperatorRegistry(self)
         self.registry = registry
@@ -992,11 +993,29 @@ class Language:
         self.allow_coerced_types = True
         self.reset_type_conventions()
 
+    def _add_type_to_ts(self, t):
+        if isinstance(t, type) and issubclass(t, types.TypeConstructor):
+            if t not in self.type_system.nonatomics:
+                self.type_system.add_nonatomic(t)
+        else:
+            if t not in self.type_system.atomics:
+                self.type_system.add_atomic(t)
+
+    def add_required_type(self, t):
+        # validation here is pretty minimal
+        self.typereqs.append(t)
+        self._add_type_to_ts(t)
+
+    def sync_typereqs(self):
+        for t in self.typereqs:
+            self._add_type_to_ts(t)
+
     def set_type_system(self, type_system=None):
         if type_system is None:
             types.reset()
             type_system = types.poly_system # XX better encapsulation?
         self.type_system = type_system
+        self.sync_typereqs()
 
     def get_type_system(self):
         return self.type_system

@@ -7,7 +7,7 @@ from .ply import derived
 
 
 def setup_operators(language):
-    language.type_system.add_nonatomic(TypeType)
+    language.add_required_type(TypeType)
     language.registry.add_operator(TypeOp)
     language.registry.add_operator(TypeEquivalence)
 
